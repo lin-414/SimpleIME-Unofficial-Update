@@ -1,0 +1,138 @@
+[center][size=5][color=#00B176][b]SimpleIME-Unofficial-Update[/b][/color][/size]
+[size=3]Native IME support for Skyrim SE/AE · 为上古卷轴5 SE/AE 提供完整输入法支持[/size]
+[size=2]v3.0.0 · based on upstream v2.2.1 by cyfewlp · MIT[/size][/center]
+
+[line]
+
+[size=4][color=#00B176][b]What is this? · 这是什么？[/b][/color][/size]
+
+SimpleIME is a SKSE plugin that brings full IME (Input Method Editor) support to Skyrim SE/AE. It intercepts the OS input pipeline, activates your system input method automatically whenever a text field takes focus, and renders the composition string and candidate list natively inside the game with ImGui — so you can type Chinese, Japanese, Korean and other multi-byte languages in the console, in SkyUI search fields, and in every text box your mods expose.
+
+[b]This is the community-maintained continuation[/b] of [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136]cyfewlp's SimpleIME[/url], developed from upstream v2.2.1. On top of the original feature set it adds IME input for modern mod UI frameworks ([b]Meridian UI[/b], [b]SKSE Menu Framework[/b] — plus safe coexistence with [b]Prisma UI[/b]), fixes the stuck-IME and window-switching crash bugs, makes the UI sharp on high-DPI displays, and ships a redesigned settings window, language bar and default themes.
+
+SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入法（IME）支持。它接管系统输入管道，在文本框获得焦点时自动激活系统输入法，并用 ImGui 在游戏内原生渲染组字串与候选词窗口——让你能在控制台、SkyUI 搜索框以及一切模组文本框中输入中文、日文、韩文等多字节语言。
+
+[b]本页面是社区维护的非官方续更版[/b]，基于上游作者 cyfewlp 的 SimpleIME v2.2.1 继续开发：新增 Meridian UI、SKSE Menu Framework 两大模组 UI 框架的输入法支持（并对 Prisma UI 自动避让），修复了输入法卡死与切窗崩溃等顽疾，解决了高缩放屏 UI 发虚问题，并重做了设置界面、语言栏与默认主题。
+
+[line]
+
+[size=4][color=#00B176][b]Features · 功能[/b][/color][/size]
+
+[size=3][b]Core · 核心功能[/b][/size]
+[list]
+[*][color=#CDC2DB]Automatic activation[/color] — the IME turns on when a text field takes focus and off when you leave it; no manual toggling. The hotkey (default F2, rebindable in settings) opens the tool window to check or switch the active input method.
+[color=#CDC2DB]自动激活[/color] —— 聚焦文本框自动开启输入法，离开自动停用；快捷键（默认 F2，可在设置中改键）打开工具窗口查看/切换输入法。
+[*][color=#CDC2DB]In-game language bar[/color] — shows the active IME and input-mode light, with IME switching, pin button and settings entry; auto shows/hides with text entry.
+[color=#CDC2DB]游戏内语言栏[/color] —— 显示当前输入法与输入状态灯，支持切换输入法、图钉固定与设置入口；随文本输入自动显示/隐藏。
+[*][color=#CDC2DB]TSF-based, rendered in-game[/color] — uses the modern Text Services Framework (Imm32 fallback included); composition and candidates are drawn by SimpleIME itself, supporting horizontal and vertical candidate lists, so no OS candidate window ever floats over the screen.
+[color=#CDC2DB]基于 TSF、游戏内渲染[/color] —— 使用现代文字服务框架（TSF，含 Imm32 回退），组字串与候选词由本插件自行绘制，支持横/竖排候选，屏幕上不再出现系统候选窗。
+[*][color=#CDC2DB]Caret tracking[/color] — the IME window follows the active text cursor on screen, including in scrollable fields.
+[color=#CDC2DB]光标追踪[/color] —— 输入法窗口自动跟随当前文本光标，支持可滚动的文本框。
+[*][color=#CDC2DB]Font Builder[/color] — browse all installed fonts or load one from a file, preview in real time, and assign separate fonts for Latin, CJK and emoji glyphs. UI icons ship as a repackaged minimal [url=https://lucide.dev]Lucide[/url] TTF.
+[color=#CDC2DB]字体构建器[/color] —— 浏览所有已安装字体（或从文件加载），实时预览，可为拉丁、CJK、Emoji 分别指定字体。UI 图标由精简版 [url=https://lucide.dev]Lucide[/url] 字体提供。
+[*][color=#CDC2DB]Theme Builder (Material You)[/color] — pick any seed color and the whole palette is generated in real time via Google's HCT color space; dark and light mode included.
+[color=#CDC2DB]主题构建器（Material You）[/color] —— 任意种子颜色经 Google HCT 色彩空间实时生成整套配色，支持深色/浅色模式。
+[*][color=#CDC2DB]Unicode paste[/color] — paste Unicode text from the clipboard into any text field (Ctrl+V).
+[color=#CDC2DB]Unicode 粘贴[/color] —— 从剪贴板粘贴 Unicode 文本到任意文本框（Ctrl+V）。
+[*][color=#CDC2DB]Six UI languages[/color] — English, Chinese, German, Japanese, Korean and Russian ship in the package; add more by dropping a [i]translate_italiano.toml[/i]-style file into [i]interface/SimpleIME/[/i].
+[color=#CDC2DB]六种界面语言[/color] —— 自带英语、中文、德语、日语、韩语、俄语；将 [i]translate_italiano.toml[/i] 这样的文件放入 [i]interface/SimpleIME/[/i] 即可扩展。
+[/list]
+
+[size=3][b]What this fork adds · 本续更版新增[/b][/size]
+[list]
+[*][color=#CDC2DB]Meridian UI input (CEF)[/color] — Meridian-based UIs (e.g. [b]Tailor[/b]) render through CEF, so game char-events never reach them. SimpleIME notices a Meridian view gaining focus, engages the IME, and delivers committed text through a JS bridge that fires the page's native input events — composition and candidates render as a themed floating panel inside the page.
+[color=#CDC2DB]Meridian UI 输入（CEF）[/color] —— Meridian 界面（如 [b]Tailor[/b]）由 CEF 渲染，游戏字符事件无法到达。SimpleIME 在 Meridian 视图获得焦点时自动激活输入法，通过注入的 JS 桥提交文字并触发页面原生 input 事件；组字与候选以主题化浮层显示在页面内。
+[*][color=#CDC2DB]SKSE Menu Framework input (ImGui)[/color] — SKSEMF menus draw their text fields with the framework's own ImGui, which never raises the game's text-entry counter. SimpleIME resolves SKSEMF's public exports, acquires a text-entry lease through the native [i]AllowTextInput[/i] when a field wants text (language bar included), and injects committed characters on the framework's render callback. Plain English typing is untouched. Requires [b]SKSEMenuFramework.dll 3.7+[/b].
+[color=#CDC2DB]SKSE Menu Framework 输入（ImGui）[/color] —— SKSEMF 界面的文本框使用框架自带 ImGui 绘制，从不触发游戏的文本输入计数。SimpleIME 解析其公开导出，在字段需要输入时经原生 [i]AllowTextInput[/i] 取得文本输入租约（语言栏照常出现），并在框架渲染回调中注入上屏文字。纯英文输入完全不受影响。需要 [b]SKSEMenuFramework.dll 3.7+[/b]。
+[*][color=#CDC2DB]Prisma UI avoidance (Ultralight)[/color] — Prisma-based UIs (e.g. [b]Outfit Wheeler[/b]) handle IME input natively. SimpleIME stands down while a Prisma UI owns the keyboard, so the two never fight; if PrismaUI.dll is present but its API is unavailable, SimpleIME fails safe and stays out of the way entirely.
+[color=#CDC2DB]Prisma UI 避让（Ultralight）[/color] —— Prisma 界面（如 [b]Outfit Wheeler[/b]）自带输入法处理。SimpleIME 在其持有键盘焦点期间自动让位，两者互不抢占；若 PrismaUI.dll 存在但 API 不可用，SimpleIME 会完全退避以保证安全。
+[*]All three integrations negotiate [b]public extension interfaces only[/b] and are inert when the host DLL is absent — install them whenever you like.
+[*]三种集成仅协商[b]公开扩展接口[/b]，宿主 DLL 不存在时自动失效——随时可选装。
+[/list]
+
+[size=3][b]What this fork fixes · 本续更版修复[/b][/size]
+[list]
+[*][color=#CDC2DB]Stuck IME around mod menus[/color] — the root cause (a leaked text-entry counter that kept the IME, language bar and paused tool window on after leaving a mod window) is healed by event repair plus an every-frame poll; every disable path now also hides the language bar and returns Win32 focus to the game.
+[color=#CDC2DB]模组菜单导致的输入法卡死[/color] —— 根因是文本输入计数泄漏（离开模组窗口后输入法、语言栏与暂停的工具窗口常开），现通过事件修复 + 逐帧轮询治愈；所有停用路径都会收起语言栏并把 Win32 焦点还给游戏。
+[*][color=#CDC2DB]Upstream's window-switch crash[/color] — switching windows via [b]Win+Shift+S[/b] (or Alt-Tab with a key held) during CJK composition no longer crashes or leaves phantom keys stuck in ImGui; focus steal, teardown and cross-thread COM paths are hardened throughout.
+[color=#CDC2DB]上游切窗崩溃[/color] —— CJK 组字期间用 [b]Win+Shift+S[/b]（或按住按键 Alt-Tab）切窗不再崩溃、不再残留幽灵按键；焦点抢占、析构与跨线程 COM 路径全面加固。
+[*][color=#CDC2DB]Sharp UI on scaled displays[/color] — the process is made per-monitor-v2 DPI aware (opt-out in config), so the settings UI and language bar are no longer stretched blurry at 125%+ system scaling.
+[color=#CDC2DB]缩放屏 UI 发虚[/color] —— 进程声明为 Per-Monitor-V2 DPI 感知（可在配置关闭），125%+ 系统缩放下设置界面与语言栏不再被拉伸模糊。
+[*][color=#CDC2DB]Correct CJK font rendering[/color] — font sizes are interpreted as em (upstream's asc+desc span rendered CJK ~25% smaller and squeezed bottom strokes), and FreeType hinting no longer clips glyph bottoms.
+[color=#CDC2DB]CJK 字形渲染修正[/color] —— 字号按 em 语义解释（上游按 asc+desc 跨度计算导致 CJK 比同号拉丁字小约 25%、底笔画被挤），FreeType 提示不再裁掉字形底部。
+[*][color=#CDC2DB]Redesigned settings window[/color] — live status strip, a compatibility card showing per-bridge support state, one-click diagnostics copy, hot log-level switching, open-config/log links, and new default dark & light themes.
+[color=#CDC2DB]设置界面重做[/color] —— 实时状态条、显示各桥接支持状态的兼容性卡片、一键复制诊断信息、日志级别热切换、打开配置/日志链接，以及全新默认深/浅主题。
+[/list]
+
+[line]
+
+[size=4][color=#00B176][b]Requirements · 需求[/b][/color][/size]
+
+[list]
+[*][b]Skyrim SE or AE[/b] (Address Library–based build: SE 1.5.97 through current AE) and the matching [b][url=https://skse.silverlock.org/]SKSE[/url][/b].
+[*][b][url=https://www.nexusmods.com/skyrimspecialedition/mods/32444]Address Library for SKSE Plugins[/url][/b] — the all-in-one file covering your runtime.
+[*]A game font covering your language for in-game text (any Chinese/Japanese/Korean font mod). Not required for the IME windows themselves — SimpleIME uses your system fonts, and Font Builder can load any ttf/otf directly.
+[*]Windows 8.1 or newer (TSF; older systems fall back to Imm32 with reduced features).
+[*]Optional, auto-detected: [b]MeridianUI[/b] (Meridian input), [b]SKSEMenuFramework.dll 3.7+[/b] (SKSEMF input), [b]PrismaUI[/b] (keyboard avoidance). Everything degrades to a no-op when the DLL is absent.
+[/list]
+
+[b]上古卷轴 SE/AE 本体与对应版 SKSE、Address Library、一款覆盖你语言的游戏字体 Mod（可选装 MeridianUI / SKSEMenuFramework 3.7+ / PrismaUI 以启用对应桥接，缺省自动失效）。[/b]
+
+[line]
+
+[size=4][color=#00B176][b]Installation · 安装[/b][/color][/size]
+
+[list]
+[*][b]Mod manager (recommended):[/b] install the archive with MO2/Vortex and enable it. Package layout: [i]SKSE/Plugins/SimpleIME.dll[/i] + [i]interface/SimpleIME/[/i] (config, translations, icon font).
+[*][b]Manual:[/b] extract the archive into your game's [i]Data[/i] folder (same structure).
+[*]Launch the game and press [b]F2[/b] — the tool window should show your active input method. Open the console or a SkyUI search field and start typing.
+[*]Upgrading: replace the files; the config file is forward-compatible (new keys are additive, your values are kept).
+[/list]
+
+[b]推荐用 MO2/Vortex 安装；手动安装则将压缩包解压至游戏 Data 目录。进游戏按 F2 确认工具窗口显示当前输入法，即可在控制台或 SkyUI 搜索框直接输入。升级直接覆盖，配置向后兼容。[/b]
+
+[line]
+
+[size=4][color=#00B176][b]Compatibility · 兼容性[/b][/color][/size]
+
+[list]
+[*][b]SkyUI[/b] and all mods built on it (inventory search, NPC search, crafting filters, [b]Modex[/b], …) — fully supported.
+[*][b]TMS_SIMEtoSKSEMF[/b] — mutually exclusive on the SKSE Menu Framework path. SimpleIME disables its built-in SKSEMF input when that plugin is present; keep one of the two.
+[*][b]dMenu[/b] — not supported (own render/message pipeline). Mods that hook WM_CHAR for the same window during text entry may conflict.
+[/list]
+
+[b]SkyUI 系完整支持；TMS_SIMEtoSKSEMF 在 SKSEMF 路径上互斥（双方都会自动退让，按需二选一）；dMenu 不支持。详见 Articles 页。[/b]
+
+[line]
+
+[size=4][color=#00B176][b]Troubleshooting · 常见问题[/b][/color][/size]
+
+[list]
+[*]UI/text looks blurry → make sure [i]force_dpi_awareness = true[/i] (default) and you are not running the game through a scaling wrapper.
+[*]No candidates appear → check the OS input method is enabled; press F2 to see whether SimpleIME sees it. [i]Settings → Advanced[/i] can copy a full diagnostics summary for bug reports.
+[*]Typing does nothing in a SKSEMF menu → update SKSEMenuFramework.dll to 3.7 or newer.
+[*]A mod menu swallows keystrokes after closing → make sure you are on v3.0.0; the leaked text-entry counter that caused this is fixed here.
+[/list]
+
+[line]
+
+[size=4][color=#00B176][b]Source code · 源代码[/b][/color][/size]
+
+[url=https://github.com/lin-414/SimpleIME-Unofficial-Update]GitHub — SimpleIME-Unofficial-Update[/url] · [url=https://github.com/lin-414/SimpleIME-Unofficial-Update/blob/main/CHANGELOG.md]Changelog[/url] · [url=https://github.com/cyfewlp/SimpleIME]Upstream project[/url]
+
+Bug reports and pull requests are welcome — please include the diagnostics summary and [i]Documents/My Games/Skyrim Special Edition/SKSE/SimpleIME.log[/i]. · 欢迎提交 Issue 与 PR，请附上诊断摘要与日志文件。
+
+[line]
+
+[size=4][color=#00B176][b]Credits & permissions · 致谢与授权[/b][/color][/size]
+
+[list]
+[*][url=https://github.com/cyfewlp/SimpleIME]cyfewlp/SimpleIME[/url] — the base project (MIT). Thank you for the original work.
+[*][url=https://github.com/cashboxs/TMS_SIMEtoSKSEMF]cashboxs/TMS_SIMEtoSKSEMF[/url] — the SKSEMF export surface and callback technique adapted for SKSEMF input (MIT).
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/141552]MeridianUI[/url] and [url=https://github.com/mlthethemol/PrismaUI]PrismaUI[/url] — public SDK headers, used read-only.
+[*][url=https://github.com/ocornut/imgui]ocornut/imgui[/url], [url=https://github.com/alandtse/CommonLibVR]CommonLibSSE-NG[/url], [url=https://github.com/lin-414/JamieMods]JamieMods[/url], [url=https://lucide.dev]Lucide[/url] — see the full list in THIRD-PARTY-NOTICES.md.
+[/list]
+
+Licensed under [b]MIT[/b]. You may translate, fork, adapt and redistribute with the license and attribution preserved; please do not upload to paid or access-restricted platforms. If this mod helped you, leaving the upstream author an endorsement is the best thanks. · 基于 MIT 协议开源，翻译/魔改/转载请保留署名与许可文件；请勿上传至付费或闭源平台。
+
+[/color]

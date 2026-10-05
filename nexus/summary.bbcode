@@ -1,0 +1,17 @@
+[b]SimpleIME-Unofficial-Update[/b] brings native IME support to [b]Skyrim SE/AE[/b], letting you type Chinese, Japanese, Korean and other multi-byte languages anywhere the game accepts text — the console, SkyUI search fields, and every text box your mods expose. Your system input method activates automatically when a text field takes focus; composition and candidates render inside the game, tracking your caret — no OS candidate window over the screen.
+
+[list]
+[*][b]Automatic activation[/b] — the IME turns on with a focused text field and off when you leave; F2 (rebindable) opens the tool window to check or switch input methods.
+[*][b]In-game language bar[/b] with IME switching, input-mode light, pin button and settings entry; auto shows/hides with text entry.
+[*][b]TSF-based integration[/b] (Imm32 fallback) — composition and candidates drawn by the mod itself, horizontal or vertical list.
+[*][b]Font Builder[/b] — browse installed fonts or load from file, assign separate Latin, CJK and emoji fonts, preview in real time.
+[*][b]Theme Builder (Material You)[/b] — any seed color generates the whole palette via Google's HCT color space; dark and light mode.
+[*][b]Unicode paste[/b] (Ctrl+V) into any text field.
+[*][b]Six built-in UI languages[/b] — English, Chinese, German, Japanese, Korean, Russian; add more by dropping a translation file.
+[/list]
+
+This is the community-maintained continuation of [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136]cyfewlp's SimpleIME[/url], now at v3.0.0 on top of upstream v2.2.1. It adds IME input for modern mod UI frameworks — Meridian UI (CEF) and SKSE Menu Framework (ImGui) — and stands down safely while Prisma UI owns the keyboard. All three use public interfaces only and stay inert when the host DLL is absent. It fixes the stuck-IME bug around mod menus and the crash when switching windows during composition, and hardens focus and teardown paths against races. The UI is sharp on 125%+ DPI displays, CJK glyphs render at full size without clipped strokes, and the settings window, language bar and default themes are reworked.
+
+[b]Requirements:[/b] Skyrim SE/AE with matching SKSE, Address Library, and a game font covering your language. Optional, auto-detected: MeridianUI, SKSEMenuFramework 3.7+, PrismaUI.
+
+MIT licensed; source on GitHub. Bug reports welcome with the in-game diagnostics summary and log.

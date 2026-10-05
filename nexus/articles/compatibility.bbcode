@@ -1,0 +1,72 @@
+[center][size=5][color=#D3BCFD][b]SimpleIME — Compatibility & Mod Author Guide[/b][/color][/size][/center]
+
+[line]
+
+[size=4][color=#D3BCFD][b]Compatibility Boundary[/b][/color][/size]
+
+During active text input, SimpleIME holds keyboard focus on the IME thread and owns that thread's Win32 message loop. This is the minimum state required for TSF to function correctly. SimpleIME does not attempt to work around mods that intercept the same pipeline — if another mod manipulates keyboard focus or hooks [i]WM_CHAR[/i] for the same window during this period, the two are considered incompatible.
+
+[list]
+[*][b]SkyUI[/b] and all mods built on it — fully supported.
+[*][b]WhereAreYou, Completionist[/b] and other SkyUI-based mods — compatible.
+[*][b][url=https://www.nexusmods.com/skyrimspecialedition/mods/137877]Modex[/url][/b] — compatible; Modex implements the [i]AllowTextInput[/i] integration.
+[*][b]dMenu[/b] — not supported; dMenu implements its own render and message pipeline.
+[*][b]sse-gui[/b] — potential conflict; load SimpleIME after sse-gui.
+[/list]
+
+[line]
+
+[size=4][color=#D3BCFD][b]For Mod Authors[/b][/color][/size]
+
+
+[size=3][b]SimpleIME Workflow Architecture[/b][/size]
+
+[list]
+[*] Hook [i]ControlMap::AllowTextInput[/i] and [i]SKSE::AllowTextInput[/i] to track text input focus change that based on SkyUI/Skyrim's menu system.`
+The [i]ControlMap::AllowTextInput[/i] called by [i]ConsoleMenu[/i];
+The [i]SKSE::AllowTextInput[/i] called by other native UI from flash: "_global.skse.AllowTextInput(true/false)".
+[*] Automatically activate the IME when text input is allowed, and deactivate it when text input is disallowed.
+[*] Send the composition results to the [b]top-menu[/b] when the IME composition is confirmed.
+[/list]
+
+[size=3][b]Supporting SimpleIME in Your Mod[/b][/size]
+
+So, if you want to support SimpleIME in your mod, you need:
+[list]
+[*] Call the [i]ControlMap::AllowTextInput[/i] function when your input field gains or loses focus.
+[*] Receive and handle the scaleform char event: [i]RE::BSUIScaleformData[/i] with a [i]RE::GFxEvent::EventType::kCharEvent[/i] type;
+If you use [i]ImGui[/i], you should call [i]ImGui::GetIO().AddInputCharacter[/i] to send the char event to ImGui;
+[/list]
+
+[b] A GUI based on ImGui example: [/b]
+
+[code]
+// Hook AllowTextInput (RELOCATION_ID 67252 / 68552)
+void AllowTextInput(RE::ControlMap* controlMap, bool allow) {
+    using func_t = decltype(&AllowTextInput);
+    REL::Relocation<func_t> func{ RELOCATION_ID(67252, 68552) };
+    func(controlMap, allow);
+}
+
+// In your render loop:
+static bool sPrevWantText = false;
+const  bool sCurrWantText = ImGui::GetIO().WantTextInput;
+if (!sPrevWantText && sCurrWantText)  AllowTextInput(RE::ControlMap::GetSingleton(), true);
+if ( sPrevWantText && !sCurrWantText) AllowTextInput(RE::ControlMap::GetSingleton(), false);
+sPrevWantText = sCurrWantText;
+
+// In your IMenu::ProcessMessage or DispatchEventHook:
+auto OnCharEvent(const GFxCharEvent *charEvent) -> RE::UI_MESSAGE_RESULTS
+{
+    if (auto &io = ImGui::GetIO(); io.WantTextInput)
+    {
+        io.AddInputCharacter(charEvent->wcharCode);
+        return RE::UI_MESSAGE_RESULTS::kHandled;
+    }
+    return RE::UI_MESSAGE_RESULTS::kPassOn;
+}
+[/code]
+
+[size=3][b]NOTE — IME window positioning for custom renderers[/b][/size]
+
+By default, SimpleIME positions the IME window by the [i]GFxMovieView[/i] caret position, which works for most cases. If your mod uses custom rendering (like ImGui), SimpleIME cannot track the caret. Please prompt the user to change the IME window position policy in the Tool Window to [b]Follow Cursor[/b] or [b]None[/b].

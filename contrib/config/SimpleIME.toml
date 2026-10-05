@@ -1,0 +1,79 @@
+[core]
+# 快捷键配置，格式: <key> 或 <modifier(s)> + <key>，多个部分用 '+' 分隔，忽略空格
+# <key>      : F1-F12, NumPad0-9, A-Z, 0-9 等 ImGui 支持的按键名
+# <modifier> : ctrl, shift, alt, super (可组合)
+# 示例: "F2", "ctrl + A", "ctrl + shift + alt + A"
+# 注意: 不支持多个普通键组合 (如 A + B)，末尾不能为 '+', F1-F12 不能和任何 <modifier> 组合(游戏限制), 非法配置将使用默认值
+#默认值为 F2
+shortcut = "f2"
+# 强烈建议开启，只需要保证您的系统版本大于 Window 8.1(除非您手动将 TSF 关闭了，或者您是某些极简系统). 关闭将使用 Imm32, 支持不如 TSF
+enable_tsf = true
+# 是否启用 Mod 功能
+enable_mod = true
+# 罕见的修复开关，打开时: 如果鼠标不可见，但依然存在激活的输入框, Mod 会主动禁用 IME 输入. 因为鼠标不可见通常意味着当前处于正常游戏阶段
+# 但是如果第三方 Menu 存在激活的输入框，但禁用了鼠标(例如某些极简 UI)，此开关可能会错误的禁用 IME，需要关闭此开关来修复这个问题
+fix_inconsistent_text_entry_count = true
+# 自动打开/关闭键盘
+# 在 IME 激活/关闭的同时打开/关闭键盘(切换本地语言/英文输入状态)
+auto_toggle_keyboard = false
+# 进程级 DPI 感知 (默认开启)
+# Skyrim 本体不声明 DPI 感知，在系统缩放非 100% 的屏幕上，整个游戏画面(包括本 Mod 的设置界面)
+# 会被系统拉伸渲染，导致字体普遍发虚。开启后 SimpleIME 在游戏创建窗口前将进程声明为 Per-Monitor-V2 感知，
+# 画面 1:1 渲染，文字恢复锐利，UI 缩放也会跟随显示器真实缩放倍率。
+# 注意: 开启后窗口模式的游戏窗口不再被放大(在缩放屏幕上看起来变小了)，可将游戏内分辨率调到显示器原生分辨率。
+# 若因此出现兼容性问题(极少数第三方 Mod 的 UI 坐标异常)，可将此项改为 false 恢复原行为。
+force_dpi_awareness = true
+
+[core.logging]
+# "trace", "debug", "info", "warn", "error", "critical", "off"
+level = "info"
+flush_level = "info"
+
+[resources]
+# 翻译文件目录
+translation_dir = "Data/interface/SimpleIME"
+# [可选] 用于 SimpleIME 的字体文件路径列表，支持 ttf 和 otf 格式，Mod 会按照列表顺序加载字体并合并到一起
+# 如果列表为空或所有字体文件都无效，将使用系统默认字体
+# 示例: ["C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/seguiemj.ttf"]
+fonts = []
+
+[appearance]
+# UI缩放倍率，有效值为 0.5 - 2.0, 请使用 0.25 的整数倍
+# 可以指定为负数，表示应用当前显示器的缩放倍率
+zoom = -1.0
+# 主题深色模式，默认 false (亮色)；删除此键同样使用亮色默认
+theme_dark_mode = false
+# 界面语言，自带 english / chinese / japanese / korean；把 translate_<name>.toml 放进 interface\SimpleIME\ 即可扩展
+language = "english"
+# 主题样式，默认 "default" 固定配色; 在主题构建器自定义主题颜色后自动变为 "material"
+# 想恢复默认主题时删除此键或改回 "default"
+theme_style = "default"
+# 垂直显示候选词列表
+vertical_candidate_list = false
+# RGB 颜色, 不包含 alpha (仅在 theme_style = "material" 时生效)
+theme_source_color = 0x673AB7
+# IME 激活/隐藏的同时，自动激活/隐藏语言栏
+auto_toggle_language_bar = true
+# 对比度，-1.0 - 1.0，默认值为 0.0
+theme_contrast_level = 0.0
+# 错误信息显示持续时间 (秒)，-1 为不自动关闭
+error_display_duration = 10
+
+[input]
+pos_update_policy = "based_on_caret"
+enable_unicode_paste = true
+keep_ime_open = false
+# Meridian UI 输入支持
+# 启用后，当 Meridian 界面(CEF 渲染，如 Tailor 裁缝店)获得焦点时自动激活 IME，
+# 并将上屏文字直接提交到其网页输入框。未安装 MeridianUI.dll 时此选项无效果。
+meridian_support = true
+# Prisma UI 避让模式
+# Prisma 界面(如 Outfit Wheeler)自带原生输入法处理，此开关打开时 SimpleIME 会在
+# Prisma 界面持有键盘焦点期间自动让位，避免两套输入法互相抢占。关闭后 SimpleIME
+# 将无视 Prisma(仅在明确知道后果时才建议关闭)。
+prisma_avoidance = true
+# SKSE Menu Framework 输入支持
+# 启用后，SKSEMF 界面(ImGui 实现，如使用该框架的设置菜单)的文本框聚焦时自动激活
+# IME，并将上屏中文直接注入输入框。未安装 SKSEMenuFramework.dll(或版本低于 3.7)
+# 时此选项无效果。
+skse_menu_framework_support = true

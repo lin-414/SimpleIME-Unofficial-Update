@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SimpleIME Banner</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #0C0C0E; }
+  body { width: 1300px; height: 372px; overflow: hidden; }
+
+  .stage {
+    position: relative;
+    width: 1300px;
+    height: 372px;
+    background: #121214;
+    overflow: hidden;
+    font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  }
+
+  .scene { position: absolute; inset: 0; z-index: 1; }
+
+  .glow-l {
+    position: absolute; top: 0; left: 20px;
+    width: 620px; height: 260px; z-index: 2;
+    background: radial-gradient(ellipse at center, rgba(77,122,109,0.14) 0%, rgba(77,122,109,0) 65%);
+  }
+  .glow-r {
+    position: absolute; top: 40px; right: 40px;
+    width: 660px; height: 240px; z-index: 2;
+    background: radial-gradient(ellipse at center, rgba(77,122,109,0.16) 0%, rgba(77,122,109,0) 65%);
+  }
+  .vignette {
+    position: absolute; inset: 0; z-index: 3;
+    background:
+      linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 16%),
+      linear-gradient(0deg, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0) 24%),
+      radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0) 52%, rgba(0,0,0,0.42) 100%);
+  }
+
+  .left {
+    position: absolute; z-index: 5;
+    left: 72px; top: 44px;
+    display: flex; flex-direction: column; align-items: flex-start;
+  }
+
+  .eyebrow {
+    font-family: 'Bahnschrift', 'Segoe UI', sans-serif;
+    font-size: 10.5px; font-weight: 400;
+    letter-spacing: 2.5px; padding-left: 2.5px;
+    color: #B8B2A7;
+    border: 1px solid rgba(58,61,72,0.9);
+    background: rgba(26,27,31,0.55);
+    border-radius: 999px;
+    padding: 6px 14px 6px 16px;
+  }
+
+  h1 {
+    margin-top: 16px;
+    font-family: 'Palatino Linotype', 'Constantia', Georgia, serif;
+    font-size: 68px; font-weight: 700;
+    letter-spacing: 0.045em; padding-left: 0.045em;
+    color: #ECE0C8;
+    text-shadow: 0 3px 24px rgba(0,0,0,0.55), 0 0 80px rgba(77,122,109,0.18);
+  }
+  h1 .accent { color: #6E9685; }
+
+  .edition {
+    margin-top: 14px;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: 'Bahnschrift', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+    font-size: 12px; font-weight: 400;
+    letter-spacing: 3px; padding-left: 3px;
+    color: #BFD3C6;
+    background: rgba(36,53,47,0.85);
+    border: 1px solid rgba(110,150,133,0.45);
+    border-radius: 999px;
+    padding: 6px 15px 6px 17px;
+  }
+  .edition .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #6E9685;
+    box-shadow: 0 0 7px rgba(110,150,133,0.9);
+  }
+
+  .sub-en {
+    margin-top: 11px;
+    font-size: 12.5px; font-weight: 400;
+    letter-spacing: 0.5px;
+    color: #B8B2A7;
+  }
+
+  .candidate {
+    position: absolute; z-index: 5;
+    right: 84px; top: 138px;
+    background: #1A1B1F;
+    border: 1px solid #3A3D48;
+    border-radius: 8px;
+    padding: 12px 16px 11px;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.6), inset 0 1px 0 rgba(236,224,200,0.05);
+  }
+  .comp {
+    font-size: 19px;
+    color: #ECE0C8;
+    letter-spacing: 1px;
+  }
+  .comp .caret {
+    display: inline-block; width: 2px; height: 20px;
+    background: #ECE0C8; opacity: 0.9;
+    margin-left: 3px; vertical-align: -3px;
+  }
+  .cand-divider { height: 1px; background: #2E3038; margin: 10px -16px; }
+  .cands { display: flex; gap: 9px; align-items: center; }
+  .chip {
+    display: flex; align-items: baseline;
+    padding: 4px 7px; border-radius: 5px;
+    font-size: 18px; line-height: 23px;
+  }
+  .chip.sel { background: #4D7A6D; }
+  .chip .num { margin-right: 5px; }
+  .chip .num, .chip .word { font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; }
+  .chip .num { color: #B8B2A7; }
+  .chip .word { color: #ECE0C8; }
+  .chip.sel .num, .chip.sel .word { color: #FCFBF9; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <svg class="scene" viewBox="0 0 1300 372" width="1300" height="372" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="moonHalo" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#ECE0C8" stop-opacity="0.16"/>
+        <stop offset="30%" stop-color="#ECE0C8" stop-opacity="0.08"/>
+        <stop offset="70%" stop-color="#ECE0C8" stop-opacity="0.02"/>
+        <stop offset="100%" stop-color="#ECE0C8" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+
+    <!-- moon -->
+    <circle cx="1152" cy="60" r="84" fill="url(#moonHalo)"/>
+
+    <!-- stars / drifting snow -->
+    <g fill="#ECE0C8">
+      <circle cx="70"  cy="52"  r="1.2" opacity="0.12"/>
+      <circle cx="152" cy="106" r="1.0" opacity="0.08"/>
+      <circle cx="236" cy="40"  r="1.4" opacity="0.14"/>
+      <circle cx="318" cy="86"  r="1.0" opacity="0.08"/>
+      <circle cx="404" cy="54"  r="1.2" opacity="0.11"/>
+      <circle cx="498" cy="34"  r="1.0" opacity="0.09"/>
+      <circle cx="588" cy="72"  r="1.3" opacity="0.12"/>
+      <circle cx="676" cy="44"  r="1.0" opacity="0.08"/>
+      <circle cx="760" cy="90"  r="1.2" opacity="0.10"/>
+      <circle cx="846" cy="38"  r="1.0" opacity="0.08"/>
+      <circle cx="926" cy="70"  r="1.2" opacity="0.10"/>
+      <circle cx="1006" cy="116" r="1.0" opacity="0.08"/>
+      <circle cx="1236" cy="128" r="1.1" opacity="0.09"/>
+      <circle cx="48"  cy="168" r="1.1" opacity="0.08"/>
+      <circle cx="96"  cy="252" r="1.2" opacity="0.09"/>
+      <circle cx="262" cy="228" r="1.1" opacity="0.08"/>
+      <circle cx="452" cy="246" r="1.0" opacity="0.07"/>
+      <circle cx="596" cy="256" r="1.1" opacity="0.08"/>
+      <circle cx="742" cy="238" r="1.0" opacity="0.07"/>
+      <circle cx="886" cy="252" r="1.1" opacity="0.08"/>
+      <circle cx="1042" cy="230" r="1.0" opacity="0.07"/>
+    </g>
+
+    <!-- mountain ridges -->
+    <path d="M0,302 L120,274 L240,296 L370,268 L490,294 L610,274 L730,300 L850,276 L970,298 L1090,270 L1200,294 L1300,280 L1300,372 L0,372 Z" fill="#1C1D25"/>
+    <path d="M0,322 L160,300 L320,320 L480,298 L640,322 L800,302 L960,324 L1120,302 L1300,324 L1300,372 L0,372 Z" fill="#171820"/>
+    <path d="M0,344 L200,326 L400,342 L600,324 L800,344 L1000,328 L1200,346 L1300,334 L1300,372 L0,372 Z" fill="#121319"/>
+    <path d="M0,302 L120,274 L240,296 L370,268 L490,294 L610,274 L730,300 L850,276 L970,298 L1090,270 L1200,294 L1300,280" fill="none" stroke="#ECE0C8" stroke-opacity="0.08" stroke-width="1.2"/>
+  </svg>
+
+  <div class="glow-l"></div>
+  <div class="glow-r"></div>
+  <div class="vignette"></div>
+
+  <div class="left">
+    <div class="eyebrow">SKYRIM SE / AE &nbsp;·&nbsp; SKSE PLUGIN</div>
+    <h1>Simple<span class="accent">IME</span></h1>
+    <div class="edition"><span class="dot"></span>非官方更新</div>
+    <div class="sub-en">Native IME input for Skyrim SE / AE — console, every text field &amp; mod UIs</div>
+  </div>
+
+  <div class="candidate">
+    <div class="comp">SimpleIME<span class="caret"></span></div>
+    <div class="cand-divider"></div>
+    <div class="cands">
+      <div class="chip sel"><span class="num">1</span><span class="word">你好</span></div>
+      <div class="chip"><span class="num">2</span><span class="word">Hello</span></div>
+      <div class="chip"><span class="num">3</span><span class="word">こんにちは</span></div>
+      <div class="chip"><span class="num">4</span><span class="word">안녕</span></div>
+      <div class="chip"><span class="num">5</span><span class="word">Hallo</span></div>
+      <div class="chip"><span class="num">6</span><span class="word">Привет</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

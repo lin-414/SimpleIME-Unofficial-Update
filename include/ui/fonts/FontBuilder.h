@@ -1,0 +1,46 @@
+//
+// Created by jamie on 2026/1/15.
+//
+
+#pragma once
+
+#include "ui/Settings.h"
+#include "ui/fonts/FontManager.h"
+#include "ui/fonts/ImFontWrap.h"
+
+struct ImFont;
+struct ImGuiTextFilter;
+
+namespace Ime
+{
+class FontBuilder
+{
+public:
+    //! Defined inline: constexpr implies inline, and the preview panel's TU
+    //! ODR-uses it — an out-of-line definition in Fonts.cpp would not be found.
+    constexpr bool IsBuilding() const { return m_baseFont.IsCommittable(); }
+
+    bool AddFont(int fontId, ImFontWrap &imFont);
+
+    /**
+     * Apply current build font to the default @c ImGui font
+     * @return is applied?
+     */
+    bool ApplyFont(Settings &settings);
+
+    void Reset()
+    {
+        m_baseFont.Cleanup();
+        m_usedFontIds.clear();
+    }
+
+    [[nodiscard]] auto GetBaseFont() const -> const ImFontWrap & { return m_baseFont; }
+
+    constexpr auto GetFontManager() const -> const FontManager & { return m_fontManager; }
+
+private:
+    FontManager      m_fontManager;
+    ImFontWrap       m_baseFont{};
+    std::vector<int> m_usedFontIds; // font index in FontManger#fontInfo list.
+};
+} // namespace Ime

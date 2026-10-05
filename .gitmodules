@@ -1,0 +1,17 @@
+[submodule "extern/CommonLibSSE-NG"]
+	path = extern/CommonLibSSE-NG
+	url = https://github.com/alandtse/CommonLibVR
+[submodule "extern/imgui"]
+	path = extern/imgui
+	# Fork of ocornut/imgui carrying the font-size em-square patch (branch
+	# fix/font-size-em-square-semantics, commit 9c834a8, on top of v1.92.7).
+	# Sync the fork from upstream when the parent project updates the submodule.
+	url = https://github.com/lin-414/imgui.git
+[submodule "extern/JamieMods"]
+	path = extern/JamieMods
+	# Fork of cyfewlp/JamieMods carrying the thread-safe ErrorNotifier fix
+	# (branch fix/error-notifier-thread-safety, commit b6c74e7) and the default
+	# theme / M3 updates for SimpleIME (branch feat/default-theme-and-m3-updates,
+	# commit db55be8). Sync the fork from upstream when the parent project
+	# updates the submodule.
+	url = https://github.com/lin-414/JamieMods.git
