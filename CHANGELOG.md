@@ -1,3 +1,23 @@
+## [3.1.1] - 2026-10-06
+
+### 🐛 Bug Fixes
+
+- *(license)* Relicense to GPL-3.0-or-later
+- IME sessions and candidate window layering over Prisma UI and SKSEMF menus
+
+
+**Full Changelog**: https://github.com/lin-414/SimpleIME-Unofficial-Update/compare/v3.0.0-beta...v3.1.1
+
+## [3.0.0-beta] - 2026-10-05
+
+### 🚀 Features
+
+- SimpleIME 3.0.0-beta — unofficial update of cyfewlp/SimpleIME: hardened TSF/IME core, M3 settings UI and font builder, native input for Meridian UI, SKSE Menu Framework, Prisma UI and NirnLab UIPlatform
+
+
+### New Contributors
+* @lin-414 made their first contribution
+
 ## [2.3.1] - 2026-09-18
 
 ### 🐛 Bug Fixes
