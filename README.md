@@ -10,7 +10,7 @@ composition), the TSF / focus / teardown paths are hardened against crashes and 
 IME input is added for the mod UI frameworks upstream does not cover — **Meridian UI** (CEF)
 and **SKSE Menu Framework** (ImGui) — plus **Prisma UI** avoidance so the two never fight.
 
-**Current:** v3.0.0-beta · **Base:** upstream `v2.2.1` (`a2cd39f`) · **License:** MIT
+**Current:** v3.0.0-beta · **Base:** upstream `v2.2.1` (`a2cd39f`) · **License:** GPL-3.0-or-later
 
 Generic usage, configuration and build instructions are documented in the
 [upstream README](https://github.com/cyfewlp/SimpleIME#readme) and the fully commented
@@ -192,9 +192,34 @@ git fetch upstream && git merge upstream/main
   [alandtse/CommonLibVR](https://github.com/alandtse/CommonLibVR) (CommonLibSSE-NG) and the
   [JamieMods](https://github.com/lin-414/JamieMods) fork — git submodules
 
-See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full list.
+See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — shipped in the source
+repository — for the full list.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 cyfewlp. Unofficial-update maintenance:
-lin-414.
+GPL-3.0-or-later — see the full license text in [LICENSE](LICENSE), or read it
+at <https://www.gnu.org/licenses/>.
+
+Copyright (C) 2026 lin-414 — unofficial-update maintenance.
+Copyright (c) 2026 cyfewlp — the original SimpleIME (MIT).
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+**Source code:** <https://github.com/lin-414/SimpleIME-Unofficial-Update>
+
+Why GPL? This fork links [CommonLibSSE-NG](https://github.com/alandtse/CommonLibSSE-NG),
+which is licensed GPL-3.0-or-later (its `COPYING.txt` is vendored in the
+submodule), and vendors MeridianUI's GPL-3.0 extension header; the combined
+work is therefore distributed under the GNU GPL, version 3 or later. The
+upstream project remains MIT-licensed — its copyright and permission notice
+are retained in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
