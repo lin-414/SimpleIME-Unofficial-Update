@@ -19,8 +19,12 @@ public:
      * @brief Computes the screen coordinates of the active text input field.
      * Compute from the provided @p movieView or by searching through the menu stack if @p movieView is null.
      * the cached index is stale.
+     *
+     * @return true when this call produced a fresh caret rect. On failure the
+     * previously cached bounds are kept (consumers must not read (0,0)), so
+     * only trust the result after a true return.
      */
-    auto ComputeScreenMetrics() -> void;
+    auto ComputeScreenMetrics() -> bool;
 
     /**
      * @brief Invalidate the cached menu index, forcing the next ComputeScreenMetrics call to search through the menu stack.
@@ -38,8 +42,6 @@ public:
     }
 
 private:
-    void Reset();
-
     RE::GRectF m_cachedBounds{};
     size_type  m_lastFocusedMenuIndex{RE_ARRAY_SIZE_MAX};
 };

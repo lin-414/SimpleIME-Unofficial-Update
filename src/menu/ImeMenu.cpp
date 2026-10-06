@@ -203,6 +203,31 @@ auto OnMouseEvent(RE::GFxEvent *event, const bool down) -> RE::UI_MESSAGE_RESULT
     io.AddMouseSourceEvent(mouseSource);
     io.AddMouseButtonEvent(static_cast<int>(mouseEvent->button), down);
 
+    // While a Prisma view owns input, every left press refreshes the field
+    // anchor: a click on a text field IS the field, so the next composition
+    // anchors there instead of chasing the live cursor. MenuCursor is the
+    // coordinate space the candidate window lives in — trust it only while the
+    // engine cursor menu keeps it fresh (Prisma draws its own cursor sprite
+    // under its FocusMenu); otherwise the event's stage coords are the best
+    // available observation, even though their space is not verified. Clicks
+    // consumed by the IME window itself (candidate selection) must not move
+    // the anchor onto the candidate window.
+    if (down && mouseEvent->button == 0 && Hooks::PrismaBridge::ShouldRoute() && !io.WantCaptureMouse)
+    {
+        float anchorX = mouseEvent->x;
+        float anchorY = mouseEvent->y;
+        auto  *ui     = RE::UI::GetSingleton();
+        if (ui != nullptr && ui->IsMenuOpen(RE::CursorMenu::MENU_NAME))
+        {
+            if (const auto *cursor = RE::MenuCursor::GetSingleton(); cursor != nullptr)
+            {
+                anchorX = cursor->cursorPosX;
+                anchorY = cursor->cursorPosY;
+            }
+        }
+        Hooks::PrismaBridge::UpdateFieldAnchor(anchorX, anchorY);
+    }
+
     if (Core::State::GetInstance().IsImeInputting())
     {
         if (!io.WantCaptureMouse)

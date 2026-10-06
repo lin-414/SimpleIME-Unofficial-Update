@@ -56,6 +56,19 @@ void QueueText(std::wstring_view text);
 /// commit route posts character messages at this window.
 void SetGameHwnd(HWND hwnd);
 
+/// Session-sticky "input field" anchor for the candidate window. Ultralight
+/// exposes no caret rect, and PrismaUI's public API cannot name the focused
+/// view (ids are random 64-bit NanoIDs with no enumeration query), so the
+/// best proxy is the interaction point: seeded from the engine cursor while
+/// the engine cursor menu keeps it fresh, refreshed on every left click
+/// inside the view (a click on a text field IS the field). Held for the whole
+/// session so the candidate window does not chase the live cursor. Writers
+/// are on the game thread; the coordinates travel bit-packed through a single
+/// atomic so the render-thread reader never sees a mixed X/Y pair.
+void UpdateFieldAnchor(float x, float y);
+/// Render-thread read; false when no Prisma session anchor is available.
+[[nodiscard]] bool GetFieldAnchor(float &x, float &y);
+
 /// The registered window message id for Prisma's IME association handshake,
 /// or 0 before Install.
 [[nodiscard]] unsigned AssociationMessage();

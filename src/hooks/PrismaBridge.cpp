@@ -22,10 +22,14 @@
 #include "ime/ImeController.h"
 #include "log.h"
 #include "PrismaUI/PrismaUI_API.h"
+#include "RE/C/CursorMenu.h"
+#include "RE/M/MenuCursor.h"
+#include "RE/U/UI.h"
 
 #include <Windows.h>
 
 #include <atomic>
+#include <bit>
 
 namespace Hooks::PrismaBridge
 {
@@ -43,6 +47,26 @@ std::atomic<bool>           s_enabled{false}; ///< config gate, latched at Insta
 std::atomic<SupportState>   s_state{SupportState::Pending}; ///< install outcome, for the settings UI
 std::atomic<std::uint64_t>  s_lastRefreshMs{0};
 std::atomic<HWND>           s_gameHwnd{nullptr}; ///< set by ImeWnd once created; the WM_CHAR commit target
+std::atomic<std::uint64_t>  s_fieldAnchor{0}; ///< both coordinates bit-packed (X low, Y high); see UpdateFieldAnchor
+std::atomic<bool>           s_fieldAnchorValid{false};
+
+/// Seed the field anchor from the engine cursor — but only while the engine
+/// cursor menu is open and keeping MenuCursor fresh (Prisma's FocusMenu sets
+/// kUsesCursor, so this holds for PMCM-style takeovers). Reading the
+/// singleton without that guard would write a stale position, which is worse
+/// than no anchor: a valid garbage anchor suppresses every fallback.
+void SeedFieldAnchorFromCursor()
+{
+    auto *ui = RE::UI::GetSingleton();
+    if (ui == nullptr || !ui->IsMenuOpen(RE::CursorMenu::MENU_NAME))
+    {
+        return;
+    }
+    if (const auto *cursor = RE::MenuCursor::GetSingleton(); cursor != nullptr)
+    {
+        UpdateFieldAnchor(cursor->cursorPosX, cursor->cursorPosY);
+    }
+}
 } // namespace
 
 void Install()
@@ -137,10 +161,24 @@ void Refresh()
         // (see IsShouldEnableIme): focus gained -> the IME takes over; focus
         // lost -> the counter (closed) turns it back off.
         logger::info("Prisma view focus {} — re-evaluating IME state", focus ? "GAINED" : "lost");
+        if (!focus)
+        {
+            // Session over: drop the anchor so the next session re-seeds.
+            s_fieldAnchorValid.store(false, std::memory_order_release);
+        }
         if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
         {
             controller->SyncImeState();
         }
+    }
+    // Live session without a field anchor yet — a freshly gained focus, or an
+    // association handshake that flipped s_hasActiveFocus before this loop
+    // ever saw a transition. Seed from the engine cursor; retried every tick
+    // until a seed or a click provides one, and never overwrites a click-set
+    // anchor because it only runs while the anchor is invalid.
+    if (ShouldRoute() && !s_fieldAnchorValid.load(std::memory_order_acquire))
+    {
+        SeedFieldAnchorFromCursor();
     }
 }
 
@@ -227,6 +265,29 @@ void QueueText(std::wstring_view text)
 void SetGameHwnd(HWND hwnd)
 {
     s_gameHwnd.store(hwnd, std::memory_order_release);
+}
+
+void UpdateFieldAnchor(float x, float y)
+{
+    // One atomic holds both coordinates (X in the low 32 bits, Y in the high
+    // 32): the game thread writes while the render thread reads, and a split
+    // store could hand a reader a new X paired with an old Y for a frame.
+    const auto packed = static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(x)) |
+                        (static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(y)) << 32);
+    s_fieldAnchor.store(packed, std::memory_order_release);
+    s_fieldAnchorValid.store(true, std::memory_order_release);
+}
+
+bool GetFieldAnchor(float &x, float &y)
+{
+    if (!s_fieldAnchorValid.load(std::memory_order_acquire))
+    {
+        return false;
+    }
+    const auto packed = s_fieldAnchor.load(std::memory_order_acquire);
+    x = std::bit_cast<float>(static_cast<std::uint32_t>(packed));
+    y = std::bit_cast<float>(static_cast<std::uint32_t>(packed >> 32));
+    return true;
 }
 
 unsigned AssociationMessage()

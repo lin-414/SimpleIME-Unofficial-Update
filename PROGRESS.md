@@ -1711,3 +1711,192 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
 - 遗留:de/ko/ja/ru 翻译文案未同步(仍旧避让措辞);组词串贴屏幕顶缘可能被裁(搜索框
   本身在屏幕顶时),用户未再报,暂不处理。
 - 版本 3.0.0-beta → **3.1.1-beta**(用户指示保留 beta 后缀;3.1.1 tag/Release 已删重发)。
+
+## 第 40 轮:候选窗偶发出生在屏幕左上角修复 (2026-10-06)
+
+> 用户报告:posUpdatePolicy=BASED_ON_CARET 时,候选/组词窗口有时不出现在插入符处,
+> 而是出生在屏幕左上角 (0,0)。
+
+### 根因
+- `ImeWindow::Draw` 只在窗口**重新出现那一帧**(`currentFrame > m_lastShowFrame + 1`)调一次
+  `UpdateImeWindowPos`;后续帧只做 Clamp 不重查。
+- 该帧 `InputFocusAnchor::ComputeScreenMetrics()` **先 Reset 成 (0,0) 再查询**;Scaleform
+  查询链(`Selection.getFocus` → 焦点对象 → `Selection.getCaretIndex` →
+  `getExactCharBoundaries` → `TranslateLocalToScreen`×2)任一环失败(焦点尚未传播、
+  caretIndex=-1、字段未布局、或压根无 Scaleform 字段=ImGui/SKSEMF/Console)都把 (0,0)
+  当成插入符位置 → 窗口出生左上角并**在整个组词会话期间滞留**。
+- 次要:`GetBoundsRectFrom` 逐成员局部赋值(缺 width/height 时产出半截矩形);
+  `TranslateLocalToScreen` 只成功一半时混合局部/屏幕坐标;`FindActiveInputMovie`
+  全扫描失败时返回 menuCount-1 把未聚焦菜单写进缓存索引。
+
+### 修复
+- **InputFocusAnchor**:`ComputeScreenMetrics()` 改返回 bool(本次是否新查得);
+  失败**保留上次有效边界**绝不清零;caretIndex≥0、char 边界四成员齐全、两点
+  LocalToScreen 全成功才提交缓存;全扫描失败返回 RE_ARRAY_SIZE_MAX 不再毒化缓存
+  (顺带删了已无调用点的 `Reset()`)。
+- **ImeWindow**:`UpdateImeWindowPos` 返回锚点是否落定;CARET 查询失败回退
+  **MenuCursor**(用户刚点击处)代替 (0,0);新增 `m_caretAnchorLocked` +
+  每 5 帧重试直到锁定( appearance 帧输掉焦点竞态时 ≤80ms 自愈)。
+  外观帧日志追加 `caretAnchorLocked=` 字段。
+- Meridian 接管路径(OwnsCandidateUi)与 BASED_ON_CURSOR/NONE 策略行为不变。
+
+### 产物
+- 构建 EXIT 0(16/16);SimpleIMETest 48/48;DLL 已部署 E:\Skyrim AE\mods\SimpleIME,
+  待用户游戏内验证。
+
+### 第 40 轮追加:左上角→左下角(光标回退被 ImGui 定位策略无视)
+- 用户复测:窗口从左上角变**左下角**。日志实证:15:59:23/15:59:35 两次 SKSEMF 文本会话
+  `caretAnchorLocked=false`,而 15:59:11 会话 `=true` 写入了边界缓存。
+- **根因**:`FindBestWindowPosForPopupEx`(ComboBox 策略)**完全无视传入 pos**,直接用
+  `avoidRect` 摆位(Down=(Min.x, Max.y) 左对齐贴下缘)→ 解锁会话拿"上次成功查询"的
+  陈旧边界当 avoidRect → 窗口贴到旧字段左下方;修复前的 (0,0) 左上角其实是同一机制
+  (Reset 后的退化 avoidRect),`windowPos` 赋值从来就不是最终位置。
+- **修复**:
+  - `ClampWindowToViewport` 增加 `caretAnchorLocked` 参数:CARET 未锁定会话用**点状
+    avoidRect**(=回退位置),让 ComboBox 策略原样返回回退点;锁定会话才用真实字段边界。
+  - `UpdateImeWindowPosByCaret` 在 **ImGui 系表面持有输入时直接跳过 Scaleform 查询**
+    (SkseMenuFrameworkBridge::SessionActive / MeridianBridge::HasFocus /
+    runtimeData.overlayShowing)——防 HUD 隐藏文本框 caret=0 造成假锁定写垃圾边界。
+  - 解锁期间每帧跟随光标(MenuCursor 为空时回退 ImGui::GetMousePos,IsMousePosValid
+    过滤 -FLT_MAX),每 5 帧仍重试锚点直到锁定。
+- 重新构建部署(16:16),待游戏内验证:SKSEMF/设置界面输入时窗口应跟随鼠标,真实
+  Scaleform 字段时仍按插入符定位。
+
+### 第 40 轮再追加:取消鼠标跟随 + 修正 overlayShowing 误用
+- 用户复测:窗口跟随鼠标移动;SKSE 菜单里候选框不显示。
+- **根因**:`overlayShowing` 实为**语言栏**显示标志(所有菜单里都为 true,见
+  ImeOverlay.cpp "Language bar shown"),上一轮把它当"设置界面打开"纳入压制条件,
+  等于全局禁用 Scaleform 锚点 → caretAnchorLocked 永远 false → 全部走光标回退;
+  加上"解锁期间每帧跟随光标"的设计 → 窗口贴着鼠标走。
+- **修复**:
+  - 压制条件只留 SkseMenuFrameworkBridge::SessionActive + MeridianBridge::HasFocus
+    (真正无 Scaleform 插入符的表面);注释注明 overlayShowing 陷阱。
+  - 取消逐帧鼠标跟随:光标位置只在**出现帧一次性捕获**,会话内位置稳定;解锁期间
+    仍每 5 帧重试锚点,锁到即吸附到插入符。
+  - 外观帧日志追加 imePos=(x,y),位置类问题可直接从日志定位。
+- 重新构建部署,待游戏内验证:游戏内 Scaleform 字段应锁插入符;SKSEMF 字段应停在
+  出现时的鼠标点(即点击的输入框处)不动。
+
+### 第 40 轮三追加:SKSE 菜单遮挡候选框(Present 钩子门控扩展)
+- 用户截图:SKSEMF 菜单(模组控制面板)输入时,候选框被框架菜单面板盖住下缘。
+- **根因**:第 39 轮的 IDXGISwapChain::Present 层级钩子门控只写了
+  `PrismaBridge::ShouldRoute()`,注释明确把 SKSEMF 排除在外("keeps its layering")。
+  SKSEMF 框架菜单的渲染回调在 ImeMenu::PostDisplay(游戏线程画框点)之后执行 →
+  框被盖。此前框定位 (0,0)/旧字段与面板不重叠,层级缺陷一直没显形;本轮框定位到
+  点击处才暴露。
+- **修复**:门控改为 `PrismaBridge::ShouldRoute() || SkseMenuFrameworkBridge::
+  SessionActive()`——SKSEMF 文本会话期间翻转前最后重画一遍,框在框架菜单之上
+  (与 Prisma 会话同机制,双绘制/互斥锁/后台缓冲 RTV 钉住全部沿用)。
+- 重新构建部署,待游戏内验证:SKSEMF 输入时候选框应完整浮在面板之上。
+
+### 第 40 轮四追加:SKSEMF 输入框锚点(候选框定位到输入框)
+- 用户截图:层级已修复(候选框浮在面板上),但框出现在屏幕中部——回退用的是组词
+  开始时的鼠标位置,用户点完输入框后鼠标已移开。
+- **修复**:SKSEMF 桥在 WantTextInput false→true 转换(BeginTextInput,即框架输入框
+  获得焦点瞬间,引擎光标必然停在刚点击的输入框上)捕获**字段锚点**
+  (MenuCursor 坐标,原子存储,公开 HasFieldAnchor/GetFieldAnchor)。
+  ImeWindow 的 CARET 路径:SKSEMF 会话→有锚点则锚定锚点+24px(让出输入行高度)并
+  直接锁定;Meridian→仍走光标回退;其余→Scaleform 插入符查询不变。
+- **同时简化 ClampWindowToViewport**:CARET/CURSOR 一律用点状 avoidRect——锚定成功
+  时 pos 本来就等于 Scaleform 边界的 (left,bottom),点状完全等价;陈旧边界从此彻底
+  退出定位链路(左下角类 bug 无法再发生)。
+- 构建 EXIT 0;测试 48/48;已部署,待游戏内验证。
+
+### 第 40 轮五追加:同类问题排查
+- **查实并修复 2 处同类缺陷**:
+  1. `UpdateWindowPosByCursor` 信任 `MenuCursor::GetSingleton() != nullptr`——SDM 单例
+     恒非空,CursorMenu 关闭时坐标陈旧(与 overlayShowing 同类的"标志位/存在性误当
+     有效性"陷阱)。改用 `ImGui::GetMousePos()`(imgui_manager 每帧按 CursorMenu 开合
+     选好 MenuCursor/GetCursorPos-client 来源喂 io,UpdateCursorPos 在帧路径上)。
+  2. Prisma 会话未压制 Scaleform 锚点查询——杂散 HUD 文本字段可假锁定垃圾边界。
+     补 `PrismaBridge::OwnsInput()` 压制;已核实其语义:PrismaUI 未安装时为 false
+     (Install 提前返回,unavailable 仅指"已加载但 V1 不支持"),不会误伤纯 Scaleform 场景。
+  3. 桥内字段锚点捕获加与 imgui_manager 相同的 CursorMenu-open 信任闸,关闭时跳过
+     (ImeWindow 落 io.MousePos 回退);补 include RE/C/CursorMenu.h。
+- **排查确认无问题**:GetLastBounds/ComputeScreenMetrics 仅 ImeWindow 消费且仅新鲜值;
+  g_ImGuiFrameMutex 串行 PostDisplay 与 Present 钩子帧(Scaleform Invoke 无并发);
+  Meridian 网页面板自带 getBoundingClientRect 定位、无字段回退无更优锚点;Console 非
+  组词目标;语言栏/设置窗在 SKSEMF/Prisma 会话由 Present 钩子整帧重画在顶层;
+  ImeWnd MouseDrawCursor 已正确用 IsMenuOpen 闸。
+- 构建 EXIT 0;测试 48/48;部署 17:18。
+
+### 第 40 轮六追加:控制台飘移根因 + 框架字段真实插入符锚点
+- 用户复测:控制台打字时候选框从初始位置持续垂直飘到左上角;SKSEMF 框仍未贴输入框。
+- **飘移根因(日志+代码联合定位)**:上轮点状锚点改用 FindBestWindowPosForPopupEx
+  (ComboBox 策略)后,其**方向记忆对点锚是致命的**——框底部出视口时翻转到 Right
+  (=点上方一个框高),而 last_dir=Right 有粘性、Right 的参照点就是当前 pos 本身,
+  于是每帧 pos.y -= size.y,一路爬到左上角卡住。控制台查询其实成功
+  (17:26:21/25/29、17:27:09/15 locked=true, imePos=(74,138x)=控制台输入行真实位置),
+  恰好触发底部翻转→飘移。
+- **修复 1**:ClampWindowToViewport 弃用 FindBestWindowPosForPopupEx,改简单视口钳制
+  +一次性底部翻转(翻转条件保证下一帧不再触发,方向记忆成员 m_lastAutoPosDir 删除)。
+- **SKSEMF 锚点失效根因**:MCM 面板打开时**自动聚焦**搜索框(无点击),WantTextInput
+  上升瞬间鼠标在别处,"点击时刻鼠标位置"启发式天然拿不到字段位置。
+- **修复 2**:发现 SKSEMenuFramework.dll 导出完整 cimgui 表面(1427 个导出),其内嵌
+  imgui 为 **1.90.8**(DLL 内 "Dear ImGui 1.90.8" 版本串实证)。InputText 每帧把
+  **屏幕空间插入符行位置**写入 ImGuiContext::PlatformImeData(系统 IME 靠它定位)。
+  用 v1.90.8 头文件编译 offsetof 探针算得偏移 **24384**(PlatformImeData 16 字节:
+  WantVisible@0/InputPos@4/InputLineHeight@12,Prev=24400 互证)。桥每框架帧读取:
+  WantVisible>1 视为偏移失配(一次性 warn)并回退点击启发式,永不信任垃圾值;
+  WantVisible=1 时锚点=InputPos 底边(+行高);=0 时锚点失效(不越过所属字段)。
+  BeginTextInput 的 MenuCursor 点击捕获仅作偏移失配后的回退。
+- kFieldAnchorOffsetY 24→12(锚点现在是插入符行底边,非字段中部)。
+- 构建 EXIT 0;测试 48/48;部署 17:53。
+
+### 第 40 轮七追加:锚点读取时机修正(kAfterRender)
+- 用户复测:SKSEMF 仍 locked=false 且无偏移失配警告;控制台已正常锁定 (74,1382)。
+- 分析:WantVisible 恒读 0 → kBeforeRender(3) 在框架 ImGui NewFrame 之后、widget
+  提交之前派发,PlatformImeData.WantVisible 刚被 NewFrame 重置。框架有 kAfterRender
+  (4) 事件(桥的首见遥测早已证实其存在),在帧循环之后派发——此时 PlatformImeData
+  必为当帧 InputText 写入的值。
+- **修复**:UpdateFieldAnchor 改挂 kAfterRender;加 lineHeight∈[4,200] 合理性校验
+  (防偏移半对读错字段);首次读到有效锚点时打一条 "PlatformImeData caret anchor
+  live" 探针日志(含 pos/lineHeight),下次运行即可确认路径是否真正打通。
+- 构建 EXIT 0;测试 48/48;已部署,待验证。
+
+### 第 40 轮八追加:PlatformImeData 运行时自校准
+- 复测:探针日志与失配警告都未出现,WantVisible 在 type 3/4 两个事件点恒读 0
+  (kAfterRender 帧末读仍 0)→ 排除读取时机问题,唯一解释=框架的 imgui 为改动过
+  ImGuiContext 布局的 fork,固定偏移 24384 落在恒 0 字节上(1.90.8 源码实证
+  InputText 每帧必写 PlatformImeData,活动字段不可能恒 0)。
+- **修复:运行时自校准**——会话活跃期在 ImGuiContext [4096,25000) 每 4 字节扫描
+  WantVisible 模式(bool=1 + 有限屏幕坐标 + lineHeight∈[4,200],≤64 候选);字段
+  失活帧剪枝(必须回落 0);两次会话往返后唯一幸存者即真实偏移,打
+  "PlatformImeData calibrated at ImGuiContext+N" 日志;3 轮无候选则判失配,永久
+  回退点击启发式。校准期间锚点无效走旧回退,不影响其它策略。
+- 构建 EXIT 0;测试 48/48;已部署,待验证。
+
+### 第 40 轮九追加:校准偏移持久化(消除每次启动的校准延迟)
+- 用户反馈:每次冷启动后第一次输入都未校准,延迟不可接受。
+- **修复**:校准结果按框架 DLL 指纹(size+mtime)持久化到
+  `Data/interface/SimpleIME/skse_menu_framework_anchor.cache`;
+  TryResolve 成功(框架身份确定)时指纹匹配则直接恢复偏移——**首个会话即锚定**;
+  指纹不匹配(框架更新)自动重新校准并覆写缓存。缓存错位的自愈:字段活跃但
+  WantVisible 连续 ~180 帧为 0 → 弃缓存重新校准。校准收敛后 FinishCalibration
+  统一写缓存(两处成功点合并)。
+- 构建 EXIT 0;测试 48/48;已部署。
+
+### 第 40 轮十追加:内置已知框架偏移表(分发即用)
+- 用户问:分发给别人,别人第一次输入也偏吗?——会(缓存是本机运行期产物)。
+- **修复**:内置已知框架构建的偏移表 kKnownImeOffsets(键=DLL 字节数+框架版本×100):
+  {4583936, 380, 24864}(SKSE-Menu-Framework 3.80 内嵌 cimgui 1.90.8 漂移布局)。
+  TryResolve 时恢复顺序=本机缓存(精确指纹)→ 内置表 → 运行时校准。同框架构建的
+  新用户首次输入即锚定;未知构建走运行时校准一次并入缓存。错表自愈:活跃期
+  WantVisible 连续 ~180 帧为 0 自动重校准。
+- 构建 EXIT 0;测试 48/48;已部署。
+
+### 第 40 轮十一追加:SetPlatformImeDataFn 钩子——确定性锚点,免扫描免校准免缓存
+- 用户:缓存方案实用性太低。根因升级发现:**框架的 ImGuiIO/ImGuiContext 布局整体
+  相对官方 1.90.8 漂移**——探针 offsetof(ImGuiIO,WantTextInput)=196 vs 运行时实证
+  0xCC(204)、ConfigDebugIgnoreFocusLoss 同 +8,一切按官方头文件算的偏移必然错位
+  (这正是扫描校准被迫存在的原因)。
+- **确定性方案:钩 io.SetPlatformImeDataFn**。ImGui 帧末在数据变化时以
+  `&g.PlatformImeData` 为参调用该指针(1.90.8 imgui.cpp:5116 实证;框架 DLL 内嵌
+  imgui_impl_win32,槽位指针指向框架模块)。官方 vanilla offsetof=184,夹在两个
+  实证锚点(0x73/0xC4)之间 → 框架槽位=184+8=**192**;安装前校验槽内指针必须属于
+  SKSEMenuFramework.dll 模块(证明偏移正确),失败则不碰、走校准/点击回退。
+- 钩子事件式维护锚点生命周期:字段激活→锚定,插入符移动→更新,失活→失效。
+  UpdateFieldAnchor(kAfterRender 轮询读)与 BeginTextInput 点击捕获降级为钩子
+  未装时的回退;缓存/内置表保留但仅服务校准回退路径。
+- 构建 EXIT 0;测试 48/48;已部署。预期日志:"Hooked ImGuiIO::SetPlatformImeDataFn
+  at io+192"。

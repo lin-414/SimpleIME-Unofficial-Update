@@ -651,12 +651,15 @@ auto ImeApp::SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, s
     // Outfit Wheeler fields) PrismaUI renders its Ultralight views from its own
     // present CALL-SITE hook — which runs after the game's menu stage, where
     // our PostDisplay overlay draws — so their views cover the candidate
-    // window no matter what we draw earlier. The real swapchain present is the
-    // last draw of the frame; rendering into the backbuffer right before the
-    // flip puts our overlay back on top. Gated on ShouldRoute so every other
-    // surface (Scaleform menus, Meridian, SKSEMF, ENB) keeps its layering.
-    if (Hooks::PrismaBridge::ShouldRoute() && g_instance != nullptr && g_instance->m_state.IsInitialized() &&
-        g_ImGuiFrameMutex.try_lock())
+    // window no matter what we draw earlier. SKSEMF framework menus out-draw
+    // ImeMenu::PostDisplay the same way (their render callback sits above
+    // ImeMenu in the frame), so a candidate overlapping a framework menu hides
+    // under it. The real swapchain present is the last draw of the frame;
+    // rendering into the backbuffer right before the flip puts our overlay
+    // back on top. Gated on the two surfaces known to out-draw PostDisplay so
+    // every other surface (Scaleform menus, Meridian, ENB) keeps its layering.
+    if ((Hooks::PrismaBridge::ShouldRoute() || Hooks::SkseMenuFrameworkBridge::SessionActive()) &&
+        g_instance != nullptr && g_instance->m_state.IsInitialized() && g_ImGuiFrameMutex.try_lock())
     {
         std::lock_guard frameLock(g_ImGuiFrameMutex, std::adopt_lock);
         // ImGui_ImplDX11 draws into whatever render target is bound; the game

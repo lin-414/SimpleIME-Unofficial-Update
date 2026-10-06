@@ -42,6 +42,14 @@ void Tick();
 /// (SendUiString).
 [[nodiscard]] bool ShouldRoute();
 
+/// Screen position of the framework text field that most recently gained
+/// focus, captured the moment WantTextInput rises (the engine cursor is then
+/// still on the field the user just clicked). Backs the candidate window's
+/// caret anchor for ImGui fields, which have no Scaleform caret. False before
+/// the first capture; safe from any thread.
+[[nodiscard]] bool HasFieldAnchor();
+void              GetFieldAnchor(float &a_x, float &a_y);
+
 /// Hand UTF-16 text over to the framework's focused ImGui field. Called from
 /// the IME thread (composition end / WM_CHAR / paste); the text is queued and
 /// injected via ImGuiIO_AddInputCharacter from the framework's render-event

@@ -25,6 +25,8 @@
 #include "imguiex/m3/facade/base.h"
 #include "imguiex/m3/spec/shapes.h"
 #include "hooks/MeridianBridge.h"
+#include "hooks/PrismaBridge.h"
+#include "hooks/SkseMenuFrameworkBridge.h"
 #include "utils/InputFocusAnchor.h"
 
 namespace Ime
@@ -249,33 +251,120 @@ auto DrawVerticalCandidates(const CandidateUi &candidateUi) -> void
     }
 }
 
-auto UpdateImeWindowPosByCaret(ImVec2 &windowPos) -> void
+// Retest cadence for an unlocked caret anchor, in frames: ~80ms at 60fps — a
+// fast self-heal that still bounds the Scaleform query cost when no caret
+// exists at all.
+constexpr int kCaretAnchorRetryInterval = 5;
+
+// Vertical clearance from the field anchor to the candidate window: the
+// anchor is the caret line's bottom inside the field (or the click point on
+// the fallback path), so a small gap drops the window just below the field
+// instead of covering its input row.
+constexpr float kFieldAnchorOffsetY = 12.0F;
+
+auto UpdateWindowPosByCursor(ImVec2 &windowPos) -> bool
 {
+    // io.MousePos is the live cursor whatever its source: imgui_manager feeds
+    // it from MenuCursor while the CursorMenu owns the pointer and from a
+    // client-mapped GetCursorPos otherwise. Reading MenuCursor's singleton
+    // here instead would trust a position that goes stale the moment the
+    // CursorMenu closes — the singleton always exists.
+    const ImVec2 mousePos = ImGui::GetMousePos();
+    if (!ImGui::IsMousePosValid(&mousePos))
+    {
+        return false;
+    }
+    windowPos = mousePos;
+    return true;
+}
+
+auto UpdateImeWindowPosByCaret(ImVec2 &windowPos) -> bool
+{
+    // Framework (ImGui) fields have no Scaleform caret. Anchor at the field
+    // position the bridge captured when the field gained focus — the engine
+    // cursor was on the field at that moment, unlike at composition start
+    // where the mouse may have wandered off. Nudge below the click point so
+    // the window clears the input row it anchors to.
+    if (Hooks::SkseMenuFrameworkBridge::SessionActive())
+    {
+        if (Hooks::SkseMenuFrameworkBridge::HasFieldAnchor())
+        {
+            Hooks::SkseMenuFrameworkBridge::GetFieldAnchor(windowPos.x, windowPos.y);
+            windowPos.y += kFieldAnchorOffsetY;
+            return true;
+        }
+        return false;
+    }
+
+    // Meridian pages are CEF — the bridge renders candidates into the page
+    // itself, this window must not compete. Prisma fields are Ultralight and
+    // have no Scaleform caret either, but the bridge keeps a session-sticky
+    // field anchor (seeded from the session-start cursor and refreshed on
+    // every left click inside the view) — anchor there instead of chasing the
+    // live cursor. Returning false when no anchor exists yet leaves the
+    // position untouched (no cursor fallback here) and keeps the anchor
+    // unlocked so the retry cadence re-reads it once one is seeded.
+    if (Hooks::MeridianBridge::HasFocus())
+    {
+        return false;
+    }
+    if (Hooks::PrismaBridge::ShouldRoute())
+    {
+        if (!Hooks::PrismaBridge::GetFieldAnchor(windowPos.x, windowPos.y))
+        {
+            return false;
+        }
+        windowPos.y += kFieldAnchorOffsetY;
+        return true;
+    }
+
     auto &instance = InputFocusAnchor::GetInstance();
-    instance.ComputeScreenMetrics();
+    if (!instance.ComputeScreenMetrics())
+    {
+        return false;
+    }
     const auto &bounds = instance.GetLastBounds();
 
     windowPos.x = bounds.left;
     windowPos.y = bounds.bottom;
+    return true;
 }
 
-auto UpdateImeWindowPos(Settings::WindowPosUpdatePolicy policy, ImVec2 &windowPos) -> void
+/**
+ * @return true when the policy's anchor is settled for this attempt. A false
+ * return (caret query failed) keeps the anchor unlocked so Draw keeps retrying.
+ */
+auto UpdateImeWindowPos(Settings::WindowPosUpdatePolicy policy, ImVec2 &windowPos) -> bool
 {
+    // Prisma fields have no Scaleform caret and must never fall back to the
+    // live cursor — that is the "candidate box appears wherever the mouse is"
+    // bug. The bridge's field anchor (clicks, session-start cursor) is the
+    // only truthful anchor; while it is missing, the previous position stands
+    // and the retry cadence re-reads it once one is seeded.
+    if (Hooks::PrismaBridge::ShouldRoute())
+    {
+        return UpdateImeWindowPosByCaret(windowPos);
+    }
     switch (policy)
     {
         case Settings::WindowPosUpdatePolicy::BASED_ON_CURSOR:
-            if (const auto *cursor = RE::MenuCursor::GetSingleton(); cursor != nullptr)
-            {
-                windowPos.x = cursor->cursorPosX;
-                windowPos.y = cursor->cursorPosY;
-            }
-            break;
+            return UpdateWindowPosByCursor(windowPos);
         case Settings::WindowPosUpdatePolicy::BASED_ON_CARET: {
-            UpdateImeWindowPosByCaret(windowPos);
-            break;
+            // The Scaleform caret query can lose the race against focus
+            // propagation on the appearance frame, or find no field at all
+            // (ImGui/SKSEMF text, console). Falling back to the menu cursor —
+            // where the user just clicked — beats the (0,0) birth a failed
+            // query used to leave behind.
+            if (UpdateImeWindowPosByCaret(windowPos))
+            {
+                return true;
+            }
+            UpdateWindowPosByCursor(windowPos);
+            return false;
         }
         default:;
     }
+    return true;
 }
 
 /**
@@ -290,27 +379,29 @@ auto UpdateImeWindowPos(Settings::WindowPosUpdatePolicy policy, ImVec2 &windowPo
  * eliminating the need for a separate relayout check. The function will always compute the best position, ensuring the
  * IME window is correctly placed without additional overhead.
  */
-void ClampWindowToViewport(Settings::WindowPosUpdatePolicy policy, ImVec2 &pos, const ImVec2 &size, ImGuiDir &lastAutoPosDir)
+void ClampWindowToViewport(Settings::WindowPosUpdatePolicy policy, ImVec2 &pos, const ImVec2 &size)
 {
     if (policy == Settings::WindowPosUpdatePolicy::NONE) return;
 
+    // Simple viewport clamp + a one-shot vertical flip. FindBestWindowPosForPopupEx
+    // (ComboBox policy) is actively wrong for a point anchor: it positions from
+    // the avoid rect and ignores pos, and its sticky direction memory makes the
+    // popup climb by one box height PER FRAME once it flipped (the Right branch
+    // offsets above the avoid rect, which IS the previous pos) until it sticks
+    // in the top-left corner — the "candidate window drifts upward" bug.
+    // Both policies anchor at a point now, so the popup just hugs that point.
     const auto &viewport = ImGui::GetMainViewport();
-    ImRect      avoidRect;
-    if (policy == Settings::WindowPosUpdatePolicy::BASED_ON_CURSOR)
-    {
-        avoidRect.Min = pos;
-        avoidRect.Max = pos;
-    }
-    else
-    {
-        const auto &bounds = InputFocusAnchor::GetInstance().GetLastBounds();
-        avoidRect.Min.x    = bounds.left;
-        avoidRect.Min.y    = bounds.top;
-        avoidRect.Max.x    = bounds.right;
-        avoidRect.Max.y    = bounds.bottom;
-    }
     const ImRect viewPortRect(viewport->Pos, viewport->Pos + viewport->Size);
-    pos = ImGui::FindBestWindowPosForPopupEx(pos, size, &lastAutoPosDir, viewPortRect, avoidRect, ImGuiPopupPositionPolicy_ComboBox);
+    if (size.x <= 0.0F || size.y <= 0.0F)
+    {
+        return; // no measured size yet (first frame) — nothing to clamp against
+    }
+    pos.x = ImClamp(pos.x, viewPortRect.Min.x, ImMax(viewPortRect.Min.x, viewPortRect.Max.x - size.x));
+    if (pos.y + size.y > viewPortRect.Max.y && pos.y - size.y >= viewPortRect.Min.y)
+    {
+        pos.y -= size.y; // would hang past the bottom and fits above: flip once
+    }
+    pos.y = ImClamp(pos.y, viewPortRect.Min.y, ImMax(viewPortRect.Min.y, viewPortRect.Max.y - size.y));
 }
 } // namespace
 
@@ -334,23 +425,41 @@ void ImeWindow::Draw(const CompositionInfo &compositionInfo, const CandidateUi &
         return;
     }
     const auto currentFrame = ImGui::GetFrameCount();
+    const bool caretPolicy  = settings.input.posUpdatePolicy == Settings::WindowPosUpdatePolicy::BASED_ON_CARET;
     if (currentFrame > m_lastShowFrame + 1)
     {
-        UpdateImeWindowPos(settings.input.posUpdatePolicy, m_imePos);
+        const bool anchored   = UpdateImeWindowPos(settings.input.posUpdatePolicy, m_imePos);
+        m_caretAnchorLocked   = !caretPolicy || anchored;
+        m_nextCaretRetryFrame = currentFrame + kCaretAnchorRetryInterval;
         // Diagnostic edge trigger: fires exactly when the composition/candidate
         // window (re)appears after not being drawn. Correlating this with the
         // enable/disable / overlay logs pins down which state transition the
         // user-visible "IME still active after ESC" symptom belongs to.
         logger::info(
-            "Candidate window became visible (composing={}, tsfFocus={}, overlayShowing={}, overlayPinned={})",
+            "Candidate window became visible (composing={}, tsfFocus={}, overlayShowing={}, overlayPinned={}, caretAnchorLocked={}, imePos=({:.0f},{:.0f}))",
             state.IsImeInputting(),
             state.TsfFocus(),
             settings.runtimeData.overlayShowing,
-            settings.runtimeData.overlayPinned
+            settings.runtimeData.overlayPinned,
+            m_caretAnchorLocked,
+            m_imePos.x,
+            m_imePos.y
         );
     }
+    else if (caretPolicy && !m_caretAnchorLocked && currentFrame >= m_nextCaretRetryFrame)
+    {
+        // The appearance-frame anchor failed (race, or a caret-less surface
+        // keeps the session unlocked): poll for a real caret rect on a short
+        // cadence. The position itself stays where the appearance frame put
+        // it — deliberately NOT mouse-tracked, the box must not wander.
+        if (UpdateImeWindowPosByCaret(m_imePos))
+        {
+            m_caretAnchorLocked = true;
+        }
+        m_nextCaretRetryFrame = currentFrame + kCaretAnchorRetryInterval;
+    }
     m_lastShowFrame = currentFrame;
-    ClampWindowToViewport(settings.input.posUpdatePolicy, m_imePos, m_imeSize, m_lastAutoPosDir);
+    ClampWindowToViewport(settings.input.posUpdatePolicy, m_imePos, m_imeSize);
     ImGui::SetNextWindowPos({m_imePos.x, m_imePos.y});
     constexpr auto flags = ImGuiEx::WindowFlags().NoDecoration().AlwaysAutoResize().NoFocusOnAppearing().NoSavedSettings().NoNav();
     // Compact layout: the M3 ListItem reserves 52dp per row (10dp vertical padding

@@ -28,18 +28,24 @@
 #include "hooks/SkseMenuFrameworkBridge.h"
 
 #include "ImeApp.h"
+#include "RE/C/CursorMenu.h"
 #include "RE/ControlMap.h"
+#include "RE/M/MenuCursor.h"
 #include "core/State.h"
 #include "hook.h"
 #include "hooks/SkseMenuFrameworkBridgeLogic.h"
 #include "log.h"
+#include "path_utils.h"
 
 #include <REL/REL.h>
 #include <Windows.h>
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 
@@ -52,6 +58,11 @@ namespace
 constexpr float MIN_FRAMEWORK_VERSION = 3.7F;
 /// Event::EventType::kBeforeRender in SKSE-Menu-Framework 3 (include/Event.h).
 constexpr std::int32_t EVENT_BEFORE_RENDER = 3;
+/// Empirical from the first-seen telemetry: type 4 dispatches after the
+/// framework's full frame loop, i.e. when ImGui's InputText has just written
+/// this frame's OS-IME caret into PlatformImeData (kBeforeRender reads it
+/// mid-frame where NewFrame may already have reset WantVisible to false).
+constexpr std::int32_t EVENT_AFTER_RENDER = 4;
 /// Run before the framework's own render listeners, exactly like the
 /// standalone bridge does — proven to see a fresh WantTextInput and to inject
 /// into a queue the same frame's NewFrame still drains.
@@ -86,6 +97,96 @@ constexpr std::size_t IMGUI_IO_WANT_TEXT_INPUT_OFFSET = 0xCC;
 /// window is truly unfocused (alt-tab) the game stops rendering the framework
 /// anyway.
 constexpr std::size_t IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET = 0x7B;
+
+/// Layout mirror of ImGuiPlatformImeData (1.90.8: bool + ImVec2 + float).
+struct ImGuiPlatformImeDataMirror
+{
+    std::uint8_t wantVisible;
+    float        inputPosX;
+    float        inputPosY;
+    float        inputLineHeight;
+};
+static_assert(sizeof(ImGuiPlatformImeDataMirror) == 16);
+
+// Candidate-window anchor shared with ImeWindow (game thread reads it). The
+// SetPlatformImeDataFn hook maintains it; the click-time heuristic in
+// BeginTextInput is the fallback when no live source could be installed.
+std::atomic<bool>  s_fieldAnchorValid{false};
+std::atomic<float> s_fieldAnchorX{0.0F};
+std::atomic<float> s_fieldAnchorY{0.0F};
+std::atomic<bool>  s_imeDataPathBroken{false}; ///< no live anchor source could be installed
+
+bool ImeDataPatternPlausible(const ImGuiPlatformImeDataMirror *ime);
+
+/// --- PlatformImeData via io.SetPlatformImeDataFn (primary anchor source) ---
+/// ImGuiIO's layout in this framework is NOT vanilla 1.90.8: the runtime-proven
+/// offsets sit 8 bytes past the vanilla ones (WantTextInput 0xCC vs 196,
+/// ConfigDebugIgnoreFocusLoss 0x7B vs 115), so every vanilla-derived context
+/// offset misses. The fn-pointer route sidesteps layout knowledge entirely:
+/// ImGui hands &g.PlatformImeData to io.SetPlatformImeDataFn whenever the data
+/// changes (imgui.cpp EndFrame, fires on field activation / caret move /
+/// deactivation), and that pointer is real regardless of fork shifts.
+/// Vanilla offsetof(ImGuiIO, SetPlatformImeDataFn)=184 sits between the two
+/// proven anchors, so the framework slot is at 184+8=192; installing is gated
+/// on the slot holding a pointer INTO the framework module (its embedded
+/// imgui_impl_win32 sets it), which proves the offset before anything is
+/// overwritten. If the gate fails, the runtime calibration below takes over.
+constexpr std::size_t IMGUI_IO_SET_PLATFORM_IME_DATA_FN_OFFSET = 192;
+using SetPlatformImeDataFn_t = void (*)(void *viewport, void *imeData);
+
+SetPlatformImeDataFn_t s_origSetPlatformImeDataFn = nullptr;
+std::atomic<bool>      s_platformImeHookInstalled{false};
+
+void HookedSetPlatformImeData(void *viewport, void *imeData)
+{
+    if (imeData != nullptr)
+    {
+        const auto *ime = static_cast<const ImGuiPlatformImeDataMirror *>(imeData);
+        // InputPos is the caret line's top-left in screen space; anchor at its
+        // bottom so the candidate window hangs just below the text line.
+        if (ime->wantVisible == 0 || !ImeDataPatternPlausible(ime))
+        {
+            // Field deactivated (or garbage): the anchor must not outlive it.
+            s_fieldAnchorValid.store(false, std::memory_order_release);
+        }
+        else
+        {
+            s_fieldAnchorX.store(ime->inputPosX, std::memory_order_release);
+            s_fieldAnchorY.store(ime->inputPosY + ime->inputLineHeight, std::memory_order_release);
+            s_fieldAnchorValid.store(true, std::memory_order_release);
+        }
+    }
+    if (s_origSetPlatformImeDataFn != nullptr)
+    {
+        s_origSetPlatformImeDataFn(viewport, imeData);
+    }
+}
+
+void InstallPlatformImeDataHook(void *io)
+{
+    if (io == nullptr || s_platformImeHookInstalled.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    const auto slot = reinterpret_cast<SetPlatformImeDataFn_t *>(
+        reinterpret_cast<std::uint8_t *>(io) + IMGUI_IO_SET_PLATFORM_IME_DATA_FN_OFFSET);
+    const auto original = *slot;
+    HMODULE owner = nullptr;
+    const HMODULE frameworkModule = GetModuleHandleW(L"SKSEMenuFramework.dll");
+    if (original == nullptr || frameworkModule == nullptr ||
+        !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(original), &owner) ||
+        owner != frameworkModule)
+    {
+        // The slot doesn't hold a framework-module pointer: the offset guess is
+        // wrong for this build. Touch nothing — the calibration path covers.
+        return;
+    }
+    s_origSetPlatformImeDataFn = original;
+    *slot = &HookedSetPlatformImeData;
+    s_platformImeHookInstalled.store(true, std::memory_order_release);
+    logger::info("Hooked ImGuiIO::SetPlatformImeDataFn at io+{} — field anchors are event-driven", IMGUI_IO_SET_PLATFORM_IME_DATA_FN_OFFSET);
+}
 
 /// A session whose framework render loop has been silent this long is dead
 /// (its menu closed without an ImGui frame ever reporting the field's
@@ -222,11 +323,368 @@ constexpr std::uint64_t TRANSITION_GRACE_MS = 250;
 std::atomic<std::uint64_t> s_sessionBeginMs{0};
 std::atomic<bool>          s_imeDisabledAtBegin{false};
 
+/// Per framework frame, at kAfterRender: refresh the field anchor from
+/// ImGui's own OS-IME caret report (PlatformImeData — what positions the
+/// system IME window). Valid regardless of how the field gained focus,
+/// including the auto-focused first field of a freshly opened menu.
+///
+/// The probe offset assumes vanilla 1.90.8; the framework's build may be a
+/// patched fork whose ImGuiContext layout drifted. Calibrate at runtime: scan
+/// the context for the WantVisible pattern while a field is active, prune
+/// candidates that don't reset to 0 once the field deactivates. One survivor
+/// wins; until then the anchor stays invalid (cursor fallback).
+
+// Calibration state — touched only from OnFrameworkEvent (framework render
+// callback thread); the resulting offset/flag are atomics for the read path.
+constexpr std::size_t IMGUI_CTX_SCAN_MIN = 4096;
+// Vanilla 1.90.8 offsetof(ImGuiContext, PlatformImeData) — the framework's
+// fork shifted it (runtime calibration measured 24864/24880), so this is only
+// the seed guess for the scan window, never trusted directly.
+constexpr std::size_t IMGUI_CTX_PLATFORM_IME_DATA_OFFSET = 24384;
+constexpr std::size_t IMGUI_CTX_SCAN_MAX = 25000;
+constexpr std::size_t IMGUI_CAL_MAX_CANDIDATES = 64;
+constexpr int IMGUI_CAL_MAX_EMPTY_ROUNDS = 3;
+
+std::atomic<std::size_t> s_imeDataOffset{IMGUI_CTX_PLATFORM_IME_DATA_OFFSET};
+std::atomic<bool>        s_imeDataOffsetReady{false};
+bool        s_calActive = false;  ///< candidates pending, seen session-active
+bool        s_calWasWantsText = false;
+std::size_t s_calCandidates[IMGUI_CAL_MAX_CANDIDATES] = {};
+std::size_t s_calCandidateCount = 0;
+int         s_calFailedRounds = 0;
+int         s_calStaleActiveReads = 0; ///< calibrated offset read WantVisible=0 while a field is active
+
+/// The calibrated offset is a property of the framework DLL build (its
+/// embedded imgui layout), so it is cached per framework fingerprint: a
+/// framework update changes the fingerprint and forces one recalibration.
+constexpr auto AnchorCachePath() -> std::filesystem::path
+{
+    return utils::GetPluginInterfaceDir() / "skse_menu_framework_anchor.cache";
+}
+
+std::uint64_t FrameworkFingerprint()
+{
+    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
+    if (module == nullptr)
+    {
+        return 0;
+    }
+    wchar_t path[MAX_PATH] = {};
+    if (GetModuleFileNameW(module, path, MAX_PATH) == 0)
+    {
+        return 0;
+    }
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    {
+        return 0;
+    }
+    const std::uint64_t size  = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
+    const std::uint64_t mtime = (static_cast<std::uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
+                                attributes.ftLastWriteTime.dwLowDateTime;
+    return mtime ^ (size * 0x9E3779B97F4A7C15ULL);
+}
+
+void RestoreCalibratedImeDataOffset()
+{
+    std::ifstream file(AnchorCachePath());
+    if (!file)
+    {
+        return;
+    }
+    std::uint64_t size = 0, mtime = 0, offset = 0;
+    std::uint64_t cachedSize = 0, cachedMtime = 0, cachedOffset = 0;
+    bool haveSize = false, haveMtime = false, haveOffset = false;
+    for (std::string line; std::getline(file, line);)
+    {
+        const auto eq = line.find('=');
+        if (eq == std::string::npos)
+        {
+            continue;
+        }
+        const auto key = line.substr(0, eq);
+        const auto value = std::strtoull(line.c_str() + eq + 1, nullptr, 10);
+        if (key == "framework_size") { cachedSize = value; haveSize = true; }
+        else if (key == "framework_mtime") { cachedMtime = value; haveMtime = true; }
+        else if (key == "ime_data_offset") { cachedOffset = value; haveOffset = true; }
+    }
+    file.close();
+    if (!haveSize || !haveMtime || !haveOffset)
+    {
+        return;
+    }
+    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
+    wchar_t path[MAX_PATH] = {};
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (module == nullptr || GetModuleFileNameW(module, path, MAX_PATH) == 0 ||
+        !GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    {
+        return;
+    }
+    size  = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
+    mtime = (static_cast<std::uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
+            attributes.ftLastWriteTime.dwLowDateTime;
+    if (size != cachedSize || mtime != cachedMtime || cachedOffset < IMGUI_CTX_SCAN_MIN ||
+        cachedOffset + sizeof(ImGuiPlatformImeDataMirror) > IMGUI_CTX_SCAN_MAX)
+    {
+        return;
+    }
+    s_imeDataOffset.store(static_cast<std::size_t>(cachedOffset), std::memory_order_release);
+    s_imeDataOffsetReady.store(true, std::memory_order_release);
+    logger::info("Restored calibrated PlatformImeData offset {} from cache (framework fingerprint match)", cachedOffset);
+}
+
+void SaveAnchorCache(std::size_t offset)
+{
+    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
+    wchar_t path[MAX_PATH] = {};
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (module == nullptr || GetModuleFileNameW(module, path, MAX_PATH) == 0 ||
+        !GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(utils::GetPluginInterfaceDir(), ec);
+    std::ofstream file(AnchorCachePath(), std::ios::trunc);
+    if (!file)
+    {
+        return;
+    }
+    file << "framework_size=" << ((static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow) << "\n"
+         << "framework_mtime=" << ((static_cast<std::uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
+                                   attributes.ftLastWriteTime.dwLowDateTime) << "\n"
+         << "ime_data_offset=" << offset << "\n";
+}
+
+/// Built-in offsets for framework builds seen in the wild, so a fresh install
+/// anchors from the very first keystroke (a runtime cache can only exist
+/// after this machine calibrated once). Keyed by DLL size + framework
+/// version; a wrong entry self-heals — the calibrated read path recalibrates
+/// after ~3s of a field being active with WantVisible stuck at 0.
+struct KnownFrameworkImeOffset
+{
+    std::uint32_t dllSize;
+    std::uint16_t frameworkVersionX100;
+    std::size_t   imeDataOffset;
+};
+constexpr KnownFrameworkImeOffset kKnownImeOffsets[] = {
+    { 4583936, 380, 24864 }, // SKSE-Menu-Framework 3.80 (embedded cimgui 1.90.8, shifted layout)
+};
+
+std::uint32_t FrameworkDllSize()
+{
+    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
+    wchar_t path[MAX_PATH] = {};
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (module == nullptr || GetModuleFileNameW(module, path, MAX_PATH) == 0 ||
+        !GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    {
+        return 0;
+    }
+    return attributes.nFileSizeLow;
+}
+
+void FinishCalibration(std::size_t offset)
+{
+    s_imeDataOffset.store(offset, std::memory_order_release);
+    s_imeDataOffsetReady.store(true, std::memory_order_release);
+    s_calActive = false;
+    s_calCandidateCount = 0;
+    logger::info("PlatformImeData calibrated at ImGuiContext+{} (probe {})", offset, IMGUI_CTX_PLATFORM_IME_DATA_OFFSET);
+    SaveAnchorCache(offset);
+}
+
+bool ImeDataPatternPlausible(const ImGuiPlatformImeDataMirror *ime)
+{
+    // While visible, InputPos must be finite screen coords and the line
+    // height a sane font size — filters a half-right offset read.
+    return ime->wantVisible == 1 && ime->inputLineHeight >= 4.0F && ime->inputLineHeight <= 200.0F &&
+           ime->inputPosX >= -2000.0F && ime->inputPosX <= 8000.0F && ime->inputPosY >= -2000.0F &&
+           ime->inputPosY <= 8000.0F;
+}
+
+void UpdateFieldAnchor()
+{
+    if (s_platformImeHookInstalled.load(std::memory_order_acquire))
+    {
+        // The SetPlatformImeDataFn hook owns the anchor lifecycle (activation,
+        // caret move, deactivation all arrive as events). No polling needed.
+        return;
+    }
+    if (s_api.getCurrentContext == nullptr || s_api.getIo == nullptr)
+    {
+        return;
+    }
+    auto *ctx = s_api.getCurrentContext();
+    auto *io = s_api.getIo();
+    if (ctx == nullptr || io == nullptr || s_imeDataPathBroken.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    const bool wantsText = *reinterpret_cast<const volatile bool *>(
+        reinterpret_cast<const std::uint8_t *>(io) + IMGUI_IO_WANT_TEXT_INPUT_OFFSET);
+
+    if (!s_imeDataOffsetReady.load(std::memory_order_acquire))
+    {
+        const auto *base = reinterpret_cast<const std::uint8_t *>(ctx);
+        if (!wantsText)
+        {
+            if (s_calActive && s_calCandidateCount > 0)
+            {
+                // Field deactivated: WantVisible must have reset to 0. Keep
+                // only candidates that did — persistent flags die here.
+                std::size_t kept = 0;
+                for (std::size_t i = 0; i < s_calCandidateCount; ++i)
+                {
+                    if (*reinterpret_cast<const std::uint8_t *>(base + s_calCandidates[i]) == 0)
+                    {
+                        s_calCandidates[kept++] = s_calCandidates[i];
+                    }
+                }
+                s_calCandidateCount = kept;
+                if (kept == 1)
+                {
+                    FinishCalibration(s_calCandidates[0]);
+                }
+                else if (kept == 0)
+                {
+                    s_calActive = false;
+                    if (++s_calFailedRounds >= IMGUI_CAL_MAX_EMPTY_ROUNDS)
+                    {
+                        s_imeDataPathBroken.store(true, std::memory_order_release);
+                        logger::warn("PlatformImeData calibration found no candidate; field anchors fall back to click-time cursor");
+                    }
+                }
+            }
+            if (!s_calActive)
+            {
+                s_calWasWantsText = false;
+            }
+            s_fieldAnchorValid.store(false, std::memory_order_release);
+            return;
+        }
+
+        // Field active: initial scan or prune candidates that stopped matching.
+        if (!s_calActive)
+        {
+            s_calCandidateCount = 0;
+            for (std::size_t o = IMGUI_CTX_SCAN_MIN;
+                 o + sizeof(ImGuiPlatformImeDataMirror) <= IMGUI_CTX_SCAN_MAX && s_calCandidateCount < IMGUI_CAL_MAX_CANDIDATES;
+                 o += 4)
+            {
+                const auto *ime = reinterpret_cast<const ImGuiPlatformImeDataMirror *>(base + o);
+                if (ImeDataPatternPlausible(ime))
+                {
+                    s_calCandidates[s_calCandidateCount++] = o;
+                }
+            }
+            s_calActive = s_calCandidateCount > 0;
+            if (!s_calActive && ++s_calFailedRounds >= IMGUI_CAL_MAX_EMPTY_ROUNDS)
+            {
+                s_imeDataPathBroken.store(true, std::memory_order_release);
+                logger::warn("PlatformImeData calibration found no candidate; field anchors fall back to click-time cursor");
+            }
+        }
+        else
+        {
+            std::size_t kept = 0;
+            for (std::size_t i = 0; i < s_calCandidateCount; ++i)
+            {
+                const auto *ime = reinterpret_cast<const ImGuiPlatformImeDataMirror *>(base + s_calCandidates[i]);
+                if (ImeDataPatternPlausible(ime))
+                {
+                    s_calCandidates[kept++] = s_calCandidates[i];
+                }
+            }
+            s_calCandidateCount = kept;
+            if (kept == 1)
+            {
+                FinishCalibration(s_calCandidates[0]);
+            }
+            else if (kept == 0)
+            {
+                s_calActive = false;
+            }
+        }
+        s_calWasWantsText = true;
+        s_fieldAnchorValid.store(false, std::memory_order_release);
+        return;
+    }
+
+    // Calibrated read path. A stale cache (framework rebuilt without its
+    // fingerprint changing is impossible, but a fingerprint collision or an
+    // imgui change within the same file identity would read zeros) self-heals:
+    // a field is active yet WantVisible stays 0 for ~3s → recalibrate.
+    const auto *ime = reinterpret_cast<const ImGuiPlatformImeDataMirror *>(
+        reinterpret_cast<const std::uint8_t *>(ctx) + s_imeDataOffset.load(std::memory_order_relaxed));
+    if (ime->wantVisible > 1)
+    {
+        s_imeDataPathBroken.store(true, std::memory_order_release);
+        logger::warn("PlatformImeData read went implausible after calibration; field anchors fall back to click-time cursor");
+        return;
+    }
+    if (ime->wantVisible != 0 && ImeDataPatternPlausible(ime))
+    {
+        s_calStaleActiveReads = 0;
+        static std::atomic<bool> s_imeDataProbed{false};
+        if (!s_imeDataProbed.exchange(true))
+        {
+            logger::info(
+                "PlatformImeData caret anchor live at ImGuiContext+{}: pos=({:.1f},{:.1f}) lineHeight={:.1f}",
+                s_imeDataOffset.load(std::memory_order_relaxed),
+                ime->inputPosX,
+                ime->inputPosY,
+                ime->inputLineHeight);
+        }
+        // InputPos is the caret line's top-left in screen space; anchor at its
+        // bottom so the candidate window hangs just below the text line.
+        s_fieldAnchorX.store(ime->inputPosX, std::memory_order_release);
+        s_fieldAnchorY.store(ime->inputPosY + ime->inputLineHeight, std::memory_order_release);
+        s_fieldAnchorValid.store(true, std::memory_order_release);
+        return;
+    }
+    if (wantsText && ime->wantVisible == 0)
+    {
+        if (++s_calStaleActiveReads > 180)
+        {
+            s_calStaleActiveReads = 0;
+            s_imeDataOffsetReady.store(false, std::memory_order_release);
+            logger::warn("Cached PlatformImeData offset stopped matching; recalibrating on the next session");
+        }
+        return;
+    }
+    s_calStaleActiveReads = 0;
+    // No active InputText (or implausible data): the anchor must not outlive
+    // its field.
+    s_fieldAnchorValid.store(false, std::memory_order_release);
+}
+
 void BeginTextInput()
 {
     AcquireTextEntryLease();
     s_sessionBeginMs.store(GetTickCount64(), std::memory_order_release);
     s_imeDisabledAtBegin.store(Ime::Core::State::GetInstance().ImeDisabled(), std::memory_order_release);
+    // Fallback anchor when no live source exists (SetPlatformImeDataFn hook
+    // failed to install and no calibrated offset): the engine cursor is on
+    // the field the user just clicked. Trust MenuCursor under the same
+    // condition imgui_manager does — the singleton always exists, and with
+    // the CursorMenu closed its coords are stale.
+    if (s_imeDataPathBroken.load(std::memory_order_acquire) ||
+        (!s_platformImeHookInstalled.load(std::memory_order_acquire) &&
+         !s_imeDataOffsetReady.load(std::memory_order_acquire)))
+    {
+        auto *ui = RE::UI::GetSingleton();
+        if (ui != nullptr && ui->IsMenuOpen(RE::CursorMenu::MENU_NAME))
+        {
+            if (const auto *cursor = RE::MenuCursor::GetSingleton(); cursor != nullptr)
+            {
+                s_fieldAnchorX.store(cursor->cursorPosX, std::memory_order_release);
+                s_fieldAnchorY.store(cursor->cursorPosY, std::memory_order_release);
+                s_fieldAnchorValid.store(true, std::memory_order_release);
+            }
+        }
+    }
     logger::info("SKSE Menu Framework text session begin (lease acquired)");
 }
 
@@ -364,6 +822,14 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
             logger::info("SKSE Menu Framework event type {} first seen", eventType);
         }
     }
+    if (eventType == EVENT_AFTER_RENDER)
+    {
+        // ImGui's InputText wrote this frame's OS-IME caret into
+        // PlatformImeData during widget submission — read it here, after the
+        // frame, where it is guaranteed current for the next session check.
+        UpdateFieldAnchor();
+        return;
+    }
     if (eventType != EVENT_BEFORE_RENDER)
     {
         return;
@@ -391,6 +857,7 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
     // the field's deactivation, and injecting one frame late is harmless
     // (ImGui discards unconsumed input) while dropping it eats the last char.
     FlushPending();
+    UpdateFieldAnchor();
     UpdateTextInputState();
 }
 
@@ -445,6 +912,35 @@ bool TryResolve()
     }
 
     s_api.registerEventPriority(&OnFrameworkEvent, EVENT_PRIORITY);
+    // Framework DLL identity is known here — restore the calibrated anchor
+    // offset, from this machine's cache first (exact fingerprint), then from
+    // the built-in table for known framework builds (fresh installs). Order:
+    // exact cache → built-in → runtime calibration on first use.
+    RestoreCalibratedImeDataOffset();
+    if (!s_imeDataOffsetReady.load(std::memory_order_acquire))
+    {
+        const auto versionX100 = static_cast<std::uint16_t>(version * 100.0F + 0.5F);
+        const auto dllSize = FrameworkDllSize();
+        for (const auto &known : kKnownImeOffsets)
+        {
+            if (known.dllSize == dllSize && known.frameworkVersionX100 == versionX100)
+            {
+                s_imeDataOffset.store(known.imeDataOffset, std::memory_order_release);
+                s_imeDataOffsetReady.store(true, std::memory_order_release);
+                logger::info(
+                    "Using built-in PlatformImeData offset {} for framework {:.2f} (dll {} bytes)",
+                    known.imeDataOffset,
+                    version,
+                    dllSize);
+                break;
+            }
+        }
+    }
+    // Primary, layout-independent source: hook the fn pointer ImGui calls with
+    // &g.PlatformImeData on every change. Installation self-validates (the
+    // slot must hold a pointer into the framework module); on failure the
+    // calibration/click fallbacks above take over.
+    InstallPlatformImeDataHook(s_api.getIo());
 
     // Install the raw-ASCII filter only when the framework is actually present
     // (the detour is inert outside a session, but there is no reason to take
@@ -537,6 +1033,17 @@ void Tick()
 bool SessionActive()
 {
     return s_enabled.load(std::memory_order_acquire) && s_sessionActive.load(std::memory_order_acquire);
+}
+
+bool HasFieldAnchor()
+{
+    return s_fieldAnchorValid.load(std::memory_order_acquire);
+}
+
+void GetFieldAnchor(float &a_x, float &a_y)
+{
+    a_x = s_fieldAnchorX.load(std::memory_order_acquire);
+    a_y = s_fieldAnchorY.load(std::memory_order_acquire);
 }
 
 bool ShouldRoute()
