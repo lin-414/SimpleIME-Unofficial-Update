@@ -17,6 +17,10 @@ void Uninstall();
 /// was corrected elsewhere (leak repair) — otherwise the next 0->1 transition
 /// would be misdetected.
 void ResetTextEntryCountCache();
+/// Game thread, every frame: commit an IME enable that landed inside the
+/// re-enable debounce window and was deferred (not dropped). The final stable
+/// state wins: still-open counter -> enable; closed -> nothing.
+void CommitPendingTextEntryEnable();
 } // namespace Scaleform
 
 } // namespace Hooks

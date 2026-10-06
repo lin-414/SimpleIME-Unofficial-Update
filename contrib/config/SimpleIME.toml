@@ -67,10 +67,12 @@ keep_ime_open = false
 # 启用后，当 Meridian 界面(CEF 渲染，如 Tailor 裁缝店)获得焦点时自动激活 IME，
 # 并将上屏文字直接提交到其网页输入框。未安装 MeridianUI.dll 时此选项无效果。
 meridian_support = true
-# Prisma UI 避让模式
-# Prisma 界面(如 Outfit Wheeler)自带原生输入法处理，此开关打开时 SimpleIME 会在
-# Prisma 界面持有键盘焦点期间自动让位，避免两套输入法互相抢占。关闭后 SimpleIME
-# 将无视 Prisma(仅在明确知道后果时才建议关闭)。
+# Prisma UI 输入支持
+# Prisma 界面(PMCM、Outfit Wheeler 等)会通过自身 IME 关联捕获输入。此开关打开时，
+# Prisma 界面聚焦期间由 SimpleIME 接管文字输入：显示 SimpleIME 候选窗，上屏文字经
+# 游戏窗口字符流注入其输入框；IME 关闭时键盘交还 Prisma 原生管线。若 PrismaUI 的
+# 公开 V1 接口不可用则完全让位(原生组词、无候选窗)。关闭后 SimpleIME 将无视
+# Prisma(仅在明确知道后果时才建议关闭)。
 prisma_avoidance = true
 # SKSE Menu Framework 输入支持
 # 启用后，SKSEMF 界面(ImGui 实现，如使用该框架的设置菜单)的文本框聚焦时自动激活

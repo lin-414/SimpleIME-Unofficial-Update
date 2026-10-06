@@ -12,14 +12,14 @@ endif ()
 
 project(
     SimpleIME
-    VERSION 3.0.0
+    VERSION 3.1.1
     DESCRIPTION "Simple IME support for Skyrim"
     LANGUAGES CXX
 )
 # Pre-release label appended to the human-readable version string.
 # Leave empty for stable releases (e.g. set(PROJECT_VERSION_PRERELEASE "")).
 # The numeric FILEVERSION resource field always uses PROJECT_VERSION (2.0.0).
-set(PROJECT_VERSION_PRERELEASE "beta")
+set(PROJECT_VERSION_PRERELEASE "")
 if(PROJECT_VERSION_PRERELEASE)
     set(PROJECT_VERSION_DISPLAY "${PROJECT_VERSION}-${PROJECT_VERSION_PRERELEASE}")
 else()

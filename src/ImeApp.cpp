@@ -95,6 +95,13 @@ std::unique_ptr<InitErrorMessageShow>   g_pInitErrorMessageShow(nullptr);
 std::unique_ptr<Hooks::D3DInitHookData> g_D3DInitHook = nullptr; ///< Only install once, should not be a member of `ImeApp`.
 std::unique_ptr<Hooks::D3DPresentHookData> g_PresentHook = nullptr;
 
+// The real IDXGISwapChain::Present detour (see ImeApp::SwapChainPresentHook).
+// The FunctionHook aliases g_realSwapChainPresent, which must outlive it.
+Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)> *g_swapChainPresentHook     = nullptr;
+void                   *g_realSwapChainPresent       = nullptr;
+ID3D11DeviceContext    *g_swapChainContext           = nullptr;
+ID3D11RenderTargetView *g_swapChainBackBufferRtv     = nullptr;
+
 // SimpleIME's per-frame work (ImGui rendering, MeridianBridge::Tick) is driven
 // from ImeMenu::PostDisplay — but the engine STOPS calling it while a Meridian
 // view holds focus (Meridian renders through its own CEF path; observed in the
@@ -370,6 +377,29 @@ void ImeApp::OnD3DInit()
 
     m_hWnd = reinterpret_cast<HWND>(swapChainDesc.outputWindow);
 
+    // Swapchain-level present hook (see ImeApp::SwapChainPresentHook): PrismaUI
+    // draws its Ultralight views from a present CALL-SITE hook that always runs
+    // after our PostDisplay overlay; the real swapchain present is the only
+    // point guaranteed to be after every such draw.
+    g_swapChainContext = reinterpret_cast<ID3D11DeviceContext *>(renderData.context);
+    {
+        auto *d3dDevice = reinterpret_cast<ID3D11Device *>(renderData.forwarder);
+        ID3D11Texture2D *backBuffer = nullptr;
+        if (pSwapChain != nullptr && d3dDevice != nullptr &&
+            SUCCEEDED(pSwapChain->GetBuffer(0, REX::W32::IID_ID3D11Texture2D, reinterpret_cast<void **>(&backBuffer))) &&
+            backBuffer != nullptr)
+        {
+            d3dDevice->CreateRenderTargetView(backBuffer, nullptr, &g_swapChainBackBufferRtv);
+            backBuffer->Release();
+        }
+        // IDXGISwapChain::Present = vtable slot 8 (IUnknown 3 + IDXGIObject 2 +
+        // GetPrivateData/GetParent/GetDevice 3).
+        g_realSwapChainPresent = reinterpret_cast<void **>(*reinterpret_cast<void **>(pSwapChain))[8];
+        g_swapChainPresentHook = new Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)>(
+            g_realSwapChainPresent, &ImeApp::SwapChainPresentHook);
+        logger::info("Swapchain present hook installed (keeps the overlay above Prisma views)");
+    }
+
     Start(renderData);
 
     logger::debug("Hooking Skyrim WndProc...");
@@ -615,16 +645,55 @@ void ImeApp::PresentHook(std::uint32_t a_unk)
     }
 }
 
+auto ImeApp::SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, std::uint32_t flags) -> long
+{
+    // Layering, not frame-driving: during a Prisma takeover (PMCM search box,
+    // Outfit Wheeler fields) PrismaUI renders its Ultralight views from its own
+    // present CALL-SITE hook — which runs after the game's menu stage, where
+    // our PostDisplay overlay draws — so their views cover the candidate
+    // window no matter what we draw earlier. The real swapchain present is the
+    // last draw of the frame; rendering into the backbuffer right before the
+    // flip puts our overlay back on top. Gated on ShouldRoute so every other
+    // surface (Scaleform menus, Meridian, SKSEMF, ENB) keeps its layering.
+    if (Hooks::PrismaBridge::ShouldRoute() && g_instance != nullptr && g_instance->m_state.IsInitialized() &&
+        g_ImGuiFrameMutex.try_lock())
+    {
+        std::lock_guard frameLock(g_ImGuiFrameMutex, std::adopt_lock);
+        // ImGui_ImplDX11 draws into whatever render target is bound; the game
+        // may leave it unbound on its present path, so pin the backbuffer.
+        if (g_swapChainContext != nullptr && g_swapChainBackBufferRtv != nullptr)
+        {
+            ID3D11RenderTargetView *bound = nullptr;
+            g_swapChainContext->OMGetRenderTargets(1, &bound, nullptr);
+            if (bound == nullptr)
+            {
+                ID3D11RenderTargetView *rtv = g_swapChainBackBufferRtv;
+                g_swapChainContext->OMSetRenderTargets(1, &rtv, nullptr);
+            }
+            else
+            {
+                bound->Release();
+            }
+        }
+        ImGuiEx::NewFrame();
+        g_instance->m_imeWnd.Draw(g_instance->m_settings);
+        ImGuiEx::EndFrame();
+        ImGuiEx::Render();
+    }
+    return (*g_swapChainPresentHook)(swapChain, syncInterval, flags);
+}
+
 auto ImeApp::MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRESULT
 {
     auto &app = GetInstance();
-    // Prisma announces that it is associating its own IME context with the
-    // game window; stand our IME down so the two never fight over the
-    // keyboard. A registered message (> WM_APP), checked before the switch.
+    // Prisma announces that it is associating (or disassociating) its own IME
+    // context with the game window; coordinate with it so the two never fight
+    // over the keyboard. A registered message (> WM_APP), checked before the
+    // switch; wParam mirrors Prisma's SetAssociation flag (1/0).
     if (const unsigned prismaAssociation = Hooks::PrismaBridge::AssociationMessage();
         prismaAssociation != 0 && uMsg == prismaAssociation)
     {
-        Hooks::PrismaBridge::OnAssociationMessage();
+        Hooks::PrismaBridge::OnAssociationMessage(wParam != 0);
     }
     switch (uMsg)
     {

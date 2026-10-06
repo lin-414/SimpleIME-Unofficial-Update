@@ -91,15 +91,22 @@ auto ImeManager::EnableIme(bool enable) -> Result
 {
     logger::debug("ImeManager::{} {}", __func__, enable ? "enable" : "disable");
 
-    // Prisma UI owns the keyboard (its view is focused, its native IME is
-    // active, or its V1 focus API is unavailable): stand down. This is the
-    // single funnel every enable path goes through, so guarding here covers
-    // text-entry hooks, Meridian focus and keepImeOpen syncs alike. Leaving
-    // m_isForceUpdate untouched means a pending SyncImeState re-runs once
-    // Prisma relinquishes the keyboard.
-    if (enable && m_settings.input.prismaAvoidance && Hooks::PrismaBridge::OwnsInput())
+    // Prisma UI coordination. When a Prisma view (PMCM, Outfit Wheeler, ...)
+    // holds input capture, SimpleIME TAKES OVER text entry: the enable below
+    // moves the Win32 focus to our ImeWnd (the candidate window shows, the
+    // composition runs on our TSF document), committed text is delivered
+    // through the game window's WM_CHAR stream (PrismaUI's subclass feeds the
+    // focused view — see PrismaBridge::QueueText), and the disable path
+    // returns the focus so Prisma's own associated IME context serves any
+    // further native typing. The two pipelines never hold the keyboard at the
+    // same time. The one remaining stand-down is the fail-safe: PrismaUI is
+    // present but its public V1 API failed to negotiate — there is then no
+    // commit channel into its views, so letting it keep the keyboard (native
+    // composition, visible only through the view's own IME UI if it renders
+    // one) beats fighting it blind.
+    if (enable && m_settings.input.prismaAvoidance && Hooks::PrismaBridge::IsUnavailable())
     {
-        logger::info("IME enable suppressed: Prisma UI owns input");
+        logger::info("IME enable suppressed: PrismaUI's V1 API is unavailable; its native IME pipeline keeps the keyboard");
         return Result::SUCCESS;
     }
 
@@ -295,8 +302,14 @@ auto ImeManager::IsShouldEnableIme() const -> bool
     // A focused Meridian view (CEF) is a text-input target exactly like a
     // Scaleform text entry: the bridge observes Meridian's public focus API
     // and this atomic is updated from its TryFocus/Unfocus vtable hooks.
+    // A focused Prisma view (PMCM, Outfit Wheeler, ...) likewise: SimpleIME
+    // has TAKEN OVER text entry for it (the takeover triggers on the focus
+    // transition, because PMCM never leases the text-entry counter), and
+    // every WM_NCACTIVATE-style sync must not kill that session just because
+    // the counter is closed.
     return m_settings.input.keepImeOpen || ControlMap::GetSingleton()->HasTextEntry() ||
-           (m_settings.input.meridianSupport && Hooks::MeridianBridge::HasFocus());
+           (m_settings.input.meridianSupport && Hooks::MeridianBridge::HasFocus()) ||
+           (m_settings.input.prismaAvoidance && Hooks::PrismaBridge::ShouldRoute());
 }
 
 } // namespace Ime

@@ -888,6 +888,18 @@ auto TextStore::BeginUIElement(DWORD dwUIElementId, BOOL *pbShow) -> HRESULT
     if (SUCCEEDED(GetCandidateInterface(dwUIElementId, &m_currentCandidateUi)))
     {
         m_currentUiElementId = dwUIElementId;
+        // Pull the initial list NOW. The TIP is free to register the element
+        // with its content already in place and fire no content-bearing
+        // UpdateUIElement afterwards — BeginUIElement was the only hook that
+        // touched the interface, so such a first page never rendered: the
+        // candidate window showed the bare composition with an empty list
+        // until the next keystroke's edit session flushed the pending flags.
+        // DoUpdateUIElement re-reads through m_currentCandidateUi and
+        // publishes under the same in-lock/out-of-lock rules as the update
+        // sink; a S_FALSE dismissal above just means the list was not ready
+        // yet and the TIP will re-create the element.
+        const HRESULT fill = DoUpdateUIElement();
+        logger::debug("Candidate UI element {} registered, initial fill {:#x}", dwUIElementId, static_cast<unsigned>(fill));
     }
     return S_OK;
 }
@@ -1024,7 +1036,20 @@ auto TextStore::DoUpdateUIElement() -> HRESULT
         return E_FAIL;
     }
 
-    if (CandidateInfo info{}; SUCCEEDED(GetCandInfo(m_currentCandidateUi, info)))
+    CandidateInfo info{};
+    if (const HRESULT candInfo = GetCandInfo(m_currentCandidateUi, info); candInfo == S_FALSE)
+    {
+        // Zero pages: nothing to render, and ACCEPTING the element pins an
+        // empty list — later selection-only updates early-return below and
+        // would never fill it. Dismiss instead so the TIP re-creates (and
+        // re-Begins) the element once the real page table is ready. No service
+        // lock is held here yet, so the synchronous sink re-entry that Abort()
+        // may trigger is safe.
+        logger::info("Candidate UI element {} has no pages; dismissed, waiting for the TIP to re-create it", m_currentUiElementId);
+        m_currentCandidateUi->Abort();
+        return S_FALSE;
+    }
+    else if (SUCCEEDED(candInfo))
     {
         UINT selection = 0;
         if (FAILED(m_currentCandidateUi->GetSelection(&selection)))
@@ -1057,7 +1082,9 @@ auto TextStore::DoUpdateUIElement() -> HRESULT
         // page start would otherwise underflow the unsigned subtraction into a
         // huge value that no candidate can match.
         candidateUi.SetSelection(selection > info.pageStart ? selection - info.pageStart : 0);
-        if (updateFlags == TF_CLUIE_SELECTION && candidateUi.FirstIndex() == info.pageStart)
+        // The empty() guard: a selection-only update must not keep a never-filled
+        // list empty — fall through to the full refill instead.
+        if (updateFlags == TF_CLUIE_SELECTION && candidateUi.FirstIndex() == info.pageStart && !candidateUi.empty())
         {
             if (m_fLocked)
             {
@@ -1077,7 +1104,23 @@ auto TextStore::DoUpdateUIElement() -> HRESULT
         }
 
         // if only selection change but page changed, we still need to update candidate list.
-        m_pendingChangeFlags |= DirtyFlag::CandidateList;
+        if (m_fLocked)
+        {
+            // Inside a document lock the pending flag is consumed by the
+            // post-lock tail of RequestLock (or the next OnEndEdit).
+            m_pendingChangeFlags |= DirtyFlag::CandidateList;
+        }
+        else
+        {
+            // Outside any document lock nothing is scheduled to consume the
+            // pending flag: a single keystroke followed by an idle user (no
+            // further edit session) would leave the refreshed list invisible
+            // to the render thread indefinitely — the "composition shows, no
+            // candidates" bug with single-character input. Publish now, while
+            // still holding the mutex: the render thread's RequestUpdate
+            // blocks on it and copies the fully refilled list below.
+            m_pTextService->MarkDirty(DirtyFlag::CandidateList);
+        }
         candidateUi.Close();
         candidateUi.SetFirstIndex(info.pageStart);
         candidateUi.Reserve(info.pageEnd - info.pageStart);

@@ -90,7 +90,16 @@ constexpr std::size_t IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET = 0x7B;
 /// A session whose framework render loop has been silent this long is dead
 /// (its menu closed without an ImGui frame ever reporting the field's
 /// deactivation) — release the lease before the leak healer has to.
-constexpr std::uint64_t STALL_TIMEOUT_MS = 600;
+/// 3s, not lower: real games hitch for hundreds of ms to seconds while a
+/// framework menu is open (asset streaming, our own first-CJK font atlas
+/// build) — kBeforeRender stops for exactly that long and the field is still
+/// live. At 600ms the watchdog killed such live sessions mid-composition
+/// (observed 2026-10-05: force-end at 27s into a session, lease released,
+/// IME disabled, bar gone; the 1ms-later re-begin was debounce-deferred and
+/// the deferred enable was dropped, dead session until re-click), and hitches
+/// past 3s still recover: the re-begin's enable is now committed by
+/// CommitPendingTextEntryEnable instead of dropped.
+constexpr std::uint64_t STALL_TIMEOUT_MS = 3000;
 /// Committed UTF-16 units accepted while waiting for a flush (paste flood cap,
 /// same bound as the Meridian queue).
 constexpr std::size_t MAX_PENDING_UNITS = 8192;

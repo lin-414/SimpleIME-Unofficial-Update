@@ -1610,3 +1610,104 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
   兼容条目、中文摘要去名、BlackMesa79 致谢行删除;MeridianBridge 注释去 rival 名。保留:检测
   DLL 字面量与 warn 日志(第 36 轮功能性决定)、PROGRESS 开发日志(如实记录)。amend 单提交后删
   release+tag 重推,CI 重跑覆盖发布。
+
+### 打包(3.0.0-beta 本地包)
+- 重配置×2 目录(RelWithDebInfo + test-check,cache 直接 `cmake -S -B` 即可)→ simple_rc 补丁
+  重打(version.rc 重生成为 3.0.0-beta)→ 构建 → SimpleIMETest 48/48 + node 桥测试全过。
+- 发行包 `dist/SimpleIME-3.0.0-beta-Release.7z`(1.58 MB,md5 `39e31d12…`,15 文件: DLL+README+
+  LICENSE+界面 toml×7+lucide 字体+四许可);DLL md5 `542b9653…`,内嵌 ProductVersion/FileVersion
+  均 3.0.0-beta;build / dist 镜像(含 PDB) / MO2 / 包内四处哈希一致。MO2 同步跳过
+  interface\SimpleIME\SimpleIME.toml(用户活配置未动)。与 GitHub Release 资产同名但为本地
+  RelWithDebInfo 构建(CI 资产为 Release 构建,哈希不同属预期)。
+
+## 第 38 轮:单字符候选列表空缺修复 (2026-10-05)
+
+### 症状与定位
+- 游戏内偶发:只输入一个字母后停手,候选窗只剩组字字符,候选区持续空白
+  (截图 2026-10-05 12:47,stall 快照日志证实 12:46:57 起组字挂着 8 秒+候选未出现);
+  输入第二个字符即恢复。微信输入法。
+- 根因(TextStore.cpp UIElement 管线,三处叠加):
+  1. **锁外刷新丢失(主因)**:DoUpdateUIElement 的列表刷新只设
+     m_pendingChangeFlags |= CandidateList,该标志仅由 RequestLock 尾部或
+     OnEndEdit 消费;TIP 异步刷新候选列表常在文档锁外到达,单字符后无后续
+     编辑会话 → 标志永远无人消费 → 渲染线程 base 副本保持空列表。
+     selection-only 路径此前已修过锁外直发,列表路径漏了(不对称)。
+  2. **注册不拉初值**:BeginUIElement 只缓存接口不读内容;TIP 注册时内容已
+     就绪且后续不发内容更新的话首屏列表永远不来。
+  3. **空页被接受**:GetCandInfo 对 pageCount==0 返回 S_FALSE 被当成功,
+     接受成"开着但空"的列表,后续 selection-only 更新提前返回永不填补。
+
+### 修复(均在 src/tsf/TextStore.cpp)
+- DoUpdateUIElement 列表刷新按 m_fLocked 分流:锁内保持 pending 标志交
+  post-lock 尾部,锁外直接 MarkDirty(CandidateList)(与 selection-only
+  路径对称;MarkDirty 先于填列表,渲染线程 RequestUpdate 会阻塞在服务锁上,
+  拷到的一定是填完的列表)。
+- BeginUIElement 拿到 ITfCandidateListUIElementBehavior 后立即
+  DoUpdateUIElement 拉初始列表(debug 日志记 fill HRESULT)。
+- GetCandInfo S_FALSE(零页)不再当成功:Abort 元素让 TIP 带真数据重建
+  (重建即触发 Begin 再拉取),info 级日志。
+- selection-only 提前返回加 !empty() 守卫,空列表时落入完整重填。
+
+### 产物
+- 构建通过(警告全为 FuncTracer 既有噪音),DLL 已部署 MO2
+  (E:\Skyrim AE\mods\SimpleIME\SKSE\Plugins\SimpleIME.dll),游戏内待实测。
+
+## 第 39 轮:Prisma UI 接管 + SKSEMF 会话修复 + 候选窗层级 (2026-10-06,3.1.1)
+
+> Nexus 用户报告(Hero Avatar HUD 172644):SKSE 菜单输入栏候选窗"闪一下就没动静"、
+> 多点几次才恢复;改用 TMS 桥接只出英文。随后本机实测扩展出 PMCM 无候选框、候选窗
+> 层级两个问题。用户确认四项全部修复。
+
+### 症状与根因(逐项)
+1. **SKSEMF 候选栏闪一下就死 / TMS 只出英文**:stall 看门狗 600ms 过激(真实游戏卡顿
+   0.6-2.4s+,本地 10-05 日志 15:13:51/53 实证)→ force-end 释放租约 → 计数器 1→0 →
+   EnableIme(false) 候选窗消失;框架回调 1ms 内重建会话 → 0→1 被 OnTextEntryCountChanged
+   的 50ms 重启用去抖直接丢弃 → 计数器恒 1 再无 0→1,IME 死在"会话活跃但 IME 关闭"态。
+   原版 SimpleIME 无此去抖,故原版+TMS 正常。SKSEMF 3.14 偏移复测未漂(反汇编
+   ImGuiIO_AddFocusEvent:ConfigDebugIgnoreFocusLoss=0x7B、Ctx=0xF0 与 3.8 一致)。
+2. **PMCM(Prisma Mod Configuration Manager,168551)无候选框**:PMCM 是纯 PrismaUI/
+   Ultralight 菜单(非 SKSEMF)。PrismaUI 自带 IME 管线:游戏窗口 subclass 收 WM_CHAR→
+   view、HIMC 按需关联、**WM_IME_SETCONTEXT lParam=0 故意抑制系统候选窗**、组词/候选经
+   prismaIME_state 推给网页自渲染——PMCM 的 shell.html 没实现该监听 ⇒ 哪边都无候选框,
+   中文只能盲打。V1 API 无枚举焦点 view 接口 ⇒ JS 注入路线不可行,改为 SimpleIME 接管。
+3. **第一版接管失败("无法输入中文")**:触发器选错——(a) PMCM 根本不租借 AllowTextInput
+   计数器(全程零 0→1);(b) PrismaUI subclass 吞掉自家 ImeAssociation 注册消息
+   (HandleControlMessage 返回 true 直接 return) ⇒ MainWndProc 收不到;(c) IME 被压制
+   期间布局看门狗把用户手动切的中文布局反复强制回英文,连原生盲打都被封死。
+4. **候选窗不在最上层**:PrismaUI 在自己的 present 调用点钩子里先调原函数再绘制 view,
+   调用点链上永远盖住菜单阶段绘制的 ImGui 叠加层;其钩子惰性安装(首个 view 创建时),
+   调用点无稳定"排它之后"位置。
+
+### 修复
+- **去抖改延迟启用锁存**(ScaleformHook.cpp):g_pendingTextEntryEnable(连同
+  g_lastDisableTime 移出类私有),被去抖的 0→1 置锁存不丢弃,由
+  Hooks::Scaleform::CommitPendingTextEntryEnable()(ImeMenu 每帧轮询旁调用)在 50ms
+  窗口过后提交:计数器仍开且 IME_DISABLED 才 EnableIme(true);1→0 清锁存(ESC 关窗
+  抖动语义不变)。
+- **看门狗 600→3000ms**(SkseMenuFrameworkBridge.cpp);>3s 极端情况由锁存自动恢复。
+- **Prisma 接管**:门控反转(EnableIme 仅 IsUnavailable 时压制);触发器=
+  PrismaBridge::Refresh 的 hasActiveFocus 转换(≤500ms 轮询)→ SyncImeState;
+  **IsShouldEnableIme 纳入 prismaAvoidance && ShouldRoute()**(防 WM_NCACTIVATE 同步
+  中途杀掉会话);OnAssociationMessage 区分 wParam(关联/解除;实际收不到,死代码防御)。
+- **提交路由**:SendUiString 在 Meridian 后 SKSEMF 前插 PrismaBridge::ShouldRoute →
+  QueueText=逐 UTF-16 单元 PostMessageW(gameHwnd, WM_CHAR)(Prisma subclass 自带代理
+  对重组,ShouldQueueChar 不滤 CJK,lParam=0 仅影响 repeat 位);s_gameHwnd 由
+  ImeWnd::OnCreated SetGameHwnd 提供。
+- **编辑键转发**:ImeWnd WM_KEYDOWN/WM_KEYUP 对称转发 VK_BACK/RETURN/DELETE/TAB/
+  方向/HOME/END(ShouldRoute 且非组词时;组词中方向键归候选导航不转发)。
+- **ToolWindow 防抢**:SendUiString 顶部 toolWindowShowing 为真跳过全部桥接路由走
+  Scaleform 回退(同类冲突 Meridian/SKSEMF 一并修掉)。
+- **候选窗层级**:新增 IDXGISwapChain::Present 虚表钩子(ImeApp::SwapChainPresentHook,
+  slot 8,FunctionHook 原始地址 ctor):先绘制后调原始 Present ⇒ 必然在所有调用点钩子
+  (Prisma/SKSEMF)之上;仅 ShouldRoute 时驱动,其余场景层级不变;OMGetRenderTargets
+  空时钉后台缓冲 RTV(GetBuffer(0) 用 REX::W32::IID_ID3D11Texture2D,IID_PPV_ARGS 的
+  MSVC GUID 与 REX GUID 类型不同不能隐转)。
+- 设置文案:"Prisma UI 避让模式"→"Prisma UI 输入支持"(zh/en;键名 prisma_avoidance
+  不动);contrib config 模板注释同步。
+
+### 产物
+- 构建 EXIT 0;SimpleIMETest 48/48。用户游戏内确认:PMCM 中文输入+候选框层级全正常,
+  SKSEMF 菜单(01:49 会话)正常。
+- 遗留:de/ko/ja/ru 翻译文案未同步(仍旧避让措辞);组词串贴屏幕顶缘可能被裁(搜索框
+  本身在屏幕顶时),用户未再报,暂不处理。
+- 版本 3.0.0-beta → **3.1.1**(首个 stable 后缀版本,PRERELEASE 清空)。

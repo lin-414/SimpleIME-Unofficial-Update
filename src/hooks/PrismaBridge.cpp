@@ -42,6 +42,7 @@ std::atomic<bool>           s_associationLatch{false};
 std::atomic<bool>           s_enabled{false}; ///< config gate, latched at Install
 std::atomic<SupportState>   s_state{SupportState::Pending}; ///< install outcome, for the settings UI
 std::atomic<std::uint64_t>  s_lastRefreshMs{0};
+std::atomic<HWND>           s_gameHwnd{nullptr}; ///< set by ImeWnd once created; the WM_CHAR commit target
 } // namespace
 
 void Install()
@@ -113,7 +114,7 @@ void Refresh()
     }
     s_lastRefreshMs = now;
     const bool focus = s_unavailable || s_api->HasAnyActiveFocus();
-    s_hasActiveFocus = focus;
+    const bool previous = s_hasActiveFocus.exchange(focus, std::memory_order_acq_rel);
     const bool latch = s_associationLatch.exchange(false);
     if (!focus && latch)
     {
@@ -126,16 +127,42 @@ void Refresh()
             controller->SyncImeState();
         }
     }
+    if (focus != previous)
+    {
+        // Focus transition — THE takeover trigger. PMCM and friends never lease
+        // the text-entry counter (no AllowTextInput call of their own was ever
+        // observed), so the counter path cannot start a session here; a view
+        // gaining/losing focus is the only reliable signal that a Prisma UI
+        // took (or released) the keyboard. SyncImeState consults ShouldRoute()
+        // (see IsShouldEnableIme): focus gained -> the IME takes over; focus
+        // lost -> the counter (closed) turns it back off.
+        logger::info("Prisma view focus {} — re-evaluating IME state", focus ? "GAINED" : "lost");
+        if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
+        {
+            controller->SyncImeState();
+        }
+    }
 }
 
-void OnAssociationMessage()
+void OnAssociationMessage(bool associated)
 {
     if (!s_enabled.load())
     {
         return;
     }
+    if (!associated)
+    {
+        // Prisma disassociated its context (input capture released). Re-evaluate
+        // instead of latching: the counter path and the next Refresh decide.
+        logger::info("PrismaUI disassociated its IME context; re-evaluating IME state");
+        if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
+        {
+            controller->SyncImeState();
+        }
+        return;
+    }
     s_associationLatch = true;
-    logger::info("PrismaUI associated its IME context; standing down");
+    logger::info("PrismaUI associated its IME context; taking over text entry");
     // Take the focus decision immediately instead of waiting for the next
     // Refresh: Prisma is about to own the keyboard.
     s_hasActiveFocus = true;
@@ -148,6 +175,58 @@ void OnAssociationMessage()
 bool OwnsInput()
 {
     return s_enabled.load() && (s_unavailable || s_hasActiveFocus.load() || s_associationLatch.load());
+}
+
+bool IsUnavailable()
+{
+    return s_unavailable;
+}
+
+bool ShouldRoute()
+{
+    return s_enabled.load() && !s_unavailable &&
+           (s_hasActiveFocus.load(std::memory_order_acquire) || s_associationLatch.load(std::memory_order_acquire));
+}
+
+void QueueText(std::wstring_view text)
+{
+    if (text.empty())
+    {
+        return;
+    }
+    const HWND hwnd = s_gameHwnd.load(std::memory_order_acquire);
+    if (hwnd == nullptr)
+    {
+        logger::warn("Prisma commit route dropped {} unit(s): game window not known yet", text.size());
+        return;
+    }
+    std::size_t posted = 0;
+    for (const wchar_t c : text)
+    {
+        // Same strip list as the other commit routes: grave would toggle the
+        // console when echoed back, and the middle dot is the CJK list
+        // separator the engine treats as a hotkey.
+        constexpr wchar_t GRAVE_ACCENT = L'`';
+        constexpr wchar_t MIDDLE_DOT   = L'·';
+        if (c == GRAVE_ACCENT || c == MIDDLE_DOT)
+        {
+            continue;
+        }
+        // PrismaUI's game-window subclass turns WM_CHAR payloads (its own
+        // surrogate recombination included) into text inside the focused view.
+        // Posting works regardless of which window holds the Win32 focus,
+        // which matters: while our IME composes, that is ImeWnd.
+        if (PostMessageW(hwnd, WM_CHAR, static_cast<WPARAM>(c), 0) != FALSE)
+        {
+            ++posted;
+        }
+    }
+    logger::info("Prisma commit route: posted {} of {} unit(s) as WM_CHAR", posted, text.size());
+}
+
+void SetGameHwnd(HWND hwnd)
+{
+    s_gameHwnd.store(hwnd, std::memory_order_release);
 }
 
 unsigned AssociationMessage()

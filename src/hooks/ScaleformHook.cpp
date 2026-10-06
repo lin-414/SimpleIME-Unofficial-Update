@@ -5,12 +5,14 @@
 #include "hooks/ScaleformHook.h"
 
 #include "RE/ControlMap.h"
+#include "core/State.h"
 #include "hook.h"
 #include "hooks/Hooks.hpp"
 #include "hooks/MeridianBridge.h"
 #include "ime/ImeController.h"
 #include "log.h"
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 
@@ -50,16 +52,28 @@ public:
     // NOLINTEND(*-magic-numbers)
 };
 
+// Timestamp of the last 1->0 (disable) transition, used to debounce the
+// enable/disable jitter that ESC produces while a mod window is closing
+// (AllowTextInput toggles 0->1->0 in quick succession). Without this, the
+// IME is re-enabled (restoring WeChat/Pinyin) right before the final
+// disable lands, leaving the system TIP and SimpleIME in a half-cleaned
+// state ("still typing after ESC").
+std::chrono::steady_clock::time_point g_lastDisableTime{};
+// Set when a 0->1 re-enable lands inside the debounce window above.
+// DEFERRED, not dropped: the ESC-close churn this debounce targets ends
+// with the counter back at 0 (which clears the latch), but a lease that
+// STAYS must still enable eventually — the SKSEMF bridge re-acquires one
+// frame after its stall watchdog releases, and PMCM-style menus toggle
+// AllowTextInput around field focus. Dropping the enable left the IME
+// permanently off while the field stayed focused: no further 0->1
+// transition ever fires, so nothing retried ("candidate bar flashes once,
+// then nothing responds" until the user re-clicked the field). Committed
+// by CommitPendingTextEntryEnable from the game thread's frame poll.
+std::atomic<bool> g_pendingTextEntryEnable{false};
+
 class SKSE_AllowTextInputFnHandler final : public RE::GFxFunctionHandler
 {
     static inline std::uint8_t g_prevTextEntryCount = 0;
-    // Timestamp of the last 1->0 (disable) transition, used to debounce the
-    // enable/disable jitter that ESC produces while a mod window is closing
-    // (AllowTextInput toggles 0->1->0 in quick succession). Without this, the
-    // IME is re-enabled (restoring WeChat/Pinyin) right before the final
-    // disable lands, leaving the system TIP and SimpleIME in a half-cleaned
-    // state ("still typing after ESC").
-    static inline std::chrono::steady_clock::time_point g_lastDisableTime{};
 
 public:
     void Call(Params &params) override;
@@ -202,14 +216,13 @@ void SKSE_AllowTextInputFnHandler::OnTextEntryCountChanged(std::uint8_t entryCou
         const auto elapsed = std::chrono::steady_clock::now() - g_lastDisableTime;
         if (elapsed < std::chrono::milliseconds(50))
         {
-            logger::debug(
-                "Text entry re-enabled {}ms after disable, keeping IME off",
+            logger::info(
+                "Text entry re-enabled {}ms after disable, deferring the IME enable to the frame poll",
                 std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
             );
-            // Return BEFORE SyncImeStateIfDirty: DoSyncImeState would call
-            // EnableIme(IsShouldEnableIme()) on the IME thread and bypass this
-            // debounce (HasTextEntry() is true right now). A dirty flag, if any,
-            // survives and a later sync trigger retries — by design.
+            g_pendingTextEntryEnable.store(true, std::memory_order_release);
+            // Return BEFORE SyncImeStateIfDirty: a dirty flag, if any, survives
+            // and a later sync trigger retries — by design.
             return;
         }
         imeManager->SyncImeStateIfDirty();
@@ -217,6 +230,9 @@ void SKSE_AllowTextInputFnHandler::OnTextEntryCountChanged(std::uint8_t entryCou
     }
     else if (entryCount == 0)
     {
+        // The churn the debounce defers against resolved to "closed": the
+        // deferred enable must not fire.
+        g_pendingTextEntryEnable.store(false, std::memory_order_release);
         g_lastDisableTime = std::chrono::steady_clock::now();
         imeManager->SyncImeStateIfDirty();
         imeManager->EnableIme(false);
@@ -285,6 +301,40 @@ void ResetTextEntryCountCache()
     // The counter was corrected outside the hook (leak repair in EventHandler);
     // re-sync the cached previous value so the next transition detects properly.
     SKSE_AllowTextInputFnHandler::SyncBaseline();
+}
+
+void CommitPendingTextEntryEnable()
+{
+    // Game thread, every frame: commit an enable that landed inside the
+    // re-enable debounce window and was deferred rather than dropped. Once the
+    // window expires, the FINAL stable state wins: if the counter is still >0
+    // the enable runs (respecting every gate inside EnableIme — Prisma
+    // avoidance, keepImeOpen, state dedup); if the churn ended closed the
+    // latch was already cleared by the disable transition.
+    if (!g_pendingTextEntryEnable.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    if (std::chrono::steady_clock::now() - g_lastDisableTime < std::chrono::milliseconds(50))
+    {
+        return; // still inside the churn window; stay latched for a later frame
+    }
+    if (!g_pendingTextEntryEnable.exchange(false, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    auto *controlMap = Ime::ControlMap::GetSingleton();
+    if (controlMap == nullptr || !controlMap->HasTextEntry())
+    {
+        logger::info("Deferred text-entry enable dropped: counter no longer open");
+        return;
+    }
+    if (!Ime::Core::State::GetInstance().Has(Ime::Core::State::IME_DISABLED))
+    {
+        return; // already enabled; nothing deferred remains
+    }
+    logger::info("Deferred IME enable committed after the re-enable debounce window");
+    Ime::ImeController::GetInstance()->EnableIme(true);
 }
 
 void Uninstall()

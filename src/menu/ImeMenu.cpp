@@ -14,6 +14,7 @@
 #include "hooks/PrismaBridge.h"
 #include "hooks/SkseMenuFrameworkBridge.h"
 #include "hooks/SkseMenuFrameworkBridgeLogic.h"
+#include "hooks/ScaleformHook.h"
 #include "ime/ImeController.h"
 #include "log.h"
 #include "menu/MenuNames.h"
@@ -243,6 +244,11 @@ void ImeMenu::PostDisplay()
     // Game thread, every frame: repair a leaked text-entry counter even when no
     // menu event fires after the leak (see Events::PollTextEntryCountConsistency).
     Events::PollTextEntryCountConsistency();
+    // Game thread, every frame: commit an IME enable that the re-enable
+    // debounce deferred (bridge lease re-acquired right after a watchdog
+    // force-end, PMCM-style field churn) — without this the enable would be
+    // lost until the user re-clicks the field.
+    Hooks::Scaleform::CommitPendingTextEntryEnable();
 
     // Game thread, every frame: refresh the cached Prisma focus state (its
     // query may wait on Ultralight, so it must never run inside a window

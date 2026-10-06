@@ -3,6 +3,7 @@
 //
 #include "Utils.h"
 
+#include "ImeApp.h"
 #include "RE/B/BSTDerivedCreator.h"
 #include "RE/B/BSUIScaleformData.h"
 #include "RE/G/GFxEvent.h"
@@ -10,6 +11,7 @@
 #include "RE/I/InterfaceStrings.h"
 #include "RE/U/UIMessageQueue.h"
 #include "hooks/MeridianBridge.h"
+#include "hooks/PrismaBridge.h"
 #include "hooks/SkseMenuFrameworkBridge.h"
 #include "menu/MenuNames.h"
 
@@ -37,23 +39,46 @@ void SendUiString(std::wstring_view wstringView)
 {
     if (wstringView.empty()) return;
 
-    // Meridian views (CEF) live outside the menu stack: GFx char events never
-    // reach their DOM fields. While a Meridian view is focused, hand the text
-    // to the bridge instead — it queues here (IME thread) and commits into
-    // the focused DOM field from the game thread's frame tick.
-    if (Hooks::MeridianBridge::ShouldRoute())
-    {
-        Hooks::MeridianBridge::QueueText(wstringView);
-        return;
-    }
+    // While our own ToolWindow (the settings overlay) is showing, it is the
+    // text target: the bridge routes below would steal its keystrokes into an
+    // underlying mod view (PMCM search box, Meridian DOM field, SKSEMF ImGui
+    // field). Fall through to the Scaleform fallback, which feeds ImeMenu's
+    // ImGui via its own char events. The flag is written on the render thread
+    // and read here on the IME thread; a one-frame staleness only misroutes a
+    // keystroke across an open/close boundary, which is unobservable.
+    const bool toolWindowShowing = ImeApp::GetInstance().GetSettings().runtimeData.toolWindowShowing;
 
-    // SKSE Menu Framework fields are ImGui, not Scaleform: same routing idea,
-    // but the injection happens inside the framework's own render-event
-    // callback (the thread its ImGui frames run on).
-    if (Hooks::SkseMenuFrameworkBridge::ShouldRoute())
+    if (!toolWindowShowing)
     {
-        Hooks::SkseMenuFrameworkBridge::QueueText(wstringView);
-        return;
+        // Meridian views (CEF) live outside the menu stack: GFx char events never
+        // reach their DOM fields. While a Meridian view is focused, hand the text
+        // to the bridge instead — it queues here (IME thread) and commits into
+        // the focused DOM field from the game thread's frame tick.
+        if (Hooks::MeridianBridge::ShouldRoute())
+        {
+            Hooks::MeridianBridge::QueueText(wstringView);
+            return;
+        }
+
+        // Prisma views (Ultralight — PMCM, Outfit Wheeler, ...) live outside the
+        // menu stack too, and their fields are fed exclusively by PrismaUI's
+        // game-window subclass reading the WM_CHAR stream. While a Prisma view
+        // owns input, post the committed text there: the subclass queues it into
+        // the view (surrogate recombination included), Win32 focus notwithstanding.
+        if (Hooks::PrismaBridge::ShouldRoute())
+        {
+            Hooks::PrismaBridge::QueueText(wstringView);
+            return;
+        }
+
+        // SKSE Menu Framework fields are ImGui, not Scaleform: same routing idea,
+        // but the injection happens inside the framework's own render-event
+        // callback (the thread its ImGui frames run on).
+        if (Hooks::SkseMenuFrameworkBridge::ShouldRoute())
+        {
+            Hooks::SkseMenuFrameworkBridge::QueueText(wstringView);
+            return;
+        }
     }
 
     auto             *messageQueue  = RE::UIMessageQueue::GetSingleton();

@@ -28,6 +28,9 @@
 #include <filesystem>
 #include <utility>
 
+#include <algorithm>
+#include <array>
+
 namespace Ime
 {
 namespace Global
@@ -670,6 +673,33 @@ void ImeWnd::Draw(Settings &settings)
     ImeController::GetInstance()->SaveSettings(settings);
 }
 
+/// While a Prisma view owns input (PMCM search box, Outfit Wheeler fields),
+/// its editing keys arrive exclusively through the game window's message
+/// stream — which goes quiet the moment our IME takes the Win32 focus.
+/// Forward the editing keys so backspace/arrows/enter keep working in the
+/// field while our IME owns the keyboard. During a composition the IME
+/// consumes these keys itself (candidate navigation), so hold off until it
+/// ends; the text streams need no help (SendUiString's Prisma route delivers
+/// committed characters, and the WM_CHAR branch below feeds English typing).
+/// Called for WM_KEYDOWN and WM_KEYUP so Ultralight sees matched pairs.
+void ForwardEditingKeyToPrismaHostIfOwned(HWND hWndParent, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    static constexpr std::array<WORD, 10> kForwardedKeys = {
+        VK_BACK, VK_RETURN, VK_DELETE, VK_TAB,  VK_UP,
+        VK_DOWN, VK_LEFT,   VK_RIGHT,  VK_HOME, VK_END
+    };
+    if (std::ranges::find(kForwardedKeys, static_cast<WORD>(wParam)) == kForwardedKeys.end())
+    {
+        return;
+    }
+    if (!Hooks::PrismaBridge::ShouldRoute() ||
+        Core::State::GetInstance().HasAny(Core::State::IN_COMPOSING, Core::State::IN_CAND_CHOOSING))
+    {
+        return;
+    }
+    PostMessageW(hWndParent, uMsg, wParam, lParam);
+}
+
 auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRESULT
 {
     // logger::debug("Message: {:#X} {} {}", uMsg, wParam, lParam);
@@ -726,6 +756,7 @@ auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRES
                 {
                     pThis->m_shiftTapArmed = false; // Shift+key combo is not a mode toggle
                 }
+                ForwardEditingKeyToPrismaHostIfOwned(pThis->m_hWndParent, uMsg, wParam, lParam);
             }
             break;
         case WM_KEYUP:
@@ -762,6 +793,7 @@ auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRES
                 {
                     pThis->m_shiftTapArmed = false;
                 }
+                ForwardEditingKeyToPrismaHostIfOwned(pThis->m_hWndParent, uMsg, wParam, lParam);
             }
             break;
         case WM_DESTROY: {
@@ -932,6 +964,9 @@ void ImeWnd::OnCreated(Settings &settings)
 {
     logger::info("Ime window created, init TSF and core...");
     m_gameThreadId = GetWindowThreadProcessId(m_hWndParent, nullptr);
+    // The Prisma commit route posts WM_CHAR at the game window (ImeWnd's
+    // parent): PrismaUI's subclass feeds those into the focused view.
+    Hooks::PrismaBridge::SetGameHwnd(m_hWndParent);
     m_textService->OnStart(m_hWnd);
     m_uiScale            = ImGui_ImplWin32_GetDpiScaleForHwnd(m_hWnd);
     m_fWantUpdateUiScale = true;

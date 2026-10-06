@@ -103,6 +103,15 @@ public:
     /// path has gone silent (frame token) and a Meridian session is active.
     static void PresentHook(std::uint32_t a_unk);
 
+    /// The real IDXGISwapChain::Present. PrismaUI renders its Ultralight views
+    /// from a present CALL-SITE hook that always runs after our PostDisplay
+    /// overlay, so during a Prisma takeover session their views cover the
+    /// candidate window no matter what we do at the call site. Drawing here —
+    /// into the backbuffer right before the actual flip — is the only point
+    /// guaranteed to be after every such draw. Driven only while a Prisma view
+    /// holds input (ShouldRoute); everything else keeps the normal layering.
+    static auto SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, std::uint32_t flags) -> long;
+
     constexpr auto GetGameHWND() const -> HWND { return m_hWnd; }
 
     constexpr auto GetImeWnd() -> ImeWnd & { return m_imeWnd; }
