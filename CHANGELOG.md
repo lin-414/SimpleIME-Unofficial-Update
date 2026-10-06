@@ -1,4 +1,4 @@
-## [3.1.1] - 2026-10-06
+## [3.1.1-beta] - 2026-10-06
 
 ### 🐛 Bug Fixes
 
@@ -6,7 +6,7 @@
 - IME sessions and candidate window layering over Prisma UI and SKSEMF menus
 
 
-**Full Changelog**: https://github.com/lin-414/SimpleIME-Unofficial-Update/compare/v3.0.0-beta...v3.1.1
+**Full Changelog**: https://github.com/lin-414/SimpleIME-Unofficial-Update/compare/v3.0.0-beta...v3.1.1-beta
 
 ## [3.0.0-beta] - 2026-10-05
 

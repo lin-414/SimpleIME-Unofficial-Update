@@ -1710,4 +1710,4 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
   SKSEMF 菜单(01:49 会话)正常。
 - 遗留:de/ko/ja/ru 翻译文案未同步(仍旧避让措辞);组词串贴屏幕顶缘可能被裁(搜索框
   本身在屏幕顶时),用户未再报,暂不处理。
-- 版本 3.0.0-beta → **3.1.1**(首个 stable 后缀版本,PRERELEASE 清空)。
+- 版本 3.0.0-beta → **3.1.1-beta**(用户指示保留 beta 后缀;3.1.1 tag/Release 已删重发)。
