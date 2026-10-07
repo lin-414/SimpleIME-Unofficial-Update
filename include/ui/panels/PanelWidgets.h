@@ -1045,4 +1045,47 @@ inline void EndRowTrailingCombo(const bool comboOpen)
         ImGuiEx::M3::EndCombo();
     }
 }
+
+//! One entry inside a SettingsComboRow menu: true when the user picked this
+//! (i.e. it was not already selected).
+inline bool ComboOption(const std::string_view label, const bool selected)
+{
+    return ImGuiEx::M3::MenuItem(label, selected) && !selected;
+}
+
+//! One trailing-combo row: title (and optional supporting copy) on the left,
+//! the compact M3 dropdown anchored right. `fillMenu` runs inside the open
+//! menu; emit entries with ComboOption. `textMeasureCap` follows
+//! BeginPlainSettingsRow (0 = fold at the row's measure).
+template <typename Fn>
+inline void SettingsComboRow(
+    const char            *strId,
+    const std::string_view title,
+    const std::string_view supporting,
+    const std::string_view preview,
+    Fn                   &&fillMenu,
+    const float            textMeasureCap = 0.0F
+)
+{
+    using namespace ImGuiEx::M3;
+    const float padX   = Context::GetM3Styles().GetPixels(Spec::List::paddingX);
+    const float comboW = RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
+    const auto  row    = BeginPlainSettingsRow(title, supporting, comboW, ComboButtonHeight(), textMeasureCap);
+    if (!row)
+    {
+        return;
+    }
+    RowTitle(row);
+    if (!supporting.empty())
+    {
+        RowSupporting(row, supporting);
+    }
+    const bool open = BeginRowTrailingCombo(row, strId, preview);
+    if (open)
+    {
+        fillMenu();
+    }
+    EndRowTrailingCombo(open);
+    EndSettingsRow(row);
+}
 } // namespace Ime::UI::Panels

@@ -1335,54 +1335,42 @@ void MockToolWindow::DrawAdvanced(MiniSettings &settings)
             static constexpr std::array<const char *, 7> kLevelNames{"Trace", "Debug", "Info", "Warn", "Error", "Critical", "Off"};
             {
                 const std::string preview = kLevelNames[settings.logLevel];
-                const float       padX    = ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::List::paddingX);
-                const float       comboW  = UI::Panels::RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
-                if (const auto row = UI::Panels::BeginPlainSettingsRow(T("Advanced.LogLevel"), T("Advanced.LogLevelSupport"), comboW, UI::Panels::ComboButtonHeight(), SupportingMeasure()); row)
-                {
-                    UI::Panels::RowTitle(row, T("Advanced.LogLevel"));
-                    UI::Panels::RowSupporting(row, T("Advanced.LogLevelSupport"));
-                    const bool open = UI::Panels::BeginRowTrailingCombo(row, "##LogLevelCombo", preview);
-                    if (open)
-                    {
+                UI::Panels::SettingsComboRow(
+                    "##LogLevelCombo",
+                    T("Advanced.LogLevel"),
+                    T("Advanced.LogLevelSupport"),
+                    preview,
+                    [&] {
                         for (int level = 0; level < static_cast<int>(kLevelNames.size()); ++level)
                         {
-                            const bool selected = level == settings.logLevel;
-                            if (ImGuiEx::M3::MenuItem(kLevelNames[level], selected) && !selected)
+                            if (UI::Panels::ComboOption(kLevelNames[level], level == settings.logLevel))
                             {
                                 settings.logLevel = level;
                             }
                         }
-                    }
-                    UI::Panels::EndRowTrailingCombo(open);
-                    UI::Panels::EndSettingsRow(row);
-                }
+                    },
+                    SupportingMeasure());
             }
             ImGuiEx::M3::Divider();
             {
                 static constexpr std::array<int, 5> kDurations{-1, 5, 10, 30, 60};
                 const std::string preview = settings.errorDuration < 0 ? std::string(T("Advanced.ErrorDurationNever")) : std::format("{} s", settings.errorDuration);
-                const float       padX    = ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::List::paddingX);
-                const float       comboW  = UI::Panels::RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
-                if (const auto row = UI::Panels::BeginPlainSettingsRow(T("Advanced.ErrorDuration"), T("Advanced.ErrorDurationSupport"), comboW, UI::Panels::ComboButtonHeight(), SupportingMeasure()); row)
-                {
-                    UI::Panels::RowTitle(row, T("Advanced.ErrorDuration"));
-                    UI::Panels::RowSupporting(row, T("Advanced.ErrorDurationSupport"));
-                    const bool open = UI::Panels::BeginRowTrailingCombo(row, "##ErrorDurationCombo", preview);
-                    if (open)
-                    {
+                UI::Panels::SettingsComboRow(
+                    "##ErrorDurationCombo",
+                    T("Advanced.ErrorDuration"),
+                    T("Advanced.ErrorDurationSupport"),
+                    preview,
+                    [&] {
                         for (const int duration : kDurations)
                         {
-                            const bool selected = duration == settings.errorDuration;
                             const std::string label = duration < 0 ? std::string(T("Advanced.ErrorDurationNever")) : std::format("{} s", duration);
-                            if (ImGuiEx::M3::MenuItem(label, selected) && !selected)
+                            if (UI::Panels::ComboOption(label, duration == settings.errorDuration))
                             {
                                 settings.errorDuration = duration;
                             }
                         }
-                    }
-                    UI::Panels::EndRowTrailingCombo(open);
-                    UI::Panels::EndSettingsRow(row);
-                }
+                    },
+                    SupportingMeasure());
             }
         }
         UI::Panels::EndSettingsCard();

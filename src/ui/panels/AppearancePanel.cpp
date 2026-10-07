@@ -495,46 +495,37 @@ void AppearancePanel::DrawZoomCombo(Settings &settings)
     }
 
     const std::string preview = settings.appearance.zoom < 0.0F ? std::string(Translate("Settings.Appearance.ZoomFollowMonitor")) : std::format("{}%", m_currentZoomPercent);
-    // Reserve the combo's exact width so the row title wraps short of the chip
-    // instead of colliding under long "follow monitor" translations.
-    const float padX   = M3::Context::GetM3Styles().GetPixels(M3Spec::List::paddingX);
-    const float comboW = UI::Panels::RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
-    const auto  row    = UI::Panels::BeginPlainSettingsRow(
-        Translate("Settings.Appearance.Zoom"), {}, comboW, UI::Panels::ComboButtonHeight());
-    if (!row)
-    {
-        return;
-    }
-    UI::Panels::RowTitle(row);
-
-    const bool        open    = UI::Panels::BeginRowTrailingCombo(row, "##ZoomCombo", preview);
-    if (open)
-    {
-        const bool followsMonitor = settings.appearance.zoom < 0.0F;
-        if (ImGuiEx::M3::MenuItem(Translate("Settings.Appearance.ZoomFollowMonitor"), followsMonitor) && !followsMonitor)
-        {
-            settings.appearance.zoom = -1.0F;
-            settings.runtimeData.requestMonitorScale = true;
-        }
-
-        for (uint32_t zoom = ZOOM_MIN_PERCENT; zoom <= ZOOM_MAX_PERCENT; zoom += ZOOM_STEP_PERCENT)
-        {
-            const bool selected = settings.appearance.zoom > 0.0F &&
-                                  zoom == static_cast<uint32_t>(std::round(settings.appearance.zoom * 100.F));
-            if (ImGuiEx::M3::MenuItem(std::format("{}%", zoom), selected) && !selected)
+    // The combo reserves its exact width so the row title wraps short of the
+    // chip instead of colliding under long "follow monitor" translations.
+    UI::Panels::SettingsComboRow(
+        "##ZoomCombo",
+        Translate("Settings.Appearance.Zoom"),
+        {},
+        preview,
+        [&] {
+            const bool followsMonitor = settings.appearance.zoom < 0.0F;
+            if (UI::Panels::ComboOption(Translate("Settings.Appearance.ZoomFollowMonitor"), followsMonitor))
             {
-                const float uiScale = static_cast<float>(zoom) / 100.F;
-                ImGuiEx::M3::Context::GetM3Styles().UpdateScaling(uiScale);
-                // The global style caches scaled values (roundings, scrollbar size):
-                // rebuild it so they follow the new scale.
-                ImGuiEx::M3::SetupDefaultImGuiStyles(ImGui::GetStyle());
-                settings.appearance.zoom = uiScale;
-                m_currentZoomPercent     = zoom;
+                settings.appearance.zoom                 = -1.0F;
+                settings.runtimeData.requestMonitorScale = true;
             }
-        }
-    }
-    UI::Panels::EndRowTrailingCombo(open);
-    UI::Panels::EndSettingsRow(row);
+
+            for (uint32_t zoom = ZOOM_MIN_PERCENT; zoom <= ZOOM_MAX_PERCENT; zoom += ZOOM_STEP_PERCENT)
+            {
+                const bool selected = settings.appearance.zoom > 0.0F &&
+                                      zoom == static_cast<uint32_t>(std::round(settings.appearance.zoom * 100.F));
+                if (UI::Panels::ComboOption(std::format("{}%", zoom), selected))
+                {
+                    const float uiScale = static_cast<float>(zoom) / 100.F;
+                    ImGuiEx::M3::Context::GetM3Styles().UpdateScaling(uiScale);
+                    // The global style caches scaled values (roundings, scrollbar size):
+                    // rebuild it so they follow the new scale.
+                    ImGuiEx::M3::SetupDefaultImGuiStyles(ImGui::GetStyle());
+                    settings.appearance.zoom = uiScale;
+                    m_currentZoomPercent     = zoom;
+                }
+            }
+        });
 }
 
 void AppearancePanel::DrawThemeRow(Settings &settings)
@@ -778,42 +769,33 @@ void AppearancePanel::DrawLanguagesCombo(Settings::Appearance &appearance) const
     };
 
     const std::string preview{displayName(appearance.language)};
-    // Reserve the combo's exact width so the title never runs under the chip.
-    const float padX   = ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::List::paddingX);
-    const float comboW = UI::Panels::RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
-    const auto  row    = UI::Panels::BeginPlainSettingsRow(
-        Translate("Settings.Appearance.Languages"), {}, comboW, UI::Panels::ComboButtonHeight());
-    if (!row)
-    {
-        return;
-    }
-    UI::Panels::RowTitle(row);
-
-    const bool        open = UI::Panels::BeginRowTrailingCombo(row, "##LanguagesCombo", preview);
-    bool              clicked = false;
-    if (open)
-    {
-        int32_t idx = 0;
-        for (const auto &language : m_translateLanguages)
-        {
-            ImGui::PushID(idx);
-            const bool isSelected = appearance.language == language;
-            const std::string name{displayName(language)};
-            if (ImGuiEx::M3::MenuItem(name, isSelected) && !isSelected)
+    bool   clicked = false;
+    // The combo reserves its exact width so the title never runs under the chip.
+    UI::Panels::SettingsComboRow(
+        "##LanguagesCombo",
+        Translate("Settings.Appearance.Languages"),
+        {},
+        preview,
+        [&] {
+            int32_t idx = 0;
+            for (const auto &language : m_translateLanguages)
             {
-                appearance.language = language;
-                clicked             = true;
+                ImGui::PushID(idx);
+                const bool isSelected = appearance.language == language;
+                const std::string name{displayName(language)};
+                if (UI::Panels::ComboOption(name, isSelected))
+                {
+                    appearance.language = language;
+                    clicked             = true;
+                }
+                if (isSelected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+                ImGui::PopID();
+                idx++;
             }
-            if (isSelected)
-            {
-                ImGui::SetItemDefaultFocus();
-            }
-            ImGui::PopID();
-            idx++;
-        }
-    }
-    UI::Panels::EndRowTrailingCombo(open);
-    UI::Panels::EndSettingsRow(row);
+        });
 
     if (clicked)
     {

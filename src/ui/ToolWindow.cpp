@@ -1174,32 +1174,22 @@ void ToolWindow::DrawLogLevelRow(Settings &settings)
     const auto current = std::find_if(kLevels.begin(), kLevels.end(), [&](const LevelName &entry) { return entry.level == settings.logging.level; });
     const std::string preview = current != kLevels.end() ? std::string(current->name) : std::string("Info");
 
-    const float padX   = ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::List::paddingX);
-    const float comboW = Panels::RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
-    const auto  row    = Panels::BeginPlainSettingsRow(
-        Translate("Settings.Advanced.LogLevel"), Translate("Settings.Advanced.LogLevelSupport"), comboW, Panels::ComboButtonHeight(), SupportingMeasure());
-    if (!row)
-    {
-        return;
-    }
-    Panels::RowTitle(row);
-    Panels::RowSupporting(row, Translate("Settings.Advanced.LogLevelSupport"));
-
-    const bool open = Panels::BeginRowTrailingCombo(row, "##LogLevelCombo", preview);
-    if (open)
-    {
-        for (const auto &[level, name] : kLevels)
-        {
-            const bool selected = level == settings.logging.level;
-            if (ImGuiEx::M3::MenuItem(name, selected) && !selected)
+    Panels::SettingsComboRow(
+        "##LogLevelCombo",
+        Translate("Settings.Advanced.LogLevel"),
+        Translate("Settings.Advanced.LogLevelSupport"),
+        preview,
+        [&] {
+            for (const auto &[level, name] : kLevels)
             {
-                settings.logging.level = level;
-                spdlog::set_level(level);
+                if (Panels::ComboOption(name, level == settings.logging.level))
+                {
+                    settings.logging.level = level;
+                    spdlog::set_level(level);
+                }
             }
-        }
-    }
-    Panels::EndRowTrailingCombo(open);
-    Panels::EndSettingsRow(row);
+        },
+        SupportingMeasure());
 }
 
 //! "错误提示时长" row: presets cover the practical range (TOML still accepts
@@ -1211,34 +1201,25 @@ void ToolWindow::DrawErrorDurationRow(Settings &settings)
     const std::string preview = settings.appearance.errorDisplayDuration < 0
                                     ? std::string(Translate("Settings.Advanced.ErrorDurationNever"))
                                     : std::format("{} s", settings.appearance.errorDisplayDuration);
-    const float padX   = ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::List::paddingX);
-    const float comboW = Panels::RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
-    const auto  row    = Panels::BeginPlainSettingsRow(
-        Translate("Settings.Advanced.ErrorDuration"), Translate("Settings.Advanced.ErrorDurationSupport"), comboW, Panels::ComboButtonHeight(), SupportingMeasure());
-    if (!row)
-    {
-        return;
-    }
-    Panels::RowTitle(row);
-    Panels::RowSupporting(row, Translate("Settings.Advanced.ErrorDurationSupport"));
 
-    const bool open = Panels::BeginRowTrailingCombo(row, "##ErrorDurationCombo", preview);
-    if (open)
-    {
-        for (const std::int32_t duration : kDurations)
-        {
-            const bool selected = duration == settings.appearance.errorDisplayDuration;
-            const std::string label =
-                duration < 0 ? std::string(Translate("Settings.Advanced.ErrorDurationNever")) : std::format("{} s", duration);
-            if (ImGuiEx::M3::MenuItem(label, selected) && !selected)
+    Panels::SettingsComboRow(
+        "##ErrorDurationCombo",
+        Translate("Settings.Advanced.ErrorDuration"),
+        Translate("Settings.Advanced.ErrorDurationSupport"),
+        preview,
+        [&] {
+            for (const std::int32_t duration : kDurations)
             {
-                settings.appearance.errorDisplayDuration = duration;
-                ErrorNotifier::GetInstance().SetMessageDuration(duration);
+                const std::string label =
+                    duration < 0 ? std::string(Translate("Settings.Advanced.ErrorDurationNever")) : std::format("{} s", duration);
+                if (Panels::ComboOption(label, duration == settings.appearance.errorDisplayDuration))
+                {
+                    settings.appearance.errorDisplayDuration = duration;
+                    ErrorNotifier::GetInstance().SetMessageDuration(duration);
+                }
             }
-        }
-    }
-    Panels::EndRowTrailingCombo(open);
-    Panels::EndSettingsRow(row);
+        },
+        SupportingMeasure());
 }
 
 //! Two read-only status rows: process DPI awareness and the IME framework.
