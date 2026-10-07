@@ -578,30 +578,109 @@ void ClearSessionState()
     s_lastUiActive = false;
 }
 
-void OnViewFocused(const View view)
+/// Which backend a focus event belongs to (the two report different target
+/// types but share one session spine).
+enum class FocusBackend
+{
+    View,    ///< Meridian.View/1 vtable path (handle-based)
+    Browser, ///< UIPlatform path (pinned IBrowser*)
+};
+
+/// Shared spine of the two focus-gained transitions: enable gate, same-target
+/// early-exit, clear the other backend's marker, session begin, IME sync.
+void HandleFocusGained(const FocusBackend backend, const View view, ::NL::CEF::IBrowser *browser)
 {
     // The vtable detour is never removed, so after Uninstall (app teardown) it
     // keeps firing: a late focus event must not resurrect session state or
     // spam IME-sync tasks into a shutting-down controller.
-    if (!s_enabled.load())
+    if (!s_enabled.load() || (backend == FocusBackend::Browser && browser == nullptr))
     {
         return;
     }
-    // Repeat TryFocus for the already-focused view (AlreadyFocused results, a
-    // UI re-asserting focus): the session state for this view is live and
-    // re-arming it (capture probe, theme push, IME sync) would only churn.
-    if (s_focusedView.load() == view)
+    // Repeat TryFocus / SetBrowserFocused for the already-focused target (a UI
+    // re-asserting focus): the session state for it is live and re-arming it
+    // (capture probe, theme push, IME sync) would only churn.
+    const bool sameTarget = backend == FocusBackend::View ? s_focusedView.load() == view
+                                                          : s_focusedBrowser.load() == browser;
+    if (sameTarget)
     {
         return;
     }
-    if (s_focusedBrowser.exchange(nullptr) != nullptr)
+    if (backend == FocusBackend::View)
     {
-        logger::info("Meridian focus moved from a UIPlatform browser to view {:x}", view);
+        if (s_focusedBrowser.exchange(nullptr) != nullptr)
+        {
+            logger::info("Meridian focus moved from a UIPlatform browser to view {:x}", view);
+        }
+        s_focusedView = view;
     }
-    s_focusedView = view;
+    else
+    {
+        if (s_focusedView.exchange(0) != 0)
+        {
+            logger::info("Meridian focus moved from a View/1 view to a UIPlatform browser");
+        }
+        s_focusedBrowser = browser;
+    }
     BeginSession();
-    logger::info("Meridian view {:x} gained focus, IME sync requested", view);
+    if (backend == FocusBackend::View)
+    {
+        logger::info("Meridian view {:x} gained focus, IME sync requested", view);
+    }
+    else
+    {
+        logger::info("UIPlatform browser {:x} gained focus, IME sync requested",
+                     reinterpret_cast<std::uintptr_t>(browser));
+    }
     RequestImeSync();
+}
+
+/// Shared spine of the two focus-lost transitions: owner CAS, session state
+/// teardown, DOM panel clear, IME sync. A stale or duplicate report for a
+/// session that already ended leaves everything untouched.
+void HandleFocusLost(const FocusBackend backend, const View view, ::NL::CEF::IBrowser *browser)
+{
+    if (backend == FocusBackend::View)
+    {
+        View expected = view;
+        if (!s_focusedView.compare_exchange_strong(expected, 0))
+        {
+            return;
+        }
+    }
+    else
+    {
+        if (browser == nullptr)
+        {
+            return;
+        }
+        NL::CEF::IBrowser *expected = browser;
+        if (!s_focusedBrowser.compare_exchange_strong(expected, nullptr))
+        {
+            return;
+        }
+    }
+    ClearSessionState();
+    // Best effort: the view may already be destroyed (ExecuteJavaScript just
+    // returns false); the pin (NirnLabBridge) keeps a browser pointer valid
+    // through this call. Either way the DOM panel must not survive the
+    // session into a later focus of the same target.
+    ExecuteJs(backend == FocusBackend::View ? Target{.view = view} : Target{.browser = browser}, UI_CLEAR_SCRIPT);
+    if (backend == FocusBackend::View)
+    {
+        logger::info("Meridian view {:x} lost focus, IME sync requested", view);
+    }
+    else
+    {
+        logger::info("UIPlatform browser {:x} lost focus, IME sync requested",
+                     reinterpret_cast<std::uintptr_t>(browser));
+    }
+    RequestImeSync();
+}
+
+void OnViewFocused(const View view)
+{
+    HandleFocusGained(FocusBackend::View, view, nullptr);
 }
 
 void OnViewFocusGone(const View view)
@@ -609,21 +688,7 @@ void OnViewFocusGone(const View view)
     // Called from the Tick backstop (game thread) when Meridian no longer
     // reports the view as focused — covers both a clean Unfocus we chose not
     // to hook and a destroyed view.
-    View expected = view;
-    if (!s_focusedView.compare_exchange_strong(expected, 0))
-    {
-        return;
-    }
-    ClearSessionState();
-    if (s_api != nullptr)
-    {
-        // Best effort: the view may already be destroyed (ExecuteJavaScript
-        // just returns false) — either way the DOM panel must not survive the
-        // session into a later focus of the same view.
-        ExecuteJs(Target{.view = view}, UI_CLEAR_SCRIPT);
-    }
-    logger::info("Meridian view {:x} lost focus, IME sync requested", view);
-    RequestImeSync();
+    HandleFocusLost(FocusBackend::View, view, nullptr);
 }
 
 // The UIPlatform focus entry points (OnBrowserFocused / OnBrowserFocusGone /
@@ -1021,42 +1086,12 @@ void PushCandidateOverlay(const Target &target)
 
 void OnBrowserFocused(NL::CEF::IBrowser *browser)
 {
-    if (!s_enabled.load() || browser == nullptr)
-    {
-        return;
-    }
-    if (s_focusedBrowser.load() == browser)
-    {
-        return; // repeat SetBrowserFocused(true) for the live session
-    }
-    if (s_focusedView.exchange(0) != 0)
-    {
-        logger::info("Meridian focus moved from a View/1 view to a UIPlatform browser");
-    }
-    s_focusedBrowser = browser;
-    BeginSession();
-    logger::info("UIPlatform browser {:x} gained focus, IME sync requested",
-                 reinterpret_cast<std::uintptr_t>(browser));
-    RequestImeSync();
+    HandleFocusGained(FocusBackend::Browser, 0, browser);
 }
 
 void OnBrowserFocusGone(NL::CEF::IBrowser *browser)
 {
-    if (browser == nullptr)
-    {
-        return;
-    }
-    NL::CEF::IBrowser *expected = browser;
-    if (!s_focusedBrowser.compare_exchange_strong(expected, nullptr))
-    {
-        return; // stale or duplicate report for a session that already ended
-    }
-    ClearSessionState();
-    // The pin (NirnLabBridge) keeps the pointer valid through this call.
-    ExecuteJs(Target{.browser = browser}, UI_CLEAR_SCRIPT);
-    logger::info("UIPlatform browser {:x} lost focus, IME sync requested",
-                 reinterpret_cast<std::uintptr_t>(browser));
-    RequestImeSync();
+    HandleFocusLost(FocusBackend::Browser, 0, browser);
 }
 
 void OnBackendListenerPayload(const char *payload)
