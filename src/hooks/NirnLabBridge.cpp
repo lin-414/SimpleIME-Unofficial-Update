@@ -159,8 +159,10 @@ void TrackBrowser(const BrowserRefHandle handle, const char *name, Browser *brow
 }
 
 /// Release one external reference (from the ReleaseBrowserHandle hook).
-/// Returns the browser whose last external reference went away (and which is
-/// not pinned), or nullptr while it is still kept alive by other handles.
+/// Returns the browser whose last external reference went away — pinned or
+/// not. The caller ends the session and UnpinBrowser hands the pin back and
+/// closes the record; the pin must not gate the return here, or a browser
+/// released while focused would keep its pin (and its session) forever.
 Browser *UntrackBrowser(const BrowserRefHandle handle)
 {
     std::lock_guard lock(s_registryMutex);
@@ -180,9 +182,13 @@ Browser *UntrackBrowser(const BrowserRefHandle handle)
     {
         recordIt->second.externalRefs -= 1;
     }
-    if (recordIt->second.externalRefs != 0 || recordIt->second.pinHandle != 0)
+    if (recordIt->second.externalRefs != 0)
     {
-        return nullptr; // still referenced (by us or by another handle)
+        return nullptr; // still referenced by another external handle
+    }
+    if (recordIt->second.pinHandle != 0)
+    {
+        return browser; // pinned: UnpinBrowser releases it and drops the record
     }
     s_browsers.erase(recordIt);
     return browser; // last external handle released and not pinned
@@ -259,7 +265,14 @@ void UnpinBrowser(Browser *browser)
     s_internalCall = false;
     // If that was the very last reference the host destroyed the browser;
     // nobody may touch the pointer afterwards — s_focusedBrowser is already
-    // cleared by the time this runs (focus end is processed first).
+    // cleared by the time this runs (focus end is processed first). Only the
+    // pointer VALUE is used here, so the map lookup is safe on a dead browser.
+    std::lock_guard lock(s_registryMutex);
+    if (auto recordIt = s_browsers.find(browser);
+        recordIt != s_browsers.end() && recordIt->second.externalRefs == 0 && recordIt->second.pinHandle == 0)
+    {
+        s_browsers.erase(recordIt);
+    }
 }
 
 // ---- vtable detours ---------------------------------------------------
