@@ -119,6 +119,14 @@ public:
 
     auto Clear(StateKey state) -> void { m_state &= ~static_cast<UnderlyingType>(state); }
 
+    /// Composition over: the composing and candidate-choosing bits always go
+    /// together — every end-of-composition path clears the pair.
+    auto ClearComposing() -> void
+    {
+        Clear(IN_COMPOSING);
+        Clear(IN_CAND_CHOOSING);
+    }
+
     [[nodiscard]] auto Has(StateKey state) const -> bool
     {
         const auto mask = static_cast<UnderlyingType>(state);

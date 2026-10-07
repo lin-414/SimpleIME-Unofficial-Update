@@ -875,8 +875,7 @@ auto TextStore::OnEndComposition(ITfCompositionView * /*pComposition*/) -> HRESU
             m_pendingChangeFlags |= DirtyFlag::CandidateList;
         }
     }
-    State::GetInstance().Clear(State::IN_COMPOSING);
-    State::GetInstance().Clear(State::IN_CAND_CHOOSING);
+    State::GetInstance().ClearComposing();
     return S_OK;
 }
 

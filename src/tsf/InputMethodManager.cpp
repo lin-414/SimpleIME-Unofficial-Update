@@ -516,8 +516,7 @@ auto Ime::InputMethodManager::OnActivated(
                 dwFlags
             );
         }
-        state.Clear(State::IN_CAND_CHOOSING);
-        state.Clear(State::IN_COMPOSING);
+        state.ClearComposing();
     }
     return S_OK;
 }

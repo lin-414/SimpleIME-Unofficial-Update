@@ -210,8 +210,7 @@ void TextService::AbortIme()
     // already ended it), make sure the input state flags are cleared so the menu
     // code stops treating the game as "still inputting" (which would otherwise
     // swallow all keyboard input).
-    State::GetInstance().Clear(State::IN_COMPOSING);
-    State::GetInstance().Clear(State::IN_CAND_CHOOSING);
+    State::GetInstance().ClearComposing();
 }
 
 auto TextService::ToogleKeyboard(bool open) -> void

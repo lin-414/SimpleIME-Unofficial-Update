@@ -93,8 +93,7 @@ void Imm32TextService::OnEndComposition()
         MarkDirty(DirtyFlag::CandidateList);
         MarkDirty(DirtyFlag::Composition);
     }
-    State::GetInstance().Clear(State::IN_COMPOSING);
-    State::GetInstance().Clear(State::IN_CAND_CHOOSING);
+    State::GetInstance().ClearComposing();
 }
 
 void Imm32TextService::AbortIme()
@@ -121,8 +120,7 @@ void Imm32TextService::AbortIme()
             ImmReleaseContext(m_imeHwnd, hIMC);
         }
     }
-    State::GetInstance().Clear(State::IN_COMPOSING);
-    State::GetInstance().Clear(State::IN_CAND_CHOOSING);
+    State::GetInstance().ClearComposing();
 }
 
 auto Imm32TextService::ProcessImeMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) -> bool
