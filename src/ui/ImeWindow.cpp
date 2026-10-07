@@ -104,6 +104,49 @@ auto SplitCandidateNumber(const std::string &candidate) -> std::pair<std::string
             std::string_view{candidate.data() + separator + 2, candidate.size() - separator - 2}};
 }
 
+//! Shared spine of the two candidate layouts: hit-test one row, paint the
+//! selected/hover pill (selected = primary, hover = surfaceContainerHigh,
+//! unselected rows transparent), then hand the pill rect to the layout's
+//! label painter. True when the row was clicked.
+template <typename PaintLabel>
+auto DrawCandidatePill(const std::size_t index, const bool selected, const ImVec2 &itemSize, const float rounding, PaintLabel &&paintLabel) -> bool
+{
+    ImGui::PushID(static_cast<int>(index));
+    const bool   pressed = ImGui::InvisibleButton("##Candidate", itemSize);
+    const ImVec2 itemMin = ImGui::GetItemRectMin();
+    auto        &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
+    auto        *drawList = ImGui::GetWindowDrawList();
+    ImU32        backColor = 0;
+    if (selected)
+    {
+        backColor = ImGui::ColorConvertFloat4ToU32(m3Styles.Colors()[ImGuiEx::M3::Spec::ColorRole::primary]);
+    }
+    else if (ImGui::IsItemHovered())
+    {
+        backColor = ImGui::ColorConvertFloat4ToU32(m3Styles.Colors()[ImGuiEx::M3::Spec::ColorRole::surfaceContainerHigh]);
+    }
+    if (backColor != 0)
+    {
+        drawList->AddRectFilled(itemMin, itemMin + itemSize, backColor, rounding);
+    }
+    paintLabel(itemMin, selected);
+    ImGui::PopID();
+    return pressed;
+}
+
+//! Dispatch the candidate commit for a click (result logged, never thrown).
+void CommitClickedCandidate(const std::size_t clicked, const std::size_t candidateCount)
+{
+    if (clicked < candidateCount)
+    {
+        if (const auto result = ImeController::GetInstance()->CommitCandidate(static_cast<DWORD>(clicked));
+            !IImeModule::IsSuccess(result))
+        {
+            logger::error("Candidate commit was not dispatched ({})", IImeModule::IsFailed(result) ? "failed" : "disabled");
+        }
+    }
+}
+
 void DrawCandidates(const CandidateUi &candidateUi)
 {
     using size_type = CandidateUi::size_type;
@@ -120,14 +163,12 @@ void DrawCandidates(const CandidateUi &candidateUi)
         const float padX     = m3Styles.GetPixels(ImGuiEx::M3::Spec::dp<8>());
         const float padY     = m3Styles.GetPixels(ImGuiEx::M3::Spec::dp<4>());
         const float rounding = m3Styles.GetPixels(ImGuiEx::M3::Spec::ShapeCorner::Small);
-        auto       *drawList = ImGui::GetWindowDrawList();
 
         size_type clicked = candidateList.size();
         for (size_type index = 0; const auto &candidate : candidateList)
         {
             const auto [number, word] = SplitCandidateNumber(candidate);
 
-            ImGui::PushID(static_cast<int>(index));
             // SameLine between items only: a trailing SameLine after the last
             // item advanced the cursor by one more spacing step, and the
             // auto-resized window kept that as blank space on the right.
@@ -138,44 +179,22 @@ void DrawCandidates(const CandidateUi &candidateUi)
             const ImVec2 numSize(ImGui::CalcTextSize(number.data(), number.data() + number.size()).x, ImGui::GetTextLineHeight());
             const ImVec2 wordSize(ImGui::CalcTextSize(word.data(), word.data() + word.size()).x, ImGui::GetTextLineHeight());
             const ImVec2 itemSize(numSize.x + numGap + wordSize.x + padX * 2.F, numSize.y + padY * 2.F);
-            if (ImGui::InvisibleButton("##Candidate", itemSize))
+            if (DrawCandidatePill(index, index == candidateUi.Selection(), itemSize, rounding, [&](const ImVec2 &itemMin, const bool selected) {
+                    const auto numColor  = selected ? ImGuiEx::M3::Spec::ColorRole::onPrimary : ImGuiEx::M3::Spec::ColorRole::onSurfaceVariant;
+                    const auto wordColor = selected ? ImGuiEx::M3::Spec::ColorRole::onPrimary : ImGuiEx::M3::Spec::ColorRole::onSurface;
+                    // Bare AddText pins the line box to the pill top; CJK ink hangs
+                    // ~0.36em below the optical middle, so use the shared optical
+                    // centering offset (offset from the pill's top, padY included).
+                    const ImVec2 numPos(itemMin.x + padX, itemMin.y + ImGuiEx::M3::CenteredTextOffsetY(itemSize.y));
+                    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), numPos, textColor(numColor), number.data(), number.data() + number.size());
+                    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), {numPos.x + numSize.x + numGap, numPos.y}, textColor(wordColor), word.data(), word.data() + word.size());
+                }))
             {
                 clicked = index;
             }
-            const ImVec2  itemMin   = ImGui::GetItemRectMin();
-            const bool    selected  = index == candidateUi.Selection();
-            ImU32         backColor = 0;
-            if (selected)
-            {
-                backColor = textColor(ImGuiEx::M3::Spec::ColorRole::primary);
-            }
-            else if (ImGui::IsItemHovered())
-            {
-                backColor = textColor(ImGuiEx::M3::Spec::ColorRole::surfaceContainerHigh);
-            }
-            if (backColor != 0)
-            {
-                drawList->AddRectFilled(itemMin, itemMin + itemSize, backColor, rounding);
-            }
-            const auto numColor = selected ? ImGuiEx::M3::Spec::ColorRole::onPrimary : ImGuiEx::M3::Spec::ColorRole::onSurfaceVariant;
-            const auto wordColor = selected ? ImGuiEx::M3::Spec::ColorRole::onPrimary : ImGuiEx::M3::Spec::ColorRole::onSurface;
-            // Bare AddText pins the line box to the pill top; CJK ink hangs
-            // ~0.36em below the optical middle, so use the shared optical
-            // centering offset (offset from the pill's top, padY included).
-            const ImVec2 numPos(itemMin.x + padX, itemMin.y + ImGuiEx::M3::CenteredTextOffsetY(itemSize.y));
-            drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), numPos, textColor(numColor), number.data(), number.data() + number.size());
-            drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), {numPos.x + numSize.x + numGap, numPos.y}, textColor(wordColor), word.data(), word.data() + word.size());
-            ImGui::PopID();
             index++;
         }
-        if (clicked < candidateList.size())
-        {
-            if (const auto result = ImeController::GetInstance()->CommitCandidate(static_cast<DWORD>(clicked));
-                !IImeModule::IsSuccess(result))
-            {
-                logger::error("Candidate commit was not dispatched ({})", IImeModule::IsFailed(result) ? "failed" : "disabled");
-            }
-        }
+        CommitClickedCandidate(clicked, candidateList.size());
     }
 }
 
@@ -186,9 +205,8 @@ auto DrawVerticalCandidates(const CandidateUi &candidateUi) -> void
     if (const auto &candidateList = candidateUi.CandidateList(); !candidateList.empty())
     {
         auto       &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
-        const auto &colors   = m3Styles.Colors();
-        const auto  textColor = [&colors](const ImGuiEx::M3::Spec::ColorRole role) {
-            return ImGui::ColorConvertFloat4ToU32(colors[role]);
+        const auto  textColor = [](const ImGuiEx::M3::Spec::ColorRole role) {
+            return ImGui::ColorConvertFloat4ToU32(ImGuiEx::M3::Context::GetM3Styles().Colors()[role]);
         };
         // Same pill styling as the horizontal chip row (DrawCandidates):
         // selected = primary pill with onPrimary text, hover =
@@ -201,7 +219,6 @@ auto DrawVerticalCandidates(const CandidateUi &candidateUi) -> void
         const float padX      = m3Styles.GetPixels(ImGuiEx::M3::Spec::dp<12>());
         const float rowHeight = m3Styles.GetPixels(ImGuiEx::M3::Spec::dp<44>());
         const float rounding  = m3Styles.GetPixels(ImGuiEx::M3::Spec::ShapeCorner::Small);
-        auto       *drawList  = ImGui::GetWindowDrawList();
 
         // All rows share the widest label's width so the list reads as one
         // full-width surface (and the auto-resized window fits the content).
@@ -219,43 +236,20 @@ auto DrawVerticalCandidates(const CandidateUi &candidateUi) -> void
         size_type clicked = candidateList.size();
         for (size_type index = 0; const auto &candidate : candidateList)
         {
-            ImGui::PushID(static_cast<int>(index));
-            if (ImGui::InvisibleButton("##Candidate", rowSize))
+            if (DrawCandidatePill(index, index == candidateUi.Selection(), rowSize, rounding, [&](const ImVec2 &itemMin, const bool selected) {
+                    const auto labelColor = selected ? ImGuiEx::M3::Spec::ColorRole::onPrimary : ImGuiEx::M3::Spec::ColorRole::onSurface;
+                    // Same optical centering as the horizontal pill row: bare AddText
+                    // pins the line box to the pill top and CJK ink hangs below the
+                    // middle.
+                    const ImVec2 textPos(itemMin.x + padX, itemMin.y + ImGuiEx::M3::CenteredTextOffsetY(rowSize.y));
+                    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), textPos, textColor(labelColor), candidate.data(), candidate.data() + candidate.size());
+                }))
             {
                 clicked = index;
             }
-            const ImVec2  itemMin   = ImGui::GetItemRectMin();
-            const bool    selected  = index == candidateUi.Selection();
-            ImU32         backColor = 0;
-            if (selected)
-            {
-                backColor = textColor(ImGuiEx::M3::Spec::ColorRole::primary);
-            }
-            else if (ImGui::IsItemHovered())
-            {
-                backColor = textColor(ImGuiEx::M3::Spec::ColorRole::surfaceContainerHigh);
-            }
-            if (backColor != 0)
-            {
-                drawList->AddRectFilled(itemMin, itemMin + rowSize, backColor, rounding);
-            }
-            const auto labelColor = selected ? ImGuiEx::M3::Spec::ColorRole::onPrimary : ImGuiEx::M3::Spec::ColorRole::onSurface;
-            // Same optical centering as the horizontal pill row: bare AddText
-            // pins the line box to the pill top and CJK ink hangs below the
-            // middle.
-            const ImVec2 textPos(itemMin.x + padX, itemMin.y + ImGuiEx::M3::CenteredTextOffsetY(rowSize.y));
-            drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), textPos, textColor(labelColor), candidate.data(), candidate.data() + candidate.size());
-            ImGui::PopID();
             index++;
         }
-        if (clicked < candidateList.size())
-        {
-            if (const auto result = ImeController::GetInstance()->CommitCandidate(static_cast<DWORD>(clicked));
-                !IImeModule::IsSuccess(result))
-            {
-                logger::error("Candidate commit was not dispatched ({})", IImeModule::IsFailed(result) ? "failed" : "disabled");
-            }
-        }
+        CommitClickedCandidate(clicked, candidateList.size());
     }
 }
 
