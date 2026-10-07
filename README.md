@@ -7,10 +7,10 @@ Korean and other multi-byte languages can be typed in the game console and every
 It continues development from upstream `v2.2.1`: the stuck-IME breakage around mod menus is
 fixed (including upstream's known crash when switching windows via Win+Shift+S during CJK
 composition), the TSF / focus / teardown paths are hardened against crashes and races, and
-IME input is added for the mod UI frameworks upstream does not cover — **Meridian UI** (CEF)
-and **SKSE Menu Framework** (ImGui) — plus **Prisma UI** avoidance so the two never fight.
+IME input is added for the mod UI frameworks upstream does not cover — **Meridian UI** (CEF),
+**SKSE Menu Framework** (ImGui) and **Prisma UI** (Ultralight).
 
-**Current:** v3.0.0-beta · **Base:** upstream `v2.2.1` (`a2cd39f`) · **License:** GPL-3.0-or-later
+**Current:** v3.1.2-beta · **Base:** upstream `v2.2.1` (`a2cd39f`) · **License:** GPL-3.0-or-later
 
 Generic usage, configuration and build instructions are documented in the
 [upstream README](https://github.com/cyfewlp/SimpleIME#readme) and the fully commented
@@ -53,13 +53,20 @@ interfaces only and are inert when the host DLL is absent.
   leak healer — the counter can never stick. Requires SKSEMenuFramework.dll ≥ 3.7; export
   surface, offsets and the callback technique adapted from
   [cashboxs/TMS_SIMEtoSKSEMF](https://github.com/cashboxs/TMS_SIMEtoSKSEMF) (MIT).
-- **Prisma UI (Ultralight) avoidance** (`input.prisma_avoidance`, default on). Prisma-based
-  UIs (e.g. Outfit Wheeler) handle IME input natively. SimpleIME negotiates Prisma's public
-  `IVPrismaUI1` read-only (only `HasAnyActiveFocus()` is queried, never from a window
-  procedure), listens for the `PrismaUI.ImeAssociation` handshake message, and stands the
-  IME down while a Prisma UI owns the keyboard, so the two never fight. If PrismaUI.dll is
-  present but its V1 API is unavailable, SimpleIME fails safe and stays out of the way
-  entirely (update PrismaUI to restore SimpleIME input).
+- **Prisma UI (Ultralight) input** (`input.prisma_avoidance`, default on — the setting is now
+  "Prisma UI input support"; the config key keeps its historical name). Prisma-based UIs
+  (e.g. PMCM, HeroAvatarHUD, Outfit Wheeler) render their text fields through Ultralight:
+  those fields never raise the game's text-entry counter, and PrismaUI's window subclass
+  swallows its own IME-association handshake, so neither stock activation nor Prisma's
+  helper alone can drive a full IME session. SimpleIME negotiates Prisma's public
+  `IVPrismaUI1` read-only (`HasAnyActiveFocus()` is polled on the game thread, never from a
+  window procedure), engages the IME when a Prisma view gains focus, composes on its own TSF
+  surface so the candidate window shows, and commits through the game window's `WM_CHAR`
+  stream — PrismaUI's subclass feeds the characters into the focused view; editing keys are
+  forwarded while the IME owns the keyboard. The candidate window is kept on top of Prisma's
+  rendering by a swap-chain present hook and anchors to the clicked text field. If
+  PrismaUI.dll is present but its V1 API is unavailable, SimpleIME fails safe and leaves IME
+  handling entirely to PrismaUI (update PrismaUI to restore SimpleIME input).
 
 ## Fixed relative to upstream
 
