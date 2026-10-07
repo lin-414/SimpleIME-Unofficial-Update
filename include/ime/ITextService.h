@@ -198,7 +198,10 @@ protected:
         }
         if (HasDirtyFlag(flag, DirtyFlag::CandidateSelection) || HasDirtyFlag(flag, DirtyFlag::CandidateList))
         {
-            uiForRead.swap(m_candidateUi);
+            // Copy, not swap: this member is the live state the IME thread
+            // writes and SnapshotCompositionAndCandidates reads; swapping
+            // would leave it holding the previous generation.
+            uiForRead = m_candidateUi;
         }
     }
 
