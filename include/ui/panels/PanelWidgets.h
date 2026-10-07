@@ -354,6 +354,25 @@ inline void RoleText(const std::string_view text, const ImVec4 &color, const flo
 }
 } // namespace Detail
 
+//! Hover/press wash behind a hand-drawn widget: Pressed while held, Hovered
+//! otherwise, under the widget's own background/content roles. Callers keep
+//! the disabled + hover gating; this only draws the fill.
+inline void DrawStateWash(
+    ImDrawList                        *drawList,
+    const ImRect                      &bb,
+    const bool                         held,
+    const ImGuiEx::M3::Spec::ColorRole bgRole,
+    const ImGuiEx::M3::Spec::ColorRole contentRole,
+    const float                        rounding,
+    const ImDrawFlags                  corners = 0
+)
+{
+    auto &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
+    const auto wash = held ? m3Styles.Colors().Pressed(bgRole, contentRole)
+                           : m3Styles.Colors().Hovered(bgRole, contentRole);
+    drawList->AddRectFilled(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(wash), rounding, corners);
+}
+
 namespace
 {
 struct RowGeometry
@@ -473,8 +492,6 @@ inline auto BeginSettingsRowEx(
                 );
             }
 #endif
-            const auto color = held ? m3Styles.Colors().Pressed(Spec::ColorRole::surfaceContainerHighest, Spec::ColorRole::onSurface)
-                                    : m3Styles.Colors().Hovered(Spec::ColorRole::surfaceContainerHighest, Spec::ColorRole::onSurface);
             // The state layer is full-bleed, so its silhouette is the card's:
             // corners that coincide with the card's rounded corners take the
             // card rounding. A square band would paint past the card's corner
@@ -489,10 +506,12 @@ inline auto BeginSettingsRowEx(
             {
                 cornerFlags |= ImDrawFlags_RoundCornersBottom;
             }
-            window->DrawList->AddRectFilled(
-                row.bb.Min,
-                row.bb.Max,
-                ImGui::ColorConvertFloat4ToU32(color),
+            DrawStateWash(
+                window->DrawList,
+                row.bb,
+                held,
+                Spec::ColorRole::surfaceContainerHighest,
+                Spec::ColorRole::onSurface,
                 cornerFlags == 0 ? 0.0F : window->WindowRounding,
                 cornerFlags
             );
@@ -751,8 +770,7 @@ inline bool TextLink(
     ImGui::RenderNavCursor(bb, id);
     if (!Detail::IsItemDisabled() && (hovered || held))
     {
-        const auto wash = held ? m3Styles.Colors().Pressed(bgRole, role) : m3Styles.Colors().Hovered(bgRole, role);
-        window->DrawList->AddRectFilled(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(wash), m3Styles.GetPixels(Spec::ShapeCorner::ExtraSmall));
+        DrawStateWash(window->DrawList, bb, held, bgRole, role, m3Styles.GetPixels(Spec::ShapeCorner::ExtraSmall));
     }
     window->DrawList->AddText(
         ImVec2(bb.Min.x + padX, bb.Min.y + ImGuiEx::M3::CenteredTextOffsetY(size.y)),
@@ -943,9 +961,7 @@ inline auto BeginRowTrailingCombo(
 
     if (!Detail::IsItemDisabled() && (hovered || held))
     {
-        const auto wash = held ? m3Styles.Colors().Pressed(Spec::ColorRole::surfaceContainerHighest, Spec::ColorRole::onSurface)
-                               : m3Styles.Colors().Hovered(Spec::ColorRole::surfaceContainerHighest, Spec::ColorRole::onSurface);
-        drawList->AddRectFilled(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(wash), m3Styles.GetPixels(Spec::ShapeCorner::ExtraSmall));
+        DrawStateWash(drawList, bb, held, Spec::ColorRole::surfaceContainerHighest, Spec::ColorRole::onSurface, m3Styles.GetPixels(Spec::ShapeCorner::ExtraSmall));
     }
     drawList->AddRect(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(Detail::ContentColor(Spec::ColorRole::outlineVariant)), m3Styles.GetPixels(Spec::ShapeCorner::ExtraSmall));
 

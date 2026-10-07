@@ -138,9 +138,7 @@ void ToolWindow::DrawSidebar()
         }
         else if (hovered || held)
         {
-            const auto wash = held ? m3Styles.Colors().Pressed(M3Spec::ColorRole::surfaceContainerHighest, M3Spec::ColorRole::onSurface)
-                                   : m3Styles.Colors().Hovered(M3Spec::ColorRole::surfaceContainerHighest, M3Spec::ColorRole::onSurface);
-            drawList->AddRectFilled(bb.Min, bb.Max, ImGui::ColorConvertFloat4ToU32(wash), m3Styles.GetPixels(M3Spec::ShapeCorner::Medium));
+            Panels::DrawStateWash(drawList, bb, held, M3Spec::ColorRole::surfaceContainerHighest, M3Spec::ColorRole::onSurface, m3Styles.GetPixels(M3Spec::ShapeCorner::Medium));
         }
 
         float textX = bb.Min.x + m3Styles.GetPixels(M3Spec::dp<12>());
