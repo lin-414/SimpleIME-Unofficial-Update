@@ -20,21 +20,34 @@ enum class ListenerOutcome
     Pick      ///< the overlay candidate at :pick:<n> was clicked
 };
 
+/// If `payload` belongs to capture session `expectedSeq` (shape
+/// "`<seq>:<rest>`"), strip the session prefix and hand back `rest`. False for
+/// a null payload, an older session's payload, or anything without the prefix.
+inline bool TrySplitSessionPrefix(const std::uint64_t expectedSeq, const char *payload, std::string_view &rest)
+{
+    if (payload == nullptr)
+    {
+        return false;
+    }
+    const std::string prefix = std::to_string(expectedSeq) + ":";
+    rest                  = std::string_view(payload);
+    if (!rest.starts_with(prefix))
+    {
+        return false;
+    }
+    rest.remove_prefix(prefix.size());
+    return true;
+}
+
 /// Classify a listener payload against the expected session id. Payloads are
 /// status words only — typed text never crosses this boundary.
 inline ListenerOutcome ParseListenerPayload(const std::uint64_t expectedSeq, const char *payload)
 {
-    if (payload == nullptr)
+    std::string_view status;
+    if (!TrySplitSessionPrefix(expectedSeq, payload, status))
     {
         return ListenerOutcome::Ignore;
     }
-    const std::string prefix = std::to_string(expectedSeq) + ":";
-    std::string_view  status(payload);
-    if (!status.starts_with(prefix))
-    {
-        return ListenerOutcome::Ignore;
-    }
-    status.remove_prefix(prefix.size());
     if (status == "ready")
     {
         return ListenerOutcome::Ready;
@@ -55,17 +68,17 @@ inline ListenerOutcome ParseListenerPayload(const std::uint64_t expectedSeq, con
 /// unparsable payload; the numeric part must be a plain non-negative integer.
 inline bool TryParsePickPayload(const std::uint64_t expectedSeq, const char *payload, std::uint32_t &indexOut)
 {
-    if (payload == nullptr)
+    std::string_view rest;
+    if (!TrySplitSessionPrefix(expectedSeq, payload, rest))
     {
         return false;
     }
-    const std::string prefix = std::to_string(expectedSeq) + ":pick:";
-    std::string_view  rest(payload);
-    if (!rest.starts_with(prefix))
+    constexpr std::string_view pickPrefix = "pick:";
+    if (!rest.starts_with(pickPrefix))
     {
         return false;
     }
-    rest.remove_prefix(prefix.size());
+    rest.remove_prefix(pickPrefix.size());
     if (rest.empty() || rest.size() > 9)
     {
         return false;
