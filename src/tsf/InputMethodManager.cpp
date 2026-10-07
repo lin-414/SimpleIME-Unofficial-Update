@@ -192,21 +192,36 @@ auto Ime::InputMethodManager::RefreshProfiles() -> bool
             auto localeDisplayName = GetLocaleInfo(localeName, LOCALE_SLOCALIZEDDISPLAYNAME);
             auto language          = GetLocaleInfo(localeName, LOCALE_SLOCALIZEDLANGUAGENAME);
             auto desc              = GetLangProfileDesc(lpProfiles, profile);
-            if (!desc.empty())
+            if (desc.empty())
             {
-                std::string localeDisplayNameStr = WCharUtils::ToString(localeDisplayName);
-                logger::info("Load installed ime: {} {}", localeDisplayNameStr, desc);
-                m_langProfiles.emplace_back(
-                    std::move(localeDisplayNameStr),
-                    std::move(desc),
-                    WCharUtils::ToString(language),
-                    profile.clsid,
-                    profile.guidProfile,
+                // A missing display name must not drop the profile: it would
+                // vanish from the in-game switcher while still being the user's
+                // active input method. Keep it under a technical name instead.
+                logger::error(
+                    "No display name for input method profile (clsid {}, langid {:#x}, guidProfile {}); keeping it with a fallback name",
+                    WCharUtils::ToString(ToStringFromGUID2(profile.clsid)),
                     profile.langid,
-                    profile.dwProfileType,
-                    profile.hkl
+                    WCharUtils::ToString(ToStringFromGUID2(profile.guidProfile))
                 );
+                desc = std::format(
+                    "{} ({})", WCharUtils::ToString(localeName), WCharUtils::ToString(ToStringFromGUID2(profile.guidProfile)));
             }
+            std::string localeDisplayNameStr = WCharUtils::ToString(localeDisplayName);
+            if (localeDisplayNameStr.empty())
+            {
+                localeDisplayNameStr = WCharUtils::ToString(localeName);
+            }
+            logger::info("Load installed ime: {} {}", localeDisplayNameStr, desc);
+            m_langProfiles.emplace_back(
+                std::move(localeDisplayNameStr),
+                std::move(desc),
+                WCharUtils::ToString(language),
+                profile.clsid,
+                profile.guidProfile,
+                profile.langid,
+                profile.dwProfileType,
+                profile.hkl
+            );
         }
     }
     catch (const std::runtime_error &error)
