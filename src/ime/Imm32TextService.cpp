@@ -63,6 +63,31 @@ auto GetCompStr(HIMC hIMC, LPARAM compFlag, LPARAM flagToCheck, std::wstring &pW
     return false;
 }
 
+/// RAII scope for an input context acquired off a window. Every ImmGetContext
+/// must be paired with ImmReleaseContext — including error paths mid-function
+/// — and this makes the pairing structural: the context releases when the
+/// scope exits, early returns included. Null contexts (no IME associated with
+/// the window) read as false. Converts to HIMC for the Imm* calls.
+class AcquiredHimc
+{
+public:
+    explicit AcquiredHimc(HWND hWnd) : m_hWnd(hWnd), m_himc(ImmGetContext(hWnd)) {}
+    ~AcquiredHimc()
+    {
+        if (m_himc != nullptr)
+        {
+            ImmReleaseContext(m_hWnd, m_himc);
+        }
+    }
+    AcquiredHimc(const AcquiredHimc &)            = delete;
+    AcquiredHimc &operator=(const AcquiredHimc &) = delete;
+    [[nodiscard]] explicit operator bool() const { return m_himc != nullptr; }
+    [[nodiscard]] operator HIMC() const { return m_himc; }
+
+private:
+    HWND m_hWnd;
+    HIMC m_himc;
+};
 } // namespace
 
 void Imm32TextService::OnStartComposition()
@@ -114,10 +139,9 @@ void Imm32TextService::AbortIme()
     }
     if (m_imeHwnd != nullptr)
     {
-        if (HIMC hIMC = ImmGetContext(m_imeHwnd); hIMC != nullptr)
+        if (AcquiredHimc hIMC(m_imeHwnd); hIMC)
         {
             ImmNotifyIME(hIMC, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
-            ImmReleaseContext(m_imeHwnd, hIMC);
         }
     }
     State::GetInstance().ClearComposing();
@@ -170,10 +194,9 @@ auto Imm32TextService::OnFocus(bool focus) -> bool
         }
         ImmAssociateContext(m_imeHwnd, m_hIMC);
 
-        if (HIMC himc = ImmGetContext(m_imeHwnd); himc != nullptr)
+        if (AcquiredHimc himc(m_imeHwnd); himc)
         {
             UpdateConversionMode(himc);
-            ImmReleaseContext(m_imeHwnd, himc);
         }
     }
     else
@@ -186,11 +209,10 @@ auto Imm32TextService::OnFocus(bool focus) -> bool
 
 auto Imm32TextService::ToogleKeyboard(bool open) -> void
 {
-    if (HIMC himc = ImmGetContext(m_imeHwnd); himc != nullptr)
+    if (AcquiredHimc himc(m_imeHwnd); himc)
     {
         UpdateOpenStatus(himc, open ? TRUE : FALSE);
         UpdateConversionMode(himc);
-        ImmReleaseContext(m_imeHwnd, himc);
     }
 }
 
@@ -198,24 +220,22 @@ auto Imm32TextService::ToogleKeyboard(bool open) -> void
 auto Imm32TextService::CommitCandidate(DWORD index) -> bool
 {
     logger::debug("CommitCandidate {}", index);
-    HIMC hImc = ImmGetContext(m_imeHwnd);
-    if (hImc == nullptr)
+    AcquiredHimc hImc(m_imeHwnd);
+    if (!hImc)
     {
         // Without a context the selection can never reach the IME.
         logger::error("CommitCandidate({}) failed: no input context on the IME window", index);
         return false;
     }
 
-    const bool result = ImmNotifyIME(hImc, NI_SELECTCANDIDATESTR, 0, index) != FALSE;
-    ImmReleaseContext(m_imeHwnd, hImc);
-    return result;
+    return ImmNotifyIME(hImc, NI_SELECTCANDIDATESTR, 0, index) != FALSE;
 }
 
 auto Imm32TextService::SetConversionMode(DWORD conversionMode) -> bool
 {
-    HIMC himc    = ImmGetContext(m_imeHwnd);
-    bool success = false;
-    if (himc != nullptr)
+    AcquiredHimc himc(m_imeHwnd);
+    bool         success = false;
+    if (himc)
     {
         DWORD oldConversion = 0;
         DWORD oldSentence   = 0;
@@ -223,15 +243,14 @@ auto Imm32TextService::SetConversionMode(DWORD conversionMode) -> bool
         {
             success = FALSE != ImmSetConversionStatus(himc, conversionMode, oldSentence);
         }
-        ImmReleaseContext(m_imeHwnd, himc);
     }
     return success;
 }
 
 void Imm32TextService::OnComposition(HWND hWnd, LPARAM compFlag)
 {
-    HIMC hIMC = ImmGetContext(hWnd);
-    if (hIMC == nullptr)
+    AcquiredHimc hIMC(hWnd);
+    if (!hIMC)
     {
         return;
     }
@@ -260,7 +279,6 @@ void Imm32TextService::OnComposition(HWND hWnd, LPARAM compFlag)
         if (cursorPos == IMM_ERROR_GENERAL || deltaStart == IMM_ERROR_GENERAL)
         {
             logger::error("Get composition cursor position or delta start failed.");
-            ImmReleaseContext(hWnd, hIMC); // error path must still pair the ImmGetContext above
             return;
         }
         if (cursorPos >= 0 && deltaStart >= 0)
@@ -268,7 +286,6 @@ void Imm32TextService::OnComposition(HWND hWnd, LPARAM compFlag)
             UpdateComposition(compositionSting, static_cast<size_t>(cursorPos), static_cast<size_t>(deltaStart));
         }
     }
-    ImmReleaseContext(hWnd, hIMC);
 }
 
 void Imm32TextService::UpdateComposition(std::wstring_view compStr, size_t cursorPos, size_t deltaStart)
@@ -301,11 +318,9 @@ auto Imm32TextService::OnImeNotify(HWND hWnd, WPARAM wParam, LPARAM /*lParam*/) 
         case IMN_SETCANDIDATEPOS:
         case IMN_OPENCANDIDATE: {
             State::GetInstance().Set(State::IN_CAND_CHOOSING);
-            HIMC hImc = ImmGetContext(hWnd);
-            if (hImc != nullptr)
+            if (AcquiredHimc hImc(hWnd); hImc)
             {
-                OpenCandidate(hImc);
-                ImmReleaseContext(hWnd, hImc); // fires often during candidate mode — must pair the Get
+                OpenCandidate(hImc); // fires often during candidate mode
             }
             break;
         }
@@ -313,30 +328,24 @@ auto Imm32TextService::OnImeNotify(HWND hWnd, WPARAM wParam, LPARAM /*lParam*/) 
             State::GetInstance().Clear(State::IN_CAND_CHOOSING);
             break;
         case IMN_CHANGECANDIDATE: {
-            HIMC hIMC = ImmGetContext(hWnd);
-            if (hIMC != nullptr)
+            if (AcquiredHimc hIMC(hWnd); hIMC)
             {
                 ChangeCandidate(hIMC);
-                ImmReleaseContext(hWnd, hIMC);
             }
             break;
         }
         case IMN_SETCONVERSIONMODE: {
-            HIMC hIMC = ImmGetContext(hWnd);
-            if (hIMC != nullptr)
+            if (AcquiredHimc hIMC(hWnd); hIMC)
             {
                 UpdateConversionMode(hIMC);
-                ImmReleaseContext(hWnd, hIMC);
             }
             break;
         }
         case IMN_SETOPENSTATUS: {
-            HIMC hIMC = ImmGetContext(hWnd);
-            if (hIMC != nullptr)
+            if (AcquiredHimc hIMC(hWnd); hIMC)
             {
                 UpdateOpenStatus(hIMC);
                 UpdateConversionMode(hIMC);
-                ImmReleaseContext(hWnd, hIMC);
             }
             break;
         }
@@ -345,6 +354,9 @@ auto Imm32TextService::OnImeNotify(HWND hWnd, WPARAM wParam, LPARAM /*lParam*/) 
     }
 }
 
+// OpenCandidate and ChangeCandidate are distinct ITextService entry points
+// (different call semantics for different IME notify events) even though both
+// funnel into ChangeCandidateAt today — do not merge them.
 void Imm32TextService::OpenCandidate(HIMC hIMC)
 {
     ChangeCandidateAt(hIMC);
