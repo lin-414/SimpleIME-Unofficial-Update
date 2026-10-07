@@ -1900,3 +1900,4 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
   未装时的回退;缓存/内置表保留但仅服务校准回退路径。
 - 构建 EXIT 0;测试 48/48;已部署。预期日志:"Hooked ImGuiIO::SetPlatformImeDataFn
   at io+192"。
+- 版本 3.1.1-beta → **3.1.2-beta**（10-07 修复：Prisma 候选窗锚点点击钉定+逐帧跟踪；中/英模式记忆与跨会话持久化 last_native_conversion；Explorer 日志定位走物理路径）。

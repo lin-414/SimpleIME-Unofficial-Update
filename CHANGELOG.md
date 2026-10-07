@@ -1,3 +1,15 @@
+## [3.1.2-beta] - 2026-10-07
+
+### 🐛 Bug Fixes
+
+- Candidate window caret anchoring — event-driven field anchors and stable placement
+- Pin the Prisma field anchor to observed clicks — engine input sink and per-frame cursor tracking
+- Remember the 中/英 conversion mode across enable cycles and sessions
+- Open the SKSE log file in Explorer through the mod-manager VFS
+
+
+**Full Changelog**: https://github.com/lin-414/SimpleIME-Unofficial-Update/compare/v3.1.1-beta...v3.1.2-beta
+
 ## [3.1.1-beta] - 2026-10-06
 
 ### 🐛 Bug Fixes
