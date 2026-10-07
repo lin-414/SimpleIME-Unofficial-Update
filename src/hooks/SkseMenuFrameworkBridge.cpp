@@ -38,6 +38,7 @@
 #include "hooks/ScopeFlag.h"
 #include "log.h"
 #include "path_utils.h"
+#include "utils/Utils.h"
 
 #include <REL/REL.h>
 #include <Windows.h>
@@ -1054,12 +1055,8 @@ void QueueText(std::wstring_view text)
     const std::scoped_lock lock(s_pendingMutex);
     for (const wchar_t c : text)
     {
-        // Same strip list as the Scaleform commit path: grave would toggle the
-        // console when echoed back, and the middle dot is the CJK list
-        // separator the engine treats as a hotkey.
-        constexpr wchar_t GRAVE_ACCENT = L'`';
-        constexpr wchar_t MIDDLE_DOT   = L'·';
-        if (c == GRAVE_ACCENT || c == MIDDLE_DOT)
+        // Same strip list as the Scaleform commit path (see the predicate).
+        if (Ime::ShouldStripCommittedChar(c))
         {
             continue;
         }

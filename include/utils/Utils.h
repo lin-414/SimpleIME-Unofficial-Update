@@ -15,6 +15,15 @@ inline auto align_to(int value, int alignment) -> int
     return ((value + alignment - 1) / alignment) * alignment;
 }
 
+/// Committed-text strip list shared by the Scaleform and WM_CHAR/ImGui commit
+/// routes: grave would toggle the console when echoed back, and the middle dot
+/// is the CJK list separator the engine treats as a hotkey. (Meridian's DOM
+/// route deliberately does NOT strip — see MeridianBridge::QueueText.)
+inline bool ShouldStripCommittedChar(const wchar_t c)
+{
+    return c == L'`' || c == L'·';
+}
+
 namespace Skyrim
 {
 inline void ShowMenu(const RE::BSFixedString &a_menuName)

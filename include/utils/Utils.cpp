@@ -19,9 +19,6 @@ namespace Ime::Skyrim
 {
 namespace
 {
-constexpr auto ASCII_GRAVE_ACCENT = 0x60U; // `
-constexpr auto ASCII_MIDDLE_DOT   = 0xB7U; // ·
-
 using ScaleformMessageCreator = RE::BSTDerivedCreator<RE::BSUIScaleformData, RE::IUIMessageData>;
 
 auto Send(RE::BSUIScaleformData *scaleformData, const uint32_t code, RE::UIMessageQueue *messageQueue, const RE::BSFixedString &menuName) -> bool
@@ -98,11 +95,11 @@ void SendUiString(std::wstring_view wstringView)
 
     for (const wchar_t c : wstringView)
     {
-        const auto wcharCode = static_cast<uint32_t>(c);
-        if (wcharCode == ASCII_GRAVE_ACCENT || wcharCode == ASCII_MIDDLE_DOT)
+        if (ShouldStripCommittedChar(c))
         {
             continue;
         }
+        const auto wcharCode = static_cast<uint32_t>(c);
         auto *scaleformData = scaleformDataCreator->Create();
         if (scaleformData != nullptr)
         {

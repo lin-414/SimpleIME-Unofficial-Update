@@ -27,6 +27,7 @@
 #include "RE/C/CursorMenu.h"
 #include "RE/M/MenuCursor.h"
 #include "RE/U/UI.h"
+#include "utils/Utils.h"
 
 #include <Windows.h>
 
@@ -265,12 +266,8 @@ void QueueText(std::wstring_view text)
     std::size_t posted = 0;
     for (const wchar_t c : text)
     {
-        // Same strip list as the other commit routes: grave would toggle the
-        // console when echoed back, and the middle dot is the CJK list
-        // separator the engine treats as a hotkey.
-        constexpr wchar_t GRAVE_ACCENT = L'`';
-        constexpr wchar_t MIDDLE_DOT   = L'·';
-        if (c == GRAVE_ACCENT || c == MIDDLE_DOT)
+        // Same strip list as the other commit routes (see the predicate).
+        if (Ime::ShouldStripCommittedChar(c))
         {
             continue;
         }
