@@ -6,6 +6,7 @@
 
 #include "Settings.h"
 #include "configs/ConfigSerializer.h"
+#include "configs/configuration.h"
 #include "configs/settings_converter.h"
 #include "path_utils.h"
 
@@ -16,9 +17,12 @@ namespace Ime
 
 namespace SettingsManager
 {
-static constexpr std::string_view CONFIG_FILE_NAME = "SimpleIME.toml";
+// inline: this header is included from more than one TU (the settings window
+// resolves the config path through ConfigFilePath), so a header-defined
+// non-inline function or an internally-linked static constant would multiply.
+inline constexpr std::string_view CONFIG_FILE_NAME = "SimpleIME.toml";
 
-auto ConfigFilePath() -> std::filesystem::path
+inline auto ConfigFilePath() -> std::filesystem::path
 {
     return utils::GetPluginInterfaceDir() / CONFIG_FILE_NAME;
 }

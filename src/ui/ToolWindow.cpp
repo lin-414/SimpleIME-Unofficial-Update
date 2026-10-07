@@ -21,6 +21,7 @@
 #include "menu/MenuNames.h"
 #include "path_utils.h"
 #include "ui/panels/PanelWidgets.h"
+#include "ui/SettingsManager.h"
 #include "utils/Utils.h"
 #include "WCharUtils.h"
 
@@ -954,7 +955,7 @@ void ToolWindow::DrawMenuAdvanced(Settings &settings)
                 ImGui::SetCursorScreenPos({row.trailingRight - openW, row.centerY - linkH * 0.5F});
                 if (Panels::TextLink("##OpenConfigDir", openLabel))
                 {
-                    OpenInExplorer(utils::GetPluginInterfaceDir() / "SimpleIME.toml", true);
+                    OpenInExplorer(SettingsManager::ConfigFilePath(), true);
                 }
                 Panels::EndSettingsRow(row);
             }
@@ -1026,9 +1027,7 @@ void ToolWindow::DrawConfigStatusRow()
 {
     if (!m_configStatus)
     {
-        // Same file SettingsManager::ConfigFilePath resolves to; that header's
-        // helpers are not inline, so the path is rebuilt here instead.
-        m_configStatus = ConfigSerializer::ValidateConfiguration(utils::GetPluginInterfaceDir() / "SimpleIME.toml");
+        m_configStatus = ConfigSerializer::ValidateConfiguration(SettingsManager::ConfigFilePath());
     }
 
     const auto       &status = *m_configStatus;
@@ -1101,7 +1100,7 @@ void ToolWindow::DrawDiagnosticsRow(const Settings &settings)
     if (!m_configStatus)
     {
         // Same lazy validation as DrawConfigStatusRow; either row may run first.
-        m_configStatus = ConfigSerializer::ValidateConfiguration(utils::GetPluginInterfaceDir() / "SimpleIME.toml");
+        m_configStatus = ConfigSerializer::ValidateConfiguration(SettingsManager::ConfigFilePath());
     }
 
     const std::string_view copyLabel   = Translate("Settings.Copy");
@@ -1161,7 +1160,7 @@ std::string ToolWindow::BuildDiagnosticsText(const Settings &settings) const
         }
     }
     text += std::format("Config: {}\n", configLine);
-    text += std::format("Config file: {}\n", WCharUtils::ToString((utils::GetPluginInterfaceDir() / "SimpleIME.toml").wstring()));
+    text += std::format("Config file: {}\n", WCharUtils::ToString(SettingsManager::ConfigFilePath().wstring()));
     text += std::format("Log file: {}", ResolveLogFilePath());
     return text;
 }
