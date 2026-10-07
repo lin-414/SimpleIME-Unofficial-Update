@@ -38,8 +38,6 @@ public:
 
     void MarkDirty() { m_fDirty.store(true); }
 
-    [[nodiscard]] auto IsDirty() const -> bool { return m_fDirty.load(); }
-
     auto IsReady() const -> bool { return m_fInited.load() && (m_imeWnd.load(std::memory_order_acquire) != nullptr); }
 
     auto IsModEnabled() const -> bool { return m_fEnabledMod.load(); }
@@ -61,8 +59,6 @@ public:
     auto SyncImeState() -> void;
     auto TryFocusIme() const -> void;
     auto EnableMod(bool enable) -> void;
-
-    [[nodiscard]] auto IsInited() const -> bool { return m_fInited; }
 
     static auto GetInstance() -> ImeController *
     {

@@ -299,8 +299,7 @@ inline void EndSettingsCard()
 //! copy, wrapped at a readable measure) sits left; the trailing control is
 //! right-anchored by the row helpers. Interactive rows highlight on hover
 //! and report a click of the row body, so a toggle's whole row is the hit
-//! target — the checkbox visual itself is drawn by RowTrailingCheckbox and
-//! owns no input.
+//! target — the checkbox visual itself owns no input.
 //!==========================================================================
 struct SettingsRowScope
 {
@@ -653,47 +652,6 @@ inline auto SwitchReserve() -> float
 {
     using namespace ImGuiEx::M3;
     return Context::GetM3Styles().GetPixels(Spec::dp<44>()) + Context::GetM3Styles().GetPixels(Spec::dp<12>());
-}
-
-//! Stateless trailing checkbox visual: the row's own click target handles the
-//! toggle, so the box carries no input of its own.
-inline void RowTrailingCheckbox(const SettingsRowScope &row, const bool checked)
-{
-    using namespace ImGuiEx::M3;
-    if (!row)
-    {
-        return;
-    }
-    auto       &m3Styles = Context::GetM3Styles();
-    auto       *drawList = ImGui::GetWindowDrawList();
-    const float layout   = m3Styles.GetPixels(Spec::Checkbox::LayoutSize);
-    const float boxSize  = m3Styles.GetPixels(Spec::Checkbox::ContainerSize);
-    const float iconSize = m3Styles.GetPixels(Spec::Checkbox::IconSize);
-    const float rounding = m3Styles.GetPixels(Spec::ShapeCorner::ExtraSmall);
-
-    const ImVec2 layoutMin(row.trailingRight - layout, row.centerY - layout * 0.5F);
-    const float  boxInset = (layout - boxSize) * 0.5F;
-    const ImVec2 boxMin(layoutMin.x + boxInset, layoutMin.y + boxInset);
-    const ImVec2 boxMax(boxMin.x + boxSize, boxMin.y + boxSize);
-
-    if (checked)
-    {
-        const auto container = Detail::IsItemDisabled() ? Detail::AlphaColor(Spec::ColorRole::onSurface, 0.12F) : m3Styles.Colors()[Spec::ColorRole::primary];
-        const auto icon      = Detail::ContentColor(Spec::ColorRole::onPrimary);
-        drawList->AddRectFilled(boxMin, boxMax, ImGui::ColorConvertFloat4ToU32(container), rounding);
-        const float                iconInset  = (boxSize - iconSize) * 0.5F;
-        constexpr std::string_view checkGlyph = ICON_CHECK;
-        drawList->AddText(
-            m3Styles.IconFont(), iconSize, ImVec2(boxMin.x + iconInset, boxMin.y + iconInset), ImGui::ColorConvertFloat4ToU32(icon), checkGlyph.data(), checkGlyph.data() + checkGlyph.size()
-        );
-    }
-    else
-    {
-        const auto outline = Detail::ContentColor(Spec::ColorRole::onSurfaceVariant);
-        drawList->AddRect(boxMin, boxMax, ImGui::ColorConvertFloat4ToU32(outline), rounding, 0, Spec::Checkbox::OutlineWidth);
-    }
-    ImGui::SetCursorScreenPos(layoutMin);
-    ImGui::Dummy({layout, layout});
 }
 
 //! Whole-row toggle: a click anywhere in the row flips `value`.

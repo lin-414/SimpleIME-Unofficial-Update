@@ -348,7 +348,6 @@ constexpr int IMGUI_CAL_MAX_EMPTY_ROUNDS = 3;
 std::atomic<std::size_t> s_imeDataOffset{IMGUI_CTX_PLATFORM_IME_DATA_OFFSET};
 std::atomic<bool>        s_imeDataOffsetReady{false};
 bool        s_calActive = false;  ///< candidates pending, seen session-active
-bool        s_calWasWantsText = false;
 std::size_t s_calCandidates[IMGUI_CAL_MAX_CANDIDATES] = {};
 std::size_t s_calCandidateCount = 0;
 int         s_calFailedRounds = 0;
@@ -360,29 +359,6 @@ int         s_calStaleActiveReads = 0; ///< calibrated offset read WantVisible=0
 constexpr auto AnchorCachePath() -> std::filesystem::path
 {
     return utils::GetPluginInterfaceDir() / "skse_menu_framework_anchor.cache";
-}
-
-std::uint64_t FrameworkFingerprint()
-{
-    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
-    if (module == nullptr)
-    {
-        return 0;
-    }
-    wchar_t path[MAX_PATH] = {};
-    if (GetModuleFileNameW(module, path, MAX_PATH) == 0)
-    {
-        return 0;
-    }
-    WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
-    {
-        return 0;
-    }
-    const std::uint64_t size  = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
-    const std::uint64_t mtime = (static_cast<std::uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
-                                attributes.ftLastWriteTime.dwLowDateTime;
-    return mtime ^ (size * 0x9E3779B97F4A7C15ULL);
 }
 
 void RestoreCalibratedImeDataOffset()
@@ -557,10 +533,6 @@ void UpdateFieldAnchor()
                     }
                 }
             }
-            if (!s_calActive)
-            {
-                s_calWasWantsText = false;
-            }
             s_fieldAnchorValid.store(false, std::memory_order_release);
             return;
         }
@@ -607,7 +579,6 @@ void UpdateFieldAnchor()
                 s_calActive = false;
             }
         }
-        s_calWasWantsText = true;
         s_fieldAnchorValid.store(false, std::memory_order_release);
         return;
     }

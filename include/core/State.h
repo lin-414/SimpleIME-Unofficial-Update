@@ -126,14 +126,6 @@ public:
     }
 
     template <typename... Args>
-    [[nodiscard]] auto HasAll(Args... states) const -> bool
-        requires((std::is_same_v<Args, StateKey> && ...))
-    {
-        const auto mask = (static_cast<UnderlyingType>(states) | ...);
-        return (m_state & mask) == mask;
-    }
-
-    template <typename... Args>
     [[nodiscard]] auto HasAny(Args... states) const -> bool
         requires((std::is_same_v<Args, StateKey> && ...))
     {

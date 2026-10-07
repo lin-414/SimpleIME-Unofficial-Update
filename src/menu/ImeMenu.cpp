@@ -36,12 +36,6 @@ auto ImeMenuCreator() -> RE::IMenu *
     pMenu->menuFlags.set(flags::kAlwaysOpen, flags::kAllowSaving);
     pMenu->depthPriority = 13;
 
-    // using Context = RE::UserEvents::INPUT_CONTEXT_ID;
-    // pMenu->inputContext.set(Context::kMenuMode);
-    // Priority 7: no render but no events
-    // Priority 8: render but no events
-    // Priority 9: render and have events
-
     return pMenu;
 }
 

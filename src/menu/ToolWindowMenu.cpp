@@ -80,10 +80,6 @@ auto ToolWindowMenu::Creator() -> IMenu *
     pMenu->menuFlags.set(Flag::kPausesGame, Flag::kUsesCursor, Flag::kAllowSaving);
     pMenu->depthPriority = 11;
 
-    // pMenu->inputContext.set(RE::UserEvents::INPUT_CONTEXT_ID::kMenuMode);
-    // Priority 7: no render but no events
-    // Priority 8: render but no events
-    // Priority 9: render and have events
     return pMenu;
 }
 

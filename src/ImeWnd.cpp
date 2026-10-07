@@ -853,21 +853,13 @@ auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRES
             // string instead of injecting the partial composition through
             // SendUiString while the OS is mid focus transition. That injection
             // (plus the TIP tearing down its candidate UI around it) was the
-            // suspected crash window of the old FIXME below; ending the
+            // suspected crash window of the old FIXME; ending the
             // composition on our own terms closes it.
             if (State::GetInstance().HasAny(State::IN_COMPOSING, State::IN_CAND_CHOOSING))
             {
                 logger::debug("Focus lost during composition, aborting it on the IME thread.");
                 pThis->m_textService->AbortIme();
             }
-            // Former FIXME: crash when focus leaves ImeWnd during active composition via an
-            // OS-level window switch (e.g. Win+Shift+S snipping tool at the right timing).
-            // Root causes addressed: (1) ImGui::GetIO().ClearInputKeys() used to run HERE on
-            // the IME thread, racing the render thread's ImGui frame (now deferred via
-            // m_fWantClearInput); (2) the composition ended by the focus change injected its
-            // partial text through SendUiString mid-transition (now terminated above with an
-            // already-cleared editor, and TextStore::OnEndComposition additionally refuses to
-            // inject when the thread focus is gone).
             // Meridian focus reclaim: the click into a Meridian text field moves Win32 focus
             // to the game window (no WM_KILLFOCUS-free path exists). Deferred one hop; the
             // handler re-checks every guard.

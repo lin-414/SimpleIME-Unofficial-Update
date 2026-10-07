@@ -105,8 +105,6 @@ public:
 
         constexpr auto IsInitializing() const { return m_stateKey == StateKey::INITIALIZING; }
 
-        constexpr auto IsInitializeFailed() const { return m_stateKey == StateKey::INITIALIZE_FAILED; }
-
         constexpr auto IsInitialized() const { return m_stateKey == StateKey::INITIALIZED; }
     };
 

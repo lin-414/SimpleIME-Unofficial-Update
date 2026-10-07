@@ -273,22 +273,6 @@ auto TextService::ProcessImeMessage(HWND /*hWnd*/, UINT /*uMsg*/, WPARAM /*wPara
     // Logic: Our architecture already separates concerns by initializing a legacy Imm32
     // TextService if TSF is disabled or fails to initialize. Therefore, within the
     // TSF-enabled service, we assume UIElement support is guaranteed.
-    // switch (uMsg)
-    // {
-    //     case WM_IME_NOTIFY:
-    //         if (!m_pTextStore->IsSupportCandidateUi())
-    //         {
-    //             if (m_fallbackTextService.ProcessImeMessage(hWnd, uMsg, wParam, lParam))
-    //             {
-    //                 const std::unique_lock lock(m_mutex);
-    //                 m_candidateUi = m_fallbackTextService.GetCandidateUi();
-    //                 MarkDirty();
-    //             }
-    //         }
-    //         break;
-    //     default:
-    //         break;
-    // }
     return false;
 }
 } // namespace Tsf
