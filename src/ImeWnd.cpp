@@ -524,7 +524,9 @@ auto ImeWnd::SendNotifyMessageToIme(UINT uMsg, WPARAM wParam, LPARAM lParam) con
 {
     if (m_hWnd == nullptr)
     {
-        return true;
+        // No window to notify: report "not delivered" so callers take their
+        // failure path instead of assuming the IME thread got the message.
+        return false;
     }
     return SendNotifyMessageW(m_hWnd, uMsg, wParam, lParam) != FALSE;
 }
