@@ -9,6 +9,7 @@
 #include "log.h"
 
 #include <processthreadsapi.h>
+#include <utility>
 #include <windows.h>
 
 namespace Ime
@@ -91,6 +92,11 @@ auto ImeManager::EnableIme(bool enable) -> Result
 {
     logger::debug("ImeManager::{} {}", __func__, enable ? "enable" : "disable");
 
+    // Consume the force flag up front: the early returns below must not leave
+    // it armed, or the next sync of ANY state would force-run the whole body —
+    // including the disable path's AbortIme + English-profile + focus dance.
+    const bool forceUpdate = std::exchange(m_isForceUpdate, false);
+
     // Prisma UI coordination. When a Prisma view (PMCM, Outfit Wheeler, ...)
     // holds input capture, SimpleIME TAKES OVER text entry: the enable below
     // moves the Win32 focus to our ImeWnd (the candidate window shows, the
@@ -121,9 +127,8 @@ auto ImeManager::EnableIme(bool enable) -> Result
     }
 
     auto &state = State::GetInstance();
-    if (m_isForceUpdate || (state.Has(State::IME_DISABLED) && enable) || (state.NotHas(State::IME_DISABLED) && !enable))
+    if (forceUpdate || (state.Has(State::IME_DISABLED) && enable) || (state.NotHas(State::IME_DISABLED) && !enable))
     {
-        m_isForceUpdate = false;
 
         // Drive the language-bar overlay from THIS single funnel: every
         // enable/disable path (text-entry count hook, WM_NCACTIVATE sync,
