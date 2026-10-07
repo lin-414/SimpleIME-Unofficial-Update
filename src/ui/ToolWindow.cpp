@@ -535,11 +535,7 @@ void DrawCompatibilityRow(
     const bool warned = !detailTooltip.empty();
     const auto captionTone = warned ? M3Spec::ColorRole::error : captionColor;
 
-    float captionW = 0.0F;
-    {
-        const auto fontScope = m3Styles.UseTextRole<M3Spec::List::textRole>();
-        captionW = ImGui::CalcTextSize(caption.data(), caption.data() + caption.size()).x;
-    }
+    const float captionW = Panels::MeasureListText(caption);
     const float trailing = captionW + m3Styles.GetPixels(M3Spec::dp<12>()) + Panels::SwitchReserve();
     const auto  row      = Panels::BeginSettingsRow(strId, title, supporting, trailing, m3Styles.GetPixels(M3Spec::dp<24>()), SupportingMeasure());
     if (row)
@@ -698,7 +694,7 @@ void ToolWindow::DrawStatusCard(const Settings &settings) const
         float linkH = 0.0F;
         {
             const auto fontScope = m3Styles.UseTextRole<ImGuiEx::M3::Spec::TextRole::LabelLarge>();
-            dotW  = ImGui::GetTextLineHeight() * 0.6F; // StatusDot's diameter at this font
+            dotW  = Panels::StatusDotDiameter(); // StatusDot's diameter at this font
             modW  = ImGui::CalcTextSize(modLabel.data(), modLabel.data() + modLabel.size()).x;
             imeW  = ImGui::CalcTextSize(imeLabel.data(), imeLabel.data() + imeLabel.size()).x;
             linkW = Panels::TextLinkWidth(focusLabel);
@@ -793,7 +789,7 @@ void ToolWindow::DrawMenuInputStatus(Settings &settings)
                 std::array<float, 3> itemW{};
                 {
                     const auto fontScope = m3Styles.UseTextRole<ImGuiEx::M3::Spec::TextRole::LabelLarge>();
-                    dotW = ImGui::GetTextLineHeight() * 0.6F;
+                    dotW = Panels::StatusDotDiameter();
                     itemW[0] = dotW + dotGap + Panels::TextLinkWidth(Translate("Settings.Behaviour.ShortAutoToggleKeyboard"));
                     itemW[1] = dotW + dotGap + Panels::TextLinkWidth(Translate("Settings.Behaviour.ShortUnicodePaste"));
                     itemW[2] = dotW + dotGap + Panels::TextLinkWidth(Translate("Settings.Behaviour.KeepImeOpen"));
@@ -1063,12 +1059,7 @@ void ToolWindow::DrawConfigStatusRow()
     // instead of colliding under long translations, and measure the row with
     // supporting copy only when one is actually rendered (a parse error's
     // detail); Ok/NotFound would otherwise reserve an invisible extra line.
-    float statusW = 0.0F;
-    {
-        auto       &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
-        const auto  fontScope = m3Styles.UseTextRole<M3Spec::List::textRole>();
-        statusW = ImGui::CalcTextSize(label.data(), label.data() + label.size()).x + m3Styles.GetPixels(M3Spec::dp<12>());
-    }
+    const float statusW = Panels::MeasureListText(label) + ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::dp<12>());
     const auto row = Panels::BeginPlainSettingsRow(
         Translate("Settings.Advanced.ConfigStatus"),
         supporting,
@@ -1256,12 +1247,7 @@ void ToolWindow::DrawErrorDurationRow(Settings &settings)
 void ToolWindow::DrawEnvironmentRows(const Settings &settings)
 {
     const auto drawValueRow = [](const std::string_view title, const std::string_view supporting, const std::string_view value) {
-        float valueW = 0.0F;
-        {
-            auto &m3Styles       = ImGuiEx::M3::Context::GetM3Styles();
-            const auto fontScope = m3Styles.UseTextRole<M3Spec::List::textRole>();
-            valueW = ImGui::CalcTextSize(value.data(), value.data() + value.size()).x + m3Styles.GetPixels(M3Spec::dp<12>());
-        }
+        const float valueW = Panels::MeasureListText(value) + ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::dp<12>());
         if (const auto row = Panels::BeginPlainSettingsRow(title, supporting, valueW, 0.0F, SupportingMeasure()); row)
         {
             Panels::RowTitle(row);

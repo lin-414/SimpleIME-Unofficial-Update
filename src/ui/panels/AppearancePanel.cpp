@@ -721,11 +721,7 @@ void AppearancePanel::DrawThemeModeRow(Settings &settings)
     // The title and the segment run share the row; when long translations
     // push the run past the card, the run moves below the title and flows.
     const std::string_view title = Translate("Settings.Appearance.ThemeMode");
-    float titleW = 0.0F;
-    {
-        const auto fontScope = m3Styles.UseTextRole<ImGuiEx::M3::Spec::List::textRole>();
-        titleW = ImGui::CalcTextSize(title.data(), title.data() + title.size()).x;
-    }
+    const float titleW = UI::Panels::MeasureListText(title);
     const float contentW = ImGui::GetContentRegionAvail().x - padX * 2.0F;
     const float runW     = widths[0] + gap + widths[1];
     const bool  stacked  = titleW + gap + runW > contentW;

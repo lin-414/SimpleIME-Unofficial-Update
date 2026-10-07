@@ -64,6 +64,14 @@ inline void StatusDot(const bool on)
     ImGui::Dummy(ImVec2(radius * 2.0F, ImGui::GetTextLineHeight()));
 }
 
+//! Diameter of the StatusDot's ink (radius = half of this), for flow layouts
+//! that reserve its width before their extent commits. Call it under the same
+//! font scope the dot itself will draw in.
+inline auto StatusDotDiameter() -> float
+{
+    return ImGui::GetTextLineHeight() * 0.6F;
+}
+
 //! Width of one physical keycap of a shortcut chord, so rows can measure the
 //! whole keycap run before their extent commits.
 inline auto KeycapWidth(const std::string_view label) -> float
@@ -883,6 +891,15 @@ inline void RowTrailingText(const SettingsRowScope &row, const std::string_view 
     // the value's optical middle on row.centerY.
     ImGui::SetCursorScreenPos({row.trailingRight - rightOffset - width, row.centerY - lineHeight * 0.5F});
     Detail::RoleText(text, Detail::ContentColor(role), -1.0F);
+}
+
+//! Width of `text` in the list text role — the measure behind every trailing
+//! label / value width reserve (row titles render in the same role).
+inline auto MeasureListText(const std::string_view text) -> float
+{
+    using namespace ImGuiEx::M3;
+    const auto fontScope = Context::GetM3Styles().UseTextRole<Spec::List::textRole>();
+    return ImGui::CalcTextSize(text.data(), text.data() + text.size()).x;
 }
 
 //! Height of the compact trailing dropdown button.

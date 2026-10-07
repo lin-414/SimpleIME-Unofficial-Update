@@ -1084,10 +1084,7 @@ void MockToolWindow::DrawThemeModeRow()
 
     // The title and the segment run share the row; when the run would pass
     // the card, it moves below the title and flows (port of AppearancePanel).
-    const float titleW  = [&] {
-        const auto fontScope = m3Styles.UseTextRole<ImGuiEx::M3::Spec::List::textRole>();
-        return ImGui::CalcTextSize(title.data(), title.data() + title.size()).x;
-    }();
+    const float titleW  = UI::Panels::MeasureListText(title);
     const float contentW = ImGui::GetContentRegionAvail().x - padX * 2.0F;
     const float runW     = widths[0] + gap + widths[1];
     const bool  stacked  = titleW + gap + runW > contentW;
@@ -1246,11 +1243,7 @@ void MockToolWindow::DrawInputStatus(MiniSettings &settings, const MiniState &st
             const auto compatRow = [&](const char *strId, bool &value, const std::string_view title, const std::string_view supporting, const int state) {
                 const auto [caption, captionColor] = BridgeCaption(value, state);
                 auto &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
-                float captionW = 0.0F;
-                {
-                    const auto fontScope = m3Styles.UseTextRole<M3Spec::List::textRole>();
-                    captionW = ImGui::CalcTextSize(caption.data(), caption.data() + caption.size()).x;
-                }
+                const float captionW = UI::Panels::MeasureListText(caption);
                 const float trailing = captionW + m3Styles.GetPixels(M3Spec::dp<12>()) + UI::Panels::SwitchReserve();
                 const auto row = UI::Panels::BeginSettingsRow(strId, title, supporting, trailing, m3Styles.GetPixels(M3Spec::dp<24>()), SupportingMeasure());
                 if (row)
@@ -1399,12 +1392,7 @@ void MockToolWindow::DrawAdvanced(MiniSettings &settings)
         if (UI::Panels::BeginSettingsCard("##EnvironmentCard"))
         {
             const auto drawValueRow = [](const std::string_view title, const std::string_view supporting, const std::string_view value) {
-                float valueW = 0.0F;
-                {
-                    auto &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
-                    const auto fontScope = m3Styles.UseTextRole<M3Spec::List::textRole>();
-                    valueW = ImGui::CalcTextSize(value.data(), value.data() + value.size()).x + m3Styles.GetPixels(M3Spec::dp<12>());
-                }
+                const float valueW = UI::Panels::MeasureListText(value) + ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::dp<12>());
                 if (const auto row = UI::Panels::BeginPlainSettingsRow(title, supporting, valueW, 0.0F, SupportingMeasure()); row)
                 {
                     UI::Panels::RowTitle(row, title);
@@ -1456,12 +1444,7 @@ void MockToolWindow::DrawAdvanced(MiniSettings &settings)
             // Port of ToolWindow.cpp's config-status row: reserve the trailing
             // label's width so the title wraps short of it, and pass the
             // supporting copy only when one is rendered.
-            auto  &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
-            float statusW = 0.0F;
-            {
-                const auto fontScope = m3Styles.UseTextRole<M3Spec::List::textRole>();
-                statusW = ImGui::CalcTextSize(label.data(), label.data() + label.size()).x + m3Styles.GetPixels(M3Spec::dp<12>());
-            }
+            const float statusW = UI::Panels::MeasureListText(label) + ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::dp<12>());
             const auto statusRow = UI::Panels::BeginPlainSettingsRow(
                 T("Advanced.ConfigStatus"), error ? "toml::parse_error: unexpected key at line 12" : std::string_view{}, statusW, 0.0F,
                 SupportingMeasure());
@@ -1508,7 +1491,7 @@ void MockToolWindow::DrawStatusCard(MiniSettings &settings, const MiniState &sta
         float linkH = 0.0F;
         {
             const auto fontScope = m3Styles.UseTextRole<M3Spec::TextRole::LabelLarge>();
-            dotW  = ImGui::GetTextLineHeight() * 0.6F;
+            dotW  = UI::Panels::StatusDotDiameter();
             modW  = ImGui::CalcTextSize(modLabel.data(), modLabel.data() + modLabel.size()).x;
             imeW  = ImGui::CalcTextSize(imeLabel.data(), imeLabel.data() + imeLabel.size()).x;
             linkW = UI::Panels::TextLinkWidth(focusLabel);
