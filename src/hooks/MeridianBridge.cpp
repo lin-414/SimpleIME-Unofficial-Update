@@ -1155,6 +1155,13 @@ SupportState State()
     return SupportState::NotDetected;
 }
 
+SupportState ViewBackendState()
+{
+    // The View/1 fallback backend's own install outcome, un-folded; see
+    // State() for the combined token.
+    return s_state.load(std::memory_order_acquire);
+}
+
 void Uninstall()
 {
     s_enabled         = false;

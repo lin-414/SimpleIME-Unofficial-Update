@@ -519,17 +519,22 @@ auto BridgeStatusCaption(const bool configOn, const Hooks::SupportState state) -
 }
 
 //! One compatibility row: description + switch like any toggle, plus a
-//! trailing caption reporting the bridge's install-time outcome.
+//! trailing caption reporting the bridge's install-time outcome. A non-empty
+//! detailTooltip recolors the caption as a warning and spells the detail out
+//! on hover (the Meridian row folds two backends into one state).
 void DrawCompatibilityRow(
     const char                *strId,
     bool                      &value,
     const std::string_view     title,
     const std::string_view     supporting,
-    const Hooks::SupportState  state
+    const Hooks::SupportState  state,
+    const std::string_view     detailTooltip = {}
 )
 {
     auto &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
     const auto [caption, captionColor] = BridgeStatusCaption(value, state);
+    const bool warned = !detailTooltip.empty();
+    const auto captionTone = warned ? M3Spec::ColorRole::error : captionColor;
 
     float captionW = 0.0F;
     {
@@ -542,13 +547,17 @@ void DrawCompatibilityRow(
     {
         Panels::RowTitle(row, title);
         Panels::RowSupporting(row, supporting);
-        Panels::RowTrailingText(row, caption, captionColor, Panels::SwitchReserve());
+        Panels::RowTrailingText(row, caption, captionTone, Panels::SwitchReserve());
         Panels::RowTrailingSwitch(row, value);
         Panels::EndSettingsRow(row);
     }
     if (row.pressed)
     {
         value = !value;
+    }
+    if (warned)
+    {
+        ImGuiEx::M3::SetItemToolTip(detailTooltip);
     }
 }
 
@@ -566,6 +575,23 @@ auto BridgeStateToken(const Hooks::SupportState state) -> std::string_view
         case Hooks::SupportState::Pending: return "pending";
     }
     return "unknown";
+}
+
+//! The Meridian row folds the UIPlatform and View/1 backends into one state
+//! (Active when either is live); when a backend failed or stands off next to
+//! a live one, the tooltip spells out both tokens so the split is visible.
+auto MeridianDetailTooltip(
+    const Hooks::SupportState uiPlatform,
+    const Hooks::SupportState view
+) -> std::string
+{
+    using S = Hooks::SupportState;
+    const bool warning = uiPlatform == S::Failed || uiPlatform == S::Standoff || view == S::Failed || view == S::Standoff;
+    if (!warning || uiPlatform == view)
+    {
+        return {};
+    }
+    return std::format("UIPlatform: {}, View/1: {}", BridgeStateToken(uiPlatform), BridgeStateToken(view));
 }
 
 //! The SKSE log file, `<log dir>\<plugin>.log` (cached: the location is fixed
@@ -845,7 +871,8 @@ void ToolWindow::DrawMenuInputStatus(Settings &settings)
                 settings.input.meridianSupport,
                 Translate("Settings.Behaviour.MeridianSupport"),
                 Translate("Settings.Behaviour.MeridianSupportToolTip"),
-                Hooks::MeridianBridge::State()
+                Hooks::MeridianBridge::State(),
+                MeridianDetailTooltip(Hooks::NirnLabBridge::State(), Hooks::MeridianBridge::ViewBackendState())
             );
             Panels::RowDivider();
             DrawCompatibilityRow(

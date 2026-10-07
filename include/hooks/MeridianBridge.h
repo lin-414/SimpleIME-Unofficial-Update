@@ -29,6 +29,11 @@ void Uninstall();
 /// any thread). Backs the settings UI's compatibility caption.
 [[nodiscard]] SupportState State();
 
+/// Install-time outcome of the View/1 fallback backend ALONE (State() folds
+/// it with the UIPlatform backend). The settings UI uses it to expose a
+/// failed backend next to a live one.
+[[nodiscard]] SupportState ViewBackendState();
+
 /// A Meridian view or a UIPlatform browser currently holds focus (atomic;
 /// written from the vtable hooks on the game thread, readable from any
 /// thread).
