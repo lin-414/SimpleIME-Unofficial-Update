@@ -108,8 +108,15 @@ struct Scaleform_SetScaleModeTypeHook
 
     static auto FnHandler() -> SKSE_AllowTextInputFnHandler *&
     {
-        // Don't use unique_ptr/GPtr to avoid release before ImeApp;
-        static auto fnHandler = new SKSE_AllowTextInputFnHandler();
+        // Leaked on purpose — movie-created GFx functions may outlive us, so
+        // the handler must never be deleted (see the hookData note above).
+        // Uninstall() nulls the pointer; the next call re-creates it so a
+        // re-install after a failed init gets a live handler back.
+        static SKSE_AllowTextInputFnHandler *fnHandler = nullptr;
+        if (fnHandler == nullptr)
+        {
+            fnHandler = new SKSE_AllowTextInputFnHandler();
+        }
         return fnHandler;
     }
 
@@ -152,7 +159,15 @@ struct Scaleform_SetScaleModeTypeHook
     // The detour goes live inside the ctor, before hookData is assigned — safe
     // only because Install() runs on the main thread during startup, before the
     // hooked function can fire concurrently.
-    static void Install() { hookData = std::make_unique<Scaleform_SetScaleModeTypeHookData>(SetScaleModeType); }
+    static void Install()
+    {
+        // A live trampoline hook cannot be re-created; after an Uninstall only
+        // the handler is missing, so a re-install (D3DInit retry) restores it.
+        if (hookData == nullptr)
+        {
+            hookData = std::make_unique<Scaleform_SetScaleModeTypeHookData>(SetScaleModeType);
+        }
+    }
 
     static void Uninstall() { FnHandler() = nullptr; }
 };
@@ -179,7 +194,8 @@ struct Scaleform_AllowTextInputHook
         return result;
     }
 
-    // Same single-threaded-install invariant as above.
+    // Re-entrant: Uninstall reset the hook, a re-install (D3DInit retry)
+    // recreates it.
     static void Install() { hookData = std::make_unique<Scaleform_AllowTextInput>(AllowTextInput); }
 
     static void Uninstall() { hookData.reset(); }
@@ -282,12 +298,6 @@ void SKSE_AllowTextInputFnHandler::Call(Params &params)
 
 void Install()
 {
-    static bool installed = false;
-    if (installed)
-    {
-        return;
-    }
-    installed = true;
     Scaleform_SetScaleModeTypeHook::Install();
     Scaleform_AllowTextInputHook::Install();
     // Make sure the cached text-entry count starts from the real value, so a

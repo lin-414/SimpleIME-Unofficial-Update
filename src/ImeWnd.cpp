@@ -363,6 +363,9 @@ void ImeWnd::InitializeTextService()
 
 void ImeWnd::Initialize(const bool enableTsf) noexcept(false)
 {
+    // A previous cycle's UnInitialize latched the teardown flag; this run
+    // rebuilds everything it guards on a fresh IME thread.
+    m_fTearingDown = false;
     TryEnableImeWndDpiAware();
     if (!RegisterImeWindowClass(WndProc))
     {

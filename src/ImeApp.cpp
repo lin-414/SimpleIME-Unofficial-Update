@@ -342,7 +342,9 @@ void D3DInit()
     // initialized" bail-out below (a renderer rebuild after a device reset
     // would otherwise have its D3D init silently skipped and black-screen).
     g_D3DInitHook->Original();
-    if (!app.m_state.IsUnInitialized())
+    // The renderer rebuild (ALT-TAB, device reset) re-fires this hook: only a
+    // live or in-flight init skips here, every dead state retries below.
+    if (app.m_state.IsInitializing() || app.m_state.IsInitialized())
     {
         logger::warn("Already Initialized! Current state: {}", app.m_state.GetStateKetText());
         return;
@@ -375,6 +377,9 @@ void D3DInit()
 void ImeApp::DoD3DInit()
 {
     // The engine's Original() already ran in the D3DInit hook replacement.
+    // Re-arm the per-cycle latches a previous Uninitialize consumed.
+    m_uninitializeStarted.clear(std::memory_order_release);
+    m_imeTeardownDone.store(false, std::memory_order_release);
     m_state.SetState(State::StateKey::INITIALIZING);
     OnD3DInit();
 }
@@ -421,10 +426,15 @@ void ImeApp::OnD3DInit()
         }
         // IDXGISwapChain::Present = vtable slot 8 (IUnknown 3 + IDXGIObject 2 +
         // GetPrivateData/GetParent/GetDevice 3).
-        g_realSwapChainPresent = reinterpret_cast<void **>(*reinterpret_cast<void **>(pSwapChain))[8];
-        g_swapChainPresentHook = new Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)>(
-            g_realSwapChainPresent, &ImeApp::SwapChainPresentHook);
-        logger::info("Swapchain present hook installed (keeps the overlay above Prisma views)");
+        if (g_swapChainPresentHook == nullptr)
+        {
+            // The detour targets the global Present function, so an existing
+            // hook from a previous init already covers the new swapchain.
+            g_realSwapChainPresent = reinterpret_cast<void **>(*reinterpret_cast<void **>(pSwapChain))[8];
+            g_swapChainPresentHook = new Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)>(
+                g_realSwapChainPresent, &ImeApp::SwapChainPresentHook);
+            logger::info("Swapchain present hook installed (keeps the overlay above Prisma views)");
+        }
     }
 
     Start(renderData);

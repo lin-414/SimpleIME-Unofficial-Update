@@ -59,16 +59,46 @@ public:
             // old code, a state advanced between the check and the exchange
             // was silently overwritten (or a stale rollback logged as fine).
             StateKey current = m_stateKey.load(std::memory_order_acquire);
-            while (current < stateKey)
+            while (true)
             {
+                if (current == stateKey)
+                {
+                    return;
+                }
+                if (!IsLegalTransition(current, stateKey))
+                {
+                    logger::error("The state cannot be changed from [{}] to [{}]!", GetStateKetText(current), GetStateKetText(stateKey));
+                    return;
+                }
                 if (m_stateKey.compare_exchange_weak(current, stateKey, std::memory_order_acq_rel, std::memory_order_acquire))
                 {
                     return;
                 }
                 // CAS failed: `current` holds the latest value, loop re-checks.
-                // Losing to a concurrent forward move is a benign no-op.
             }
-            logger::error("The state cannot be rolled back from [{}] to [{}]!", GetStateKetText(current), GetStateKetText(stateKey));
+        }
+
+        /// Explicit transition whitelist instead of enum-value ordering:
+        /// re-activation after a failed or shut-down init is legal, while a
+        /// success must never be overwritten by a later failure.
+        static constexpr bool IsLegalTransition(const StateKey from, const StateKey to)
+        {
+            switch (from)
+            {
+                case StateKey::UNINITIALIZED:
+                    return to == StateKey::INITIALIZING;
+                case StateKey::INITIALIZING:
+                    return to == StateKey::INITIALIZED || to == StateKey::INITIALIZE_FAILED;
+                case StateKey::INITIALIZED:
+                    return to == StateKey::SHUTDOWN || to == StateKey::DORMANCY;
+                case StateKey::INITIALIZE_FAILED:
+                    return to == StateKey::INITIALIZING || to == StateKey::SHUTDOWN || to == StateKey::DORMANCY;
+                case StateKey::SHUTDOWN:
+                    return to == StateKey::INITIALIZING || to == StateKey::DORMANCY;
+                case StateKey::DORMANCY:
+                    return to == StateKey::INITIALIZING;
+            }
+            return false;
         }
 
         constexpr auto IsUnInitialized() const { return m_stateKey == StateKey::UNINITIALIZED; }
