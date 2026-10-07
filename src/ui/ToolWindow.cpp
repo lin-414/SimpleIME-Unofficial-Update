@@ -846,12 +846,9 @@ void ToolWindow::DrawMenuInputStatus(Settings &settings)
         }
         Panels::EndSettingsCard();
 
-        Panels::SectionHeader(Translate("Settings.Behaviour.Shortcut"));
-        if (Panels::BeginSettingsCard("##ShortcutCard"))
-        {
+        Panels::SettingsSection(Translate("Settings.Behaviour.Shortcut"), "##ShortcutCard", [&] {
             DrawShortcutSection(settings);
-        }
-        Panels::EndSettingsCard();
+        });
 
         // The input-bridge compatibility switches were TOML-only until now.
         // Their descriptions are the TOML comments verbatim; the trailing
@@ -897,9 +894,7 @@ void ToolWindow::DrawMenuAdvanced(Settings &settings)
     if (ImGui::BeginChild("Advanced", {}, ImGuiEx::ChildFlags().AlwaysUseWindowPadding().AutoResizeY()))
     {
         Panels::PageHeader(Translate("Settings.Sidebar.Advanced"), Translate("Settings.Page.Advanced.Support"));
-        Panels::SectionHeader(Translate("Settings.Advanced.Troubleshooting"));
-        if (Panels::BeginSettingsCard("##TroubleshootingCard"))
-        {
+        Panels::SettingsSection(Translate("Settings.Advanced.Troubleshooting"), "##TroubleshootingCard", [&] {
             ImGui::BeginDisabled(!settings.enableMod);
             (void)Panels::SettingsToggleRow(
                 "##FixInconsistent",
@@ -915,24 +910,17 @@ void ToolWindow::DrawMenuAdvanced(Settings &settings)
 
             ImGuiEx::M3::Divider();
             DrawDiagnosticsRow(settings);
-        }
-        Panels::EndSettingsCard();
+        });
 
-        Panels::SectionHeader(Translate("Settings.Advanced.Logging"));
-        if (Panels::BeginSettingsCard("##LoggingCard"))
-        {
+        Panels::SettingsSection(Translate("Settings.Advanced.Logging"), "##LoggingCard", [&] {
             DrawLogLevelRow(settings);
             ImGuiEx::M3::Divider();
             DrawErrorDurationRow(settings);
-        }
-        Panels::EndSettingsCard();
+        });
 
-        Panels::SectionHeader(Translate("Settings.Advanced.Environment"));
-        if (Panels::BeginSettingsCard("##EnvironmentCard"))
-        {
+        Panels::SettingsSection(Translate("Settings.Advanced.Environment"), "##EnvironmentCard", [&] {
             DrawEnvironmentRows(settings);
-        }
-        Panels::EndSettingsCard();
+        });
 
         Panels::SectionHeader(Translate("Settings.Advanced.ConfigTitle"));
         if (Panels::BeginSettingsCard("##ConfigOnlyCard"))

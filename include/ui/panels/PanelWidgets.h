@@ -1088,4 +1088,36 @@ inline void SettingsComboRow(
     EndRowTrailingCombo(open);
     EndSettingsRow(row);
 }
+
+//! Section card scaffold: quiet section header above a bordered card whose
+//! body runs only when the card opened. The card closes unconditionally —
+//! EndSettingsCard no-ops when nothing opened, exactly like the hand-written
+//! sites this wraps.
+template <typename Fn>
+inline void SettingsSection(const std::string_view header, const char *strId, Fn &&body)
+{
+    SectionHeader(header);
+    if (BeginSettingsCard(strId))
+    {
+        body();
+    }
+    EndSettingsCard();
+}
+
+//! Settings tab page shell: surface background over the window, the padded
+//! auto-resizing child the page scrolls in, then the page header. Body runs
+//! only when the child opened; the child always ends. Pages with header links
+//! or without auto-resize keep their hand-written shell (the FontBuilder page).
+template <typename Fn>
+inline void SettingsPage(const char *strId, const std::string_view title, const std::string_view supporting, Fn &&body)
+{
+    const auto pageGuard =
+        ImGuiEx::StyleGuard().Color<ImGuiCol_ChildBg>(ImGuiEx::M3::Context::GetM3Styles().Colors()[ImGuiEx::M3::Spec::ColorRole::surface]);
+    if (ImGui::BeginChild(strId, {}, ImGuiEx::ChildFlags().AlwaysUseWindowPadding().AutoResizeY()))
+    {
+        PageHeader(title, supporting);
+        body();
+    }
+    ImGui::EndChild();
+}
 } // namespace Ime::UI::Panels

@@ -286,55 +286,38 @@ AppearancePanel::AppearancePanel()
 
 void AppearancePanel::Draw(Settings &settings)
 {
-    auto      &m3Styles   = ImGuiEx::M3::Context::GetM3Styles();
-    const auto styleGuard = ImGuiEx::StyleGuard().Color<ImGuiCol_ChildBg>(m3Styles.Colors()[ColorRole::surface]);
-    if (ImGui::BeginChild("##Appearance", {}, ImGuiEx::ChildFlags().AlwaysUseWindowPadding().AutoResizeY()))
-    {
-        UI::Panels::PageHeader(Translate("Settings.Sidebar.Display"), Translate("Settings.Page.Display.Support"));
+    UI::Panels::SettingsPage(
+        "##Appearance",
+        Translate("Settings.Sidebar.Display"),
+        Translate("Settings.Page.Display.Support"),
+        [&] {
+            UI::Panels::SettingsSection(Translate("Settings.Appearance.CandidatePreview"), "##CandidatePreviewCard", [&] {
+                DrawCandidatePreview(settings.appearance.verticalCandidateList);
+            });
 
-        UI::Panels::SectionHeader(Translate("Settings.Appearance.CandidatePreview"));
-        if (UI::Panels::BeginSettingsCard("##CandidatePreviewCard"))
-        {
-            DrawCandidatePreview(settings.appearance.verticalCandidateList);
-        }
-        UI::Panels::EndSettingsCard();
+            UI::Panels::SettingsSection(Translate("Settings.Appearance.CandidateWindow"), "##CandidateWindowCard", [&] {
+                (void)UI::Panels::SettingsToggleRow(
+                    "##VerticalCandidates", Translate("Settings.Appearance.VerticalCandidateList"), {}, settings.appearance.verticalCandidateList
+                );
+                (void)UI::Panels::SettingsToggleRow(
+                    "##LanguageBar", Translate("Settings.Appearance.AutoToggleLanguageBar"), {}, settings.appearance.autoToggleLanguageBar
+                );
+            });
 
-        UI::Panels::SectionHeader(Translate("Settings.Appearance.CandidateWindow"));
-        if (UI::Panels::BeginSettingsCard("##CandidateWindowCard"))
-        {
-            (void)UI::Panels::SettingsToggleRow(
-                "##VerticalCandidates", Translate("Settings.Appearance.VerticalCandidateList"), {}, settings.appearance.verticalCandidateList
-            );
-            (void)UI::Panels::SettingsToggleRow(
-                "##LanguageBar", Translate("Settings.Appearance.AutoToggleLanguageBar"), {}, settings.appearance.autoToggleLanguageBar
-            );
-        }
-        UI::Panels::EndSettingsCard();
+            UI::Panels::SettingsSection(Translate("Settings.Behaviour.ImePos.Policy"), "##PolicyCard", [&] {
+                DrawWindowPositionPolicy(settings);
+            });
 
-        UI::Panels::SectionHeader(Translate("Settings.Behaviour.ImePos.Policy"));
-        if (UI::Panels::BeginSettingsCard("##PolicyCard"))
-        {
-            DrawWindowPositionPolicy(settings);
-        }
-        UI::Panels::EndSettingsCard();
+            UI::Panels::SettingsSection(Translate("Settings.Appearance.General"), "##GeneralCard", [&] {
+                DrawZoomCombo(settings);
+                DrawLanguagesCombo(settings.appearance);
+            });
 
-        UI::Panels::SectionHeader(Translate("Settings.Appearance.General"));
-        if (UI::Panels::BeginSettingsCard("##GeneralCard"))
-        {
-            DrawZoomCombo(settings);
-            DrawLanguagesCombo(settings.appearance);
-        }
-        UI::Panels::EndSettingsCard();
-
-        UI::Panels::SectionHeader(Translate("Settings.Appearance.Theme"));
-        if (UI::Panels::BeginSettingsCard("##ThemeCard"))
-        {
-            DrawThemeModeRow(settings);
-            DrawThemeRow(settings);
-        }
-        UI::Panels::EndSettingsCard();
-    }
-    ImGui::EndChild();
+            UI::Panels::SettingsSection(Translate("Settings.Appearance.Theme"), "##ThemeCard", [&] {
+                DrawThemeModeRow(settings);
+                DrawThemeRow(settings);
+            });
+        });
 }
 
 void AppearancePanel::DrawCandidatePreview(const bool vertical) const
