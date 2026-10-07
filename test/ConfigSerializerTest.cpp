@@ -77,6 +77,7 @@ TEST(ConfigSerializerTest, should_save_load_configuration)
     EXPECT_EQ(loadedConfig.input.enableUnicodePaste, toSaveConfiguration.input.enableUnicodePaste);
     EXPECT_EQ(loadedConfig.input.keepImeOpen, toSaveConfiguration.input.keepImeOpen);
     EXPECT_EQ(loadedConfig.input.posUpdatePolicy, toSaveConfiguration.input.posUpdatePolicy);
+    EXPECT_EQ(loadedConfig.input.lastNativeConversion, toSaveConfiguration.input.lastNativeConversion);
 
     // file already writted. remove it after test.
     std::filesystem::remove(filePath);

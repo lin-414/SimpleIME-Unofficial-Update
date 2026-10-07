@@ -350,6 +350,7 @@ auto ConvertConfigurationToSettings(const Configuration &config) -> Settings
     settings.input.meridianSupport          = config.input.meridianSupport;
     settings.input.prismaAvoidance          = config.input.prismaAvoidance;
     settings.input.skseMenuFrameworkSupport = config.input.skseMenuFrameworkSupport;
+    settings.input.lastNativeConversion     = config.input.lastNativeConversion;
 
     if (const auto posPolicyOpt = Converter<Settings::WindowPosUpdatePolicy>::fromString(config.input.posUpdatePolicy); posPolicyOpt.has_value())
     {
@@ -424,6 +425,7 @@ auto ConvertSettingsToConfiguration(const Settings &settings) -> Configuration
     configuration.input.meridianSupport          = settings.input.meridianSupport;
     configuration.input.prismaAvoidance          = settings.input.prismaAvoidance;
     configuration.input.skseMenuFrameworkSupport = settings.input.skseMenuFrameworkSupport;
+    configuration.input.lastNativeConversion     = settings.input.lastNativeConversion;
 
     if (const auto posPolicyOpt = Converter<Settings::WindowPosUpdatePolicy>::toString(settings.input.posUpdatePolicy); posPolicyOpt.has_value())
     {

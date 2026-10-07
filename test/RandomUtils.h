@@ -65,6 +65,7 @@ inline auto GetRandomConfiguation() -> Ime::Configuration
     configuration.input.enableUnicodePaste = random.NextBool();
     configuration.input.keepImeOpen        = random.NextBool();
     configuration.input.posUpdatePolicy    = random.NextString(10);
+    configuration.input.lastNativeConversion = random.NextBool();
     return configuration;
 }
 

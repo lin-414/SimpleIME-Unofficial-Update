@@ -142,6 +142,12 @@ struct Settings
         bool                  meridianSupport;
         bool                  prismaAvoidance;
         bool                  skseMenuFrameworkSupport;
+        /// Runtime cache: the last in-game observed native (中) conversion
+        /// state. Stamped from State on every config save (game/render thread,
+        /// aligned bool — same no-tear tolerance doctrine as above) and seeded
+        /// into State at startup so the next session's FIRST text-field entry
+        /// shows the remembered mode instead of a guess.
+        bool                  lastNativeConversion = true;
     } input;
 };
 
@@ -164,7 +170,7 @@ inline auto GetDefaultSettings() -> Settings
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .lastNativeConversion = true}
     };
 }
 

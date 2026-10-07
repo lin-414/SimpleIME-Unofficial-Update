@@ -58,12 +58,13 @@ constexpr auto KEY_VERTICAL_CANDIDATE_LIST  = "vertical_candidate_list";
 constexpr auto KEY_AUTO_TOGGLE_LANGUAGE_BAR = "auto_toggle_language_bar";
 
 // Input keys
-constexpr auto KEY_ENABLE_UNICODE_PASTE = "enable_unicode_paste";
-constexpr auto KEY_KEEP_IME_OPEN        = "keep_ime_open";
-constexpr auto KEY_POS_UPDATE_POLICY    = "pos_update_policy";
-constexpr auto KEY_MERIDIAN_SUPPORT     = "meridian_support";
-constexpr auto KEY_PRISMA_AVOIDANCE     = "prisma_avoidance";
-constexpr auto KEY_SKSEMF_SUPPORT       = "skse_menu_framework_support";
+constexpr auto KEY_ENABLE_UNICODE_PASTE   = "enable_unicode_paste";
+constexpr auto KEY_KEEP_IME_OPEN          = "keep_ime_open";
+constexpr auto KEY_POS_UPDATE_POLICY      = "pos_update_policy";
+constexpr auto KEY_MERIDIAN_SUPPORT       = "meridian_support";
+constexpr auto KEY_PRISMA_AVOIDANCE       = "prisma_avoidance";
+constexpr auto KEY_SKSEMF_SUPPORT         = "skse_menu_framework_support";
+constexpr auto KEY_LAST_NATIVE_CONVERSION = "last_native_conversion";
 
 //! @brief Format the configuration to a TOML string with comments for better readability.
 //! May throw `toml::exception` if the configuration contains unsupported types or values.
@@ -117,6 +118,12 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         " 启用后，SKSEMF 界面(ImGui 实现，如使用该框架的设置菜单)的文本框聚焦时自动激活 IME，",
         " 并将上屏中文直接注入输入框。未安装 SKSEMenuFramework.dll(或版本低于 3.7)时此选项无效果。",
     };
+    const Comments lastNativeConversionComment = {
+        " 运行时缓存，非用户配置：游戏内最后观察到的 中/英 输入状态(true=中文)",
+        " 由 Mod 在每次保存配置时自动更新，用于下次启动游戏时语言栏的初始显示。",
+        " 微信等输入法不通过系统接口公布中/英状态，没有这个缓存时首次进入输入框无法预判。",
+        " 请勿手动修改。",
+    };
     const Comments fontPathListComment = {
         " [可选] 用于 SimpleIME 的字体文件路径列表，支持 ttf 和 otf 格式，Mod 会按照列表顺序加载字体并合并到一起",
         " 如果列表为空或所有字体文件都无效，将使用系统默认字体",
@@ -162,6 +169,7 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         {KEY_MERIDIAN_SUPPORT,     {configuration.input.meridianSupport, meridianSupportComment}},
         {KEY_PRISMA_AVOIDANCE,     {configuration.input.prismaAvoidance, prismaAvoidanceComment}},
         {KEY_SKSEMF_SUPPORT,       {configuration.input.skseMenuFrameworkSupport, skseMenuFrameworkSupportComment}},
+        {KEY_LAST_NATIVE_CONVERSION, {configuration.input.lastNativeConversion, lastNativeConversionComment}},
     };
     const toml::value tomlTable = {
         toml::table{
@@ -243,6 +251,7 @@ auto ParseConfigurationFromToml(toml::value &rawToml) -> Configuration
         findAndSet(input, KEY_MERIDIAN_SUPPORT, config.input.meridianSupport);
         findAndSet(input, KEY_PRISMA_AVOIDANCE, config.input.prismaAvoidance);
         findAndSet(input, KEY_SKSEMF_SUPPORT, config.input.skseMenuFrameworkSupport);
+        findAndSet(input, KEY_LAST_NATIVE_CONVERSION, config.input.lastNativeConversion);
     }
     return config;
 }

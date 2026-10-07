@@ -436,9 +436,48 @@ auto Ime::InputMethodManager::OnActivated(
     if ((dwFlags & TF_IPSINK_FLAG_ACTIVE) != 0)
     {
         auto &state = State::GetInstance();
-        state.ClearConversionMode();
+        // Do NOT wipe the conversion mode here unconditionally: IMEs that
+        // publish no conversion compartment (WeChat IME — verified: thread,
+        // context and global compartments all stay VT_EMPTY for whole
+        // sessions) leave the refresher below with nothing to read, so the
+        // wipe was the last writer and the bar fell back to 英 on EVERY
+        // disable/enable cycle even though the restored TIP was still in
+        // Chinese mode. Keep the last observed mode and let the real sources
+        // overwrite it: the refresher when a compartment carries a value,
+        // behavioral inference within one keystroke otherwise (composition
+        // start asserts NATIVE, a raw letter retracts it).
+        //
+        // The one deliberate wipe: a manual switch to a Chinese keyboard
+        // LAYOUT (中文-美式键盘, a KEYBOARD-type profile with a Chinese
+        // langid). No TIP mode exists there and the bar renders the 中/英
+        // label for Chinese langids, so a remembered NATIVE would mislabel
+        // it. The disable path's 美式键盘 (langid 0x409) renders no label
+        // and must NOT wipe — the memory it would clear is exactly what the
+        // next enable's restore needs.
+        if (dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR && PRIMARYLANGID(langid) == LANG_CHINESE)
+        {
+            state.ClearConversionMode();
+        }
 
         UpdateConversionAndKeyboard(state, dwProfileType);
+
+        // First-entry prior: with no observation this session, a Chinese TIP
+        // is overwhelmingly in Chinese mode — show 中 instead of the
+        // ALPHANUMERIC startup default. A wrong guess self-corrects on the
+        // first keystroke via behavioral inference; the 英 default was wrong
+        // for every Chinese user on every first entry. Any real observation
+        // (compartment write, Shift toggle, inference) marks the mode as
+        // observed through the State mutators, so this seed only ever fires
+        // for a genuinely unknown mode. Normal first entries never reach it:
+        // ImeApp seeds the mode from the persisted last-native-conversion
+        // cache at startup, which marks it observed. What remains is the
+        // manual 中文-美式键盘 bounce (its wipe above resets the observed
+        // flag) — 中 is still the best guess for the TIP the user returns to.
+        if (dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR && PRIMARYLANGID(langid) == LANG_CHINESE && !state.HasObservedConversionMode())
+        {
+            state.AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+            logger::info("No conversion-mode observation yet; seeding 中 for the Chinese TIP");
+        }
 
         m_activatedProfile = GetProfileCachedIndex(m_langProfiles, guidProfile, hkl);
         // Same semantics as UpdateActiveProfile: any known profile counts.

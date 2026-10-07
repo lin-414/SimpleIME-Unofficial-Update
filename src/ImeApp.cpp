@@ -252,6 +252,23 @@ ImeApp::ImeApp()
 {
     m_settings = SettingsManager::Load();
 
+    // Seed the conversion-mode (中/英) prior from the previous session's last
+    // in-game observation (persisted as input.last_native_conversion). This
+    // marks the mode as observed, so the activation path's "unknown mode ⇒
+    // assume 中" seed never fires on top of it — the remembered value is the
+    // better first-entry prior. A config without the key (fresh install or
+    // pre-existing file) loads the default true, i.e. the same 中 guess the
+    // activation seed would have made.
+    auto &conversionState = Core::State::GetInstance();
+    if (m_settings.input.lastNativeConversion)
+    {
+        conversionState.AddConversionModeFlag(Core::State::ConversionMode::Flags::NATIVE);
+    }
+    else
+    {
+        conversionState.ClearConversionModeFlag(Core::State::ConversionMode::Flags::NATIVE);
+    }
+
     SksePlugin::InitializeLogging({.level = m_settings.logging.level, .flushLevel = m_settings.logging.flushLevel});
 }
 
@@ -554,6 +571,17 @@ void ImeApp::Shutdown()
 
 void ImeApp::SaveSettings()
 {
+    // Stamp the last in-game observed 中/英 state into the runtime cache
+    // before the write. Only when this session actually observed a mode: the
+    // boot-time WM_NCACTIVATE churn can trigger a save before any observation,
+    // and stamping the untouched default over the loaded value would erase the
+    // previous session's prior. (After the startup seed the mode counts as
+    // observed and the stamp writes the seeded value back unchanged.)
+    auto &conversionState = Core::State::GetInstance();
+    if (conversionState.HasObservedConversionMode())
+    {
+        m_settings.input.lastNativeConversion = conversionState.GetConversionMode().IsNative();
+    }
     SettingsManager::Save(m_settings);
 }
 

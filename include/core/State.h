@@ -153,18 +153,43 @@ public:
     /// reads through the const accessor below. Handing out a mutable reference
     /// to this non-synchronized struct made cross-thread read-modify races
     /// possible, so mutation goes through these named methods instead.
-    constexpr auto SetConversionMode(ConversionMode::UnderlyingType flags) -> void { m_conversionMode.Set(flags); }
+    /// Every mutation through the setters below marks the mode as OBSERVED:
+    /// ALPHANUMERIC afterwards means "the TIP is genuinely in English mode",
+    /// not "nobody told us yet" — the activation path relies on that to keep
+    /// remembered modes and to seed only genuinely-unknown first entries.
+    constexpr auto SetConversionMode(ConversionMode::UnderlyingType flags) -> void
+    {
+        m_conversionMode.Set(flags);
+        m_conversionModeObserved = true;
+    }
 
-    constexpr auto ClearConversionMode() -> void { m_conversionMode.Clear(); }
+    constexpr auto ClearConversionMode() -> void
+    {
+        m_conversionMode.Clear();
+        m_conversionModeObserved = false; // a wipe returns to "unknown"
+    }
 
     /// Behavioral / open-close-driven mode inference: assert or retract a single
     /// conversion bit without touching the rest. IMEs that publish no
     /// conversion compartment (WeChat IME) are still tracked through these.
-    constexpr auto AddConversionModeFlag(ConversionMode::Flags flag) -> void { m_conversionMode.Add(flag); }
+    constexpr auto AddConversionModeFlag(ConversionMode::Flags flag) -> void
+    {
+        m_conversionMode.Add(flag);
+        m_conversionModeObserved = true;
+    }
 
-    constexpr auto ClearConversionModeFlag(ConversionMode::Flags flag) -> void { m_conversionMode.Clear(flag); }
+    constexpr auto ClearConversionModeFlag(ConversionMode::Flags flag) -> void
+    {
+        m_conversionMode.Clear(flag);
+        m_conversionModeObserved = true;
+    }
 
     [[nodiscard]] constexpr auto GetConversionMode() const -> const ConversionMode & { return m_conversionMode; }
+
+    /// True once anything real (a compartment write, behavioral inference, a
+    /// Shift toggle, an explicit mode set) touched the conversion mode this
+    /// session. False only for the untouched startup default.
+    [[nodiscard]] constexpr auto HasObservedConversionMode() const -> bool { return m_conversionModeObserved; }
 
     [[nodiscard]] constexpr auto TsfFocus() const -> bool { return Has(TEXT_SERVICE_FOCUS); }
 
@@ -187,5 +212,7 @@ private:
     //! Missing thread safety. But it is not a big problem since the conversion mode is only updated in TextService thread,
     //! and read in UI thread. The worst case is UI thread get a stale conversion mode and update in next composition.
     ConversionMode              m_conversionMode;
+    /// Same single-writer discipline as m_conversionMode (see the mutators above).
+    bool                        m_conversionModeObserved{false};
 };
 } // namespace Ime::Core

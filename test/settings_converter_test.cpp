@@ -169,6 +169,7 @@ TEST(ConfigurationToSettingsTest, should_set_base_type_member_value_from_configu
     EXPECT_EQ(settings.input.keepImeOpen, configuration.input.keepImeOpen);
     EXPECT_EQ(settings.input.meridianSupport, configuration.input.meridianSupport);
     EXPECT_EQ(settings.input.prismaAvoidance, configuration.input.prismaAvoidance);
+    EXPECT_EQ(settings.input.lastNativeConversion, configuration.input.lastNativeConversion);
 }
 
 TEST(ConfigurationToSettingsTest, should_convert_default_configuration_to_default_settings)
@@ -212,6 +213,10 @@ TEST(ConfigurationToSettingsTest, should_convert_default_configuration_to_defaul
     EXPECT_EQ(settings.input.meridianSupport, true);
     EXPECT_EQ(settings.input.prismaAvoidance, defaultSettings.input.prismaAvoidance);
     EXPECT_EQ(settings.input.prismaAvoidance, true);
+    // The runtime cache must default to 中: with no persisted observation
+    // (fresh install) that is the same guess the activation path makes.
+    EXPECT_EQ(settings.input.lastNativeConversion, defaultSettings.input.lastNativeConversion);
+    EXPECT_EQ(settings.input.lastNativeConversion, true);
 }
 
 TEST(ConfigurationToSettingsTest, should_convert_theme_style_string_to_variant)

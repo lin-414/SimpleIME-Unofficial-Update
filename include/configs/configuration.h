@@ -55,6 +55,12 @@ struct Configuration
         bool        prismaAvoidance;
         /// IME input support for SKSE Menu Framework (ImGui) text fields.
         bool        skseMenuFrameworkSupport;
+        /// Runtime cache, NOT a preference: the last 中/英 (native) state observed
+        /// in-game, stamped by the mod on every config save. Seeds the next
+        /// session's first text-field entry — IMEs like WeChat publish no
+        /// conversion compartment, so without this the first entry has no
+        /// information at all to display.
+        bool        lastNativeConversion;
     };
 
     std::string shortcut;
@@ -95,7 +101,7 @@ constexpr auto GetDefaultConfiguration() -> Configuration
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .lastNativeConversion = true}
     };
 }
 
