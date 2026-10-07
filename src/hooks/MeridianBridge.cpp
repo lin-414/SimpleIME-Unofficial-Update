@@ -547,15 +547,23 @@ void RequestImeSync()
     }
 }
 
+/// Arm the capture probe and the theme re-push for a target about to
+/// (re)start a session. Deliberately does NOT touch the DOM panel caches —
+/// BeginSession adds that on top; RequestCapture must not churn a live panel.
+void ArmCapture()
+{
+    s_captureReady          = false;
+    s_initialCapturePending = true;
+    s_themeRefreshPending   = true;
+}
+
 /// Reset the per-session pieces a new focus target starts from: the capture
 /// probe is re-armed, the DOM panel anchor dropped and the theme mirror is
 /// pushed again once the snapshot is in (the new session may live in a fresh
 /// document).
 void BeginSession()
 {
-    s_captureReady          = false;
-    s_initialCapturePending = true;
-    s_themeRefreshPending   = true;
+    ArmCapture();
     std::lock_guard lock(s_uiMutex);
     s_themeCssPushed.clear();
 }
@@ -1229,9 +1237,7 @@ bool ShouldRoute()
 
 void RequestCapture()
 {
-    s_captureReady          = false;
-    s_initialCapturePending = true;
-    s_themeRefreshPending   = true;
+    ArmCapture();
 }
 
 void RequestUiThemeRefresh()
