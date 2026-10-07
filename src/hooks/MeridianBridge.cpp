@@ -28,6 +28,7 @@
 #include "hooks/MeridianBridgeLogic.h"
 #include "hooks/NirnLabApi.h"
 #include "hooks/NirnLabBridge.h"
+#include "hooks/ScopeFlag.h"
 #include "ime/ImeController.h"
 #include "log.h"
 #include "MeridianUI/ViewAPI.h"
@@ -1326,14 +1327,11 @@ void Tick()
     // second caller skips and the running one does that frame's work. RAII
     // reset so an exception can never wedge the flag and permanently kill the
     // tick.
-    if (s_tickInFlight.exchange(true, std::memory_order_acq_rel))
+    const ScopeFlag tickInFlight(s_tickInFlight);
+    if (!tickInFlight.owned())
     {
         return;
     }
-    struct TickInFlight
-    {
-        ~TickInFlight() { s_tickInFlight.store(false, std::memory_order_release); }
-    } tickInFlight;
     const Target target = ResolveTarget();
     if (!target.Valid())
     {

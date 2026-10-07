@@ -34,6 +34,7 @@
 #include "core/State.h"
 #include "hook.h"
 #include "hooks/SkseMenuFrameworkBridgeLogic.h"
+#include "hooks/ScopeFlag.h"
 #include "log.h"
 #include "path_utils.h"
 
@@ -859,7 +860,8 @@ bool TryResolve()
     {
         return true;
     }
-    if (s_resolveInFlight.exchange(true, std::memory_order_acq_rel))
+    const ScopeFlag resolveInFlight(s_resolveInFlight);
+    if (!resolveInFlight.owned())
     {
         return false;
     }
@@ -869,7 +871,6 @@ bool TryResolve()
                     (now - s_lastResolveAttemptMs.load(std::memory_order_relaxed)) >= RESOLVE_RETRY_MS;
     if (!eligible)
     {
-        s_resolveInFlight.store(false, std::memory_order_release);
         return false;
     }
     s_lastResolveAttemptMs.store(now, std::memory_order_relaxed);
@@ -878,7 +879,6 @@ bool TryResolve()
     {
         s_state = SupportState::NotDetected;
         logger::info("SKSEMenuFramework.dll not loaded (yet); SKSE Menu Framework input support stays off");
-        s_resolveInFlight.store(false, std::memory_order_release);
         return false;
     }
 
@@ -887,7 +887,6 @@ bool TryResolve()
     {
         s_state = SupportState::Failed;
         logger::warn("SKSE Menu Framework {:.2f} is too old; {:.2f}+ required for IME input support", version, MIN_FRAMEWORK_VERSION);
-        s_resolveInFlight.store(false, std::memory_order_release);
         return false;
     }
 
@@ -939,7 +938,6 @@ bool TryResolve()
     s_apiReady.store(true, std::memory_order_release);
     s_state = SupportState::Active;
     logger::info("SKSE Menu Framework bridge ready (framework {:.2f}, input filter installed)", version);
-    s_resolveInFlight.store(false, std::memory_order_release);
     return true;
 }
 } // namespace

@@ -33,6 +33,7 @@
 #include "hooks/MeridianBridge.h"
 #include "hooks/MeridianBridgeLogic.h"
 #include "hooks/NirnLabApi.h"
+#include "hooks/ScopeFlag.h"
 #include "log.h"
 
 #include "SKSE/SKSE.h"
@@ -218,13 +219,16 @@ void PinBrowser(Browser *browser)
         name = recordIt->second.name;
     }
     Browser *pinned = nullptr;
-    s_internalCall  = true;
     // Get-path only in practice (the mod holds references while focusing),
     // and the get-path ignores the url argument entirely.
-    const auto handle = s_api != nullptr
-                            ? s_api->AddOrGetBrowser(name.c_str(), nullptr, 0, nullptr, pinned)
-                            : IUIPlatformAPI::InvalidBrowserRefHandle;
-    s_internalCall = false;
+    auto handle = IUIPlatformAPI::InvalidBrowserRefHandle;
+    {
+        const ScopeFlag internalCall(s_internalCall);
+        if (s_api != nullptr)
+        {
+            handle = s_api->AddOrGetBrowser(name.c_str(), nullptr, 0, nullptr, pinned);
+        }
+    }
     if (handle == IUIPlatformAPI::InvalidBrowserRefHandle || pinned != browser)
     {
         logger::warn("UIPlatform browser pin failed for {:x}", reinterpret_cast<std::uintptr_t>(browser));
@@ -238,9 +242,8 @@ void PinBrowser(Browser *browser)
     else
     {
         // Raced with the release hook: give the reference straight back.
-        s_internalCall = true;
+        const ScopeFlag internalCall(s_internalCall);
         s_api->ReleaseBrowserHandle(handle);
-        s_internalCall = false;
     }
 }
 
@@ -257,12 +260,13 @@ void UnpinBrowser(Browser *browser)
         pin                        = recordIt->second.pinHandle;
         recordIt->second.pinHandle = 0;
     }
-    s_internalCall = true;
-    if (s_api != nullptr)
     {
-        s_api->ReleaseBrowserHandle(pin);
+        const ScopeFlag internalCall(s_internalCall);
+        if (s_api != nullptr)
+        {
+            s_api->ReleaseBrowserHandle(pin);
+        }
     }
-    s_internalCall = false;
     // If that was the very last reference the host destroyed the browser;
     // nobody may touch the pointer afterwards — s_focusedBrowser is already
     // cleared by the time this runs (focus end is processed first). Only the
