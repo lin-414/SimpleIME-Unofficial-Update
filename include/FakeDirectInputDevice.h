@@ -112,7 +112,11 @@ public:
         return m_realDevice->SetCooperativeLevel(hwnd, m_realCooperativeLevelFlags);
     }
 
-    auto TryRestoreCooperativeLevel(HWND hWnd) -> HRESULT
+    /// Shared skeleton of the two cooperative-level hops: unacquire, re-apply
+    /// one of the two flag sets (falling back to the matching built-in when
+    /// that set was never captured), re-acquire. `restore` picks the game's
+    /// original exclusive flags; !restore picks our relaxed ones.
+    auto TrySetCooperativeLevel(const HWND hWnd, const bool restore) -> HRESULT
     {
         HRESULT hr = E_FAIL;
         // Do not require hWnd to strictly equal m_hWndCooperative:
@@ -122,8 +126,9 @@ public:
         {
             if (hr = Unacquire(); SUCCEEDED(hr))
             {
-                const auto flags = (m_realCooperativeLevelFlags != 0) ? m_realCooperativeLevelFlags : DISCL_EXCLUSIVE | DISCL_FOREGROUND | DISCL_NOWINKEY;
-                logger::debug("Restore CooperativeLevel {:#x}", flags);
+                const auto flags = restore ? ((m_realCooperativeLevelFlags != 0) ? m_realCooperativeLevelFlags : DISCL_EXCLUSIVE | DISCL_FOREGROUND | DISCL_NOWINKEY)
+                                           : ((m_cooperativeLevelFlags != 0) ? m_cooperativeLevelFlags : DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
+                logger::debug("{} CooperativeLevel {:#x}", restore ? "Restore" : "Unlock", flags);
                 hr = m_realDevice->SetCooperativeLevel(hWnd, flags);
             }
             Acquire();
@@ -131,21 +136,14 @@ public:
         return hr;
     }
 
+    auto TryRestoreCooperativeLevel(HWND hWnd) -> HRESULT
+    {
+        return TrySetCooperativeLevel(hWnd, /*restore=*/true);
+    }
+
     auto TryUnlockCooperativeLevel(HWND hWnd) -> HRESULT
     {
-        HRESULT hr = E_FAIL;
-        // See TryRestoreCooperativeLevel: tolerate a re-created game window.
-        if (hWnd != nullptr)
-        {
-            if (hr = Unacquire(); SUCCEEDED(hr))
-            {
-                const auto flags = (m_cooperativeLevelFlags != 0) ? m_cooperativeLevelFlags : DISCL_NONEXCLUSIVE | DISCL_BACKGROUND;
-                logger::debug("Unlock CooperativeLevel {:#x}", flags);
-                hr = m_realDevice->SetCooperativeLevel(hWnd, flags);
-            }
-            Acquire();
-        }
-        return hr;
+        return TrySetCooperativeLevel(hWnd, /*restore=*/false);
     }
 
     STDMETHOD(GetObjectInfo)(THIS_ LPDIDEVICEOBJECTINSTANCEA pdidoi, DWORD dwObj, DWORD dwHow)
