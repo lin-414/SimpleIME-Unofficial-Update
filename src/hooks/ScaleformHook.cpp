@@ -34,7 +34,14 @@ public:
               ptr, true
           )
     {
-        logger::debug("Installed {}: {}", __func__, ToString());
+        if (GetAddress() != 0)
+        {
+            logger::debug("Installed {}: {}", __func__, ToString());
+        }
+        else
+        {
+            logger::error("Failed to install {}: resolved address is 0", __func__);
+        }
     }
 
     // NOLINTEND(*-magic-numbers)
@@ -46,7 +53,10 @@ public:
     // NOLINTBEGIN(*-magic-numbers)
     explicit Scaleform_AllowTextInput(func_type *ptr) : FunctionHook(REL::RelocationID(67252, 68552), ptr)
     {
-        logger::debug("Installed {}: {}", __func__, ToString());
+        if (Detoured())
+        {
+            logger::debug("Installed {}: {}", __func__, ToString());
+        }
     }
 
     // NOLINTEND(*-magic-numbers)

@@ -49,7 +49,11 @@ auto DetourUtil::DetourAttach(PVOID *original, PVOID hook) -> bool
                 errorMsg = "unexpected error when detour.";
                 break;
         }
-        logger::error("Failed detour: {}", errorMsg.data());
+        logger::error(
+            "Failed detour attach (target {:#x}, hook {:#x}): {}",
+            reinterpret_cast<std::uintptr_t>(*original),
+            reinterpret_cast<std::uintptr_t>(hook),
+            errorMsg.data());
     }
 
     return error == NO_ERROR;
@@ -93,7 +97,11 @@ auto DetourUtil::DetourDetach(void **original, void *hook) -> bool
                 errorMsg = "unexpected error when detour.";
                 break;
         }
-        logger::error("Failed detour: {}", errorMsg.data());
+        logger::error(
+            "Failed detour detach (target {:#x}, hook {:#x}): {}",
+            reinterpret_cast<std::uintptr_t>(*original),
+            reinterpret_cast<std::uintptr_t>(hook),
+            errorMsg.data());
     }
 
     return error == NO_ERROR;

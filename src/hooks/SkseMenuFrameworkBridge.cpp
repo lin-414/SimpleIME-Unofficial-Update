@@ -959,6 +959,10 @@ bool TryResolve()
     if (!s_hookInstalled.exchange(true, std::memory_order_acq_rel))
     {
         s_inputHook = std::make_unique<DispatchInputEventHookData>(&DispatchInputEventThunk);
+        if (s_inputHook->GetAddress() == 0)
+        {
+            logger::error("SKSE Menu Framework input filter resolved to address 0; the ASCII filter is inert");
+        }
     }
 
     s_apiReady.store(true, std::memory_order_release);

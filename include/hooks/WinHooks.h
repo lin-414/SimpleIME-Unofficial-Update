@@ -13,7 +13,10 @@ class DirectInput8CreateHook : public FunctionHook<HRESULT(HINSTANCE, DWORD, REF
 public:
     explicit DirectInput8CreateHook(void *&realFuncPtr, func_type *ptr) : FunctionHook(realFuncPtr, ptr)
     {
-        logger::debug("Installed {}: {}", __func__, ToString());
+        if (Detoured())
+        {
+            logger::debug("Installed {}: {}", __func__, ToString());
+        }
     }
 };
 

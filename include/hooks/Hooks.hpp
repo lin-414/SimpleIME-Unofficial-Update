@@ -42,6 +42,12 @@ protected:
     using func_type = Return(Args...);
 
 public:
+    // One object = one live detour; a copy would detach the same target twice.
+    FunctionHook(const FunctionHook &)            = delete;
+    FunctionHook(FunctionHook &&)                 = delete;
+    FunctionHook &operator=(const FunctionHook &) = delete;
+    FunctionHook &operator=(FunctionHook &&)      = delete;
+
     explicit FunctionHook(REL::RelocationID id, Return (*funcPtr)(Args...))
     {
         m_address         = id.address();
@@ -51,6 +57,10 @@ public:
         if (DetourUtil::DetourAttach(&m_originalFuncPtr, m_hook))
         {
             detoured = true;
+        }
+        else
+        {
+            logger::error("Detour attach failed for target {:#x}", m_address);
         }
     }
 
@@ -63,6 +73,10 @@ public:
         if (DetourUtil::DetourAttach(&reinterpret_cast<PVOID &>(m_originalFuncPtr), m_hook))
         {
             detoured = true;
+        }
+        else
+        {
+            logger::error("Detour attach failed for target {:#x}", m_address);
         }
     }
 

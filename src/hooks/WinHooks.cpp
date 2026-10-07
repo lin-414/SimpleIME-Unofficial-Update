@@ -15,6 +15,10 @@ void WinHooks::Install()
         // Detour live inside the ctor; safe — see ScaleformHook::Install.
         DirectInput8Create = std::make_unique<DirectInput8CreateHook>(realFuncPtr, MyDirectInput8CreateHook);
     }
+    else
+    {
+        logger::error("DetourFindFunction failed: {}!DirectInput8Create — the DirectInput8 hook is not installed", MODULE_DINPUT8_STRING);
+    }
 }
 
 void WinHooks::Uninstall()

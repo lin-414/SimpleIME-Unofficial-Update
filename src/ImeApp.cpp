@@ -433,7 +433,15 @@ void ImeApp::OnD3DInit()
             g_realSwapChainPresent = reinterpret_cast<void **>(*reinterpret_cast<void **>(pSwapChain))[8];
             g_swapChainPresentHook = new Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)>(
                 g_realSwapChainPresent, &ImeApp::SwapChainPresentHook);
-            logger::info("Swapchain present hook installed (keeps the overlay above Prisma views)");
+            if (g_swapChainPresentHook->Detoured())
+            {
+                logger::info("Swapchain present hook installed (keeps the overlay above Prisma views)");
+            }
+            else
+            {
+                logger::error("Swapchain present hook attach failed at {:#x}; the overlay may hide under Prisma views",
+                              reinterpret_cast<std::uintptr_t>(g_realSwapChainPresent));
+            }
         }
     }
 
@@ -627,7 +635,14 @@ void ImeApp::InstallHooks()
         // Same single-threaded-install invariant as the D3DInit hook: the
         // detour goes live inside the ctor before hookData is assigned.
         g_PresentHook = std::make_unique<Hooks::D3DPresentHookData>(&ImeApp::PresentHook);
-        logger::debug("Installed D3D present hook (Meridian fallback frame driver)");
+        if (g_PresentHook->GetAddress() != 0)
+        {
+            logger::debug("Installed D3D present hook (Meridian fallback frame driver)");
+        }
+        else
+        {
+            logger::error("D3D present hook resolved to address 0; the Meridian fallback frame driver is inert");
+        }
     }
 }
 
