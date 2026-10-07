@@ -546,7 +546,7 @@ void DrawCompatibilityRow(
     const auto  row      = Panels::BeginSettingsRow(strId, title, supporting, trailing, m3Styles.GetPixels(M3Spec::dp<24>()), SupportingMeasure());
     if (row)
     {
-        Panels::RowTitle(row, title);
+        Panels::RowTitle(row);
         Panels::RowSupporting(row, supporting);
         Panels::RowTrailingText(row, caption, captionTone, Panels::SwitchReserve());
         Panels::RowTrailingSwitch(row, value);
@@ -950,7 +950,7 @@ void ToolWindow::DrawMenuAdvanced(Settings &settings)
                 Translate("Settings.Advanced.ConfigPath"), Translate("Settings.Advanced.ConfigDescription"), openW, linkH, SupportingMeasure());
             if (row)
             {
-                Panels::RowTitle(row, Translate("Settings.Advanced.ConfigPath"));
+                Panels::RowTitle(row);
                 Panels::RowSupporting(row, Translate("Settings.Advanced.ConfigDescription"));
                 ImGui::SetCursorScreenPos({row.trailingRight - openW, row.centerY - linkH * 0.5F});
                 if (Panels::TextLink("##OpenConfigDir", openLabel))
@@ -986,7 +986,7 @@ void ToolWindow::DrawLogPathRow()
 
     if (const auto row = Panels::BeginPlainSettingsRow(Translate("Settings.Advanced.LogFile"), {}, reserveW, linkH); row)
     {
-        Panels::RowTitle(row, Translate("Settings.Advanced.LogFile"));
+        Panels::RowTitle(row);
         ImGui::SetCursorScreenPos({row.trailingRight - reserveW, row.centerY - linkH * 0.5F});
         if (Panels::TextLink("##CopyLogPath", copied ? copiedLabel : copyLabel))
         {
@@ -1082,7 +1082,7 @@ void ToolWindow::DrawConfigStatusRow()
     );
     if (row)
     {
-        Panels::RowTitle(row, Translate("Settings.Advanced.ConfigStatus"));
+        Panels::RowTitle(row);
         if (!supporting.empty())
         {
             Panels::RowSupporting(row, supporting);
@@ -1115,7 +1115,7 @@ void ToolWindow::DrawDiagnosticsRow(const Settings &settings)
             Translate("Settings.Advanced.Diagnostics"), Translate("Settings.Advanced.DiagnosticsSupport"), reserveW, linkH, SupportingMeasure());
         row)
     {
-        Panels::RowTitle(row, Translate("Settings.Advanced.Diagnostics"));
+        Panels::RowTitle(row);
         Panels::RowSupporting(row, Translate("Settings.Advanced.DiagnosticsSupport"));
         ImGui::SetCursorScreenPos({row.trailingRight - reserveW, row.centerY - linkH * 0.5F});
         if (Panels::TextLink("##CopyDiagnostics", copied ? copiedLabel : copyLabel))
@@ -1195,7 +1195,7 @@ void ToolWindow::DrawLogLevelRow(Settings &settings)
     {
         return;
     }
-    Panels::RowTitle(row, Translate("Settings.Advanced.LogLevel"));
+    Panels::RowTitle(row);
     Panels::RowSupporting(row, Translate("Settings.Advanced.LogLevelSupport"));
 
     const bool open = Panels::BeginRowTrailingCombo(row, "##LogLevelCombo", preview);
@@ -1232,7 +1232,7 @@ void ToolWindow::DrawErrorDurationRow(Settings &settings)
     {
         return;
     }
-    Panels::RowTitle(row, Translate("Settings.Advanced.ErrorDuration"));
+    Panels::RowTitle(row);
     Panels::RowSupporting(row, Translate("Settings.Advanced.ErrorDurationSupport"));
 
     const bool open = Panels::BeginRowTrailingCombo(row, "##ErrorDurationCombo", preview);
@@ -1268,7 +1268,7 @@ void ToolWindow::DrawEnvironmentRows(const Settings &settings)
         }
         if (const auto row = Panels::BeginPlainSettingsRow(title, supporting, valueW, 0.0F, SupportingMeasure()); row)
         {
-            Panels::RowTitle(row, title);
+            Panels::RowTitle(row);
             Panels::RowSupporting(row, supporting);
             Panels::RowTrailingText(row, value, M3Spec::ColorRole::onSurfaceVariant);
             Panels::EndSettingsRow(row);

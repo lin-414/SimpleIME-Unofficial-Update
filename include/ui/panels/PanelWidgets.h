@@ -312,6 +312,7 @@ struct SettingsRowScope
     float   titleHeight   = 0;   ///< line boxes the title occupies (≥1); RowSupporting stacks below it
     float   trailingRight = 0;   ///< right edge for trailing controls
     float   centerY       = 0;   ///< vertical center of the row
+    std::string_view title;    ///< the title the row was opened with; RowTitle(row) reuses it
 
     explicit operator bool() const { return visible; }
 };
@@ -423,6 +424,7 @@ inline auto BeginSettingsRowEx(
     row.titleHeight   = geometry.titleHeight;
     row.trailingRight = row.bb.Max.x - padX;
     row.centerY       = row.bb.GetCenter().y;
+    row.title         = title;
 
     const ImGuiID id = interactive ? window->GetID(strId) : 0;
     ImGui::ItemSize(row.bb.GetSize());
@@ -590,6 +592,14 @@ inline void RowTitle(const SettingsRowScope &row, const std::string_view title, 
     {
         Detail::RoleText(title, Detail::ContentColor(Spec::ColorRole::onSurface), row.textWidth - offsetX);
     }
+}
+
+//! Renders the title the row was opened with (same view the row measured).
+//! Rows with a leading offset (swatches, dots) must still use the explicit
+//! overload — their measured title width differs from the scope's.
+inline void RowTitle(const SettingsRowScope &row, const float offsetX = 0.0F)
+{
+    RowTitle(row, row.title, offsetX);
 }
 
 //! Supporting copy under the title, BodySmall in the secondary tone, wrapped

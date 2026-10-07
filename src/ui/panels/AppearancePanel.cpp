@@ -505,7 +505,7 @@ void AppearancePanel::DrawZoomCombo(Settings &settings)
     {
         return;
     }
-    UI::Panels::RowTitle(row, Translate("Settings.Appearance.Zoom"));
+    UI::Panels::RowTitle(row);
 
     const bool        open    = UI::Panels::BeginRowTrailingCombo(row, "##ZoomCombo", preview);
     if (open)
@@ -746,7 +746,7 @@ void AppearancePanel::DrawThemeModeRow(Settings &settings)
         {
             return;
         }
-        UI::Panels::RowTitle(row, title);
+        UI::Panels::RowTitle(row);
         for (size_t i = 0; i < labels.size(); ++i)
         {
             ImGui::SetCursorScreenPos({row.contentX + flow.positions[i].x, row.contentY + titleLineH + titleGap + flow.positions[i].y});
@@ -761,7 +761,7 @@ void AppearancePanel::DrawThemeModeRow(Settings &settings)
         {
             return;
         }
-        UI::Panels::RowTitle(row, title);
+        UI::Panels::RowTitle(row);
         ImGui::SetCursorScreenPos({row.trailingRight - runW, row.centerY - rowH * 0.5F});
         DrawThemeModeSegment(labels[0], false, settings);
         ImGui::SameLine(0.0F, gap);
@@ -793,7 +793,7 @@ void AppearancePanel::DrawLanguagesCombo(Settings::Appearance &appearance) const
     {
         return;
     }
-    UI::Panels::RowTitle(row, Translate("Settings.Appearance.Languages"));
+    UI::Panels::RowTitle(row);
 
     const bool        open = UI::Panels::BeginRowTrailingCombo(row, "##LanguagesCombo", preview);
     bool              clicked = false;
