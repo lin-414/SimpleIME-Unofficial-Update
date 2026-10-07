@@ -1247,7 +1247,7 @@ bool ConsumeUiThemeRefreshRequested()
     return s_themeRefreshPending.exchange(false);
 }
 
-bool ConsumeUiThemeRefresh(const UiThemePalette &palette)
+void ConsumeUiThemeRefresh(const UiThemePalette &palette)
 {
     const auto rgba = [](const std::array<float, 4> &c) {
         return std::format("rgba({},{},{},{:.3f})", static_cast<int>(c[0] * 255.0F + 0.5F), static_cast<int>(c[1] * 255.0F + 0.5F),
@@ -1321,7 +1321,6 @@ bool ConsumeUiThemeRefresh(const UiThemePalette &palette)
            "border-radius:calc(8px*var(--simpleime-scale));}";
     std::lock_guard lock(s_uiMutex);
     s_themeCss = std::move(css);
-    return true;
 }
 
 bool OwnsCandidateUi()

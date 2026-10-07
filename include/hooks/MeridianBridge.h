@@ -112,5 +112,5 @@ void RequestUiThemeRefresh();
 /// ConsumeUiThemeRefresh.
 bool ConsumeUiThemeRefreshRequested();
 /// Render-thread only: store the snapshot for the bridge to push to the panel.
-bool ConsumeUiThemeRefresh(const UiThemePalette &palette);
+void ConsumeUiThemeRefresh(const UiThemePalette &palette);
 } // namespace Hooks::MeridianBridge
