@@ -33,6 +33,7 @@
 #include "RE/M/MenuCursor.h"
 #include "core/State.h"
 #include "hook.h"
+#include "hooks/BridgeGate.h"
 #include "hooks/SkseMenuFrameworkBridgeLogic.h"
 #include "hooks/ScopeFlag.h"
 #include "log.h"
@@ -964,10 +965,9 @@ void Install()
     installed = true;
 
     s_enabled = Ime::ImeApp::GetInstance().GetSettings().input.skseMenuFrameworkSupport;
-    if (!s_enabled.load())
+    if (!BridgeGate::ConfigOpen(s_enabled.load(), "SKSE Menu Framework input support"))
     {
         s_state = SupportState::Off;
-        logger::info("SKSE Menu Framework input support disabled by configuration");
         return;
     }
 
@@ -975,10 +975,10 @@ void Install()
     // the very same lease + injection dance, so both active at once would
     // double-inject every commit (same standoff semantics as
     // MeridianBridge::Install's rival-plugin check).
-    if (GetModuleHandleW(L"TMS_SIMEtoSKSEMF.dll") != nullptr)
+    if (!BridgeGate::ClearOfRival(L"TMS_SIMEtoSKSEMF.dll", "TMS_SIMEtoSKSEMF",
+                                  "SimpleIME's built-in SKSE Menu Framework input support"))
     {
         s_state = SupportState::Standoff;
-        logger::warn("TMS_SIMEtoSKSEMF detected; SimpleIME's built-in SKSE Menu Framework input support stays off to avoid double text injection");
         return;
     }
 

@@ -24,6 +24,7 @@
 #include "ImeApp.h"
 #include "ImeWnd.hpp"
 #include "core/State.h"
+#include "hooks/BridgeGate.h"
 #include "hooks/MeridianApi.h"
 #include "hooks/MeridianBridgeLogic.h"
 #include "hooks/NirnLabApi.h"
@@ -1111,10 +1112,9 @@ void Install()
         return;
     }
     s_enabled = Ime::ImeApp::GetInstance().GetSettings().input.meridianSupport;
-    if (!s_enabled.load())
+    if (!BridgeGate::ConfigOpen(s_enabled.load(), "Meridian support"))
     {
         s_state = SupportState::Off;
-        logger::info("Meridian support disabled by configuration");
         return;
     }
     // Mutual exclusion: another plugin may hook the same View/1 TryFocus slot
@@ -1122,10 +1122,10 @@ void Install()
     // would double-handle every focus change and every character. When that
     // DLL (checked below) is present, this backend stands down. The UIPlatform
     // backend is untouched, and Prisma avoidance is unaffected (read-only).
-    if (GetModuleHandleW(L"SkyrimTextBridge.dll") != nullptr)
+    if (!BridgeGate::ClearOfRival(L"SkyrimTextBridge.dll", "Skyrim-Text-Bridge",
+                                  "SimpleIME's Meridian View/1 input support"))
     {
         s_state = SupportState::Standoff;
-        logger::warn("Skyrim-Text-Bridge detected; SimpleIME's Meridian View/1 input support stays off to avoid double text injection");
         return;
     }
     const HMODULE module = GetModuleHandleW(L"MeridianUI.dll");

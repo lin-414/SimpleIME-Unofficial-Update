@@ -30,6 +30,7 @@
 #include "hooks/NirnLabBridge.h"
 
 #include "ImeApp.h"
+#include "hooks/BridgeGate.h"
 #include "hooks/MeridianBridge.h"
 #include "hooks/MeridianBridgeLogic.h"
 #include "hooks/NirnLabApi.h"
@@ -441,10 +442,10 @@ void InstallMessaging()
     {
         return;
     }
-    if (!Ime::ImeApp::GetInstance().GetSettings().input.meridianSupport)
+    if (!BridgeGate::ConfigOpen(Ime::ImeApp::GetInstance().GetSettings().input.meridianSupport,
+                                "UIPlatform focus backend"))
     {
         s_state = SupportState::Off;
-        logger::info("UIPlatform focus backend disabled by configuration");
         return;
     }
     // Without the module the dispatch would only produce a failed-dispatch

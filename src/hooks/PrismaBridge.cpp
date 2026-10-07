@@ -20,6 +20,7 @@
 
 #include "ImeApp.h"
 #include "core/State.h"
+#include "hooks/BridgeGate.h"
 #include "ime/ImeController.h"
 #include "log.h"
 #include "PrismaUI/PrismaUI_API.h"
@@ -114,10 +115,9 @@ void Install()
     s_hasActiveFocus = false;
     s_associationLatch = false;
     s_enabled = Ime::ImeApp::GetInstance().GetSettings().input.prismaAvoidance;
-    if (!s_enabled.load())
+    if (!BridgeGate::ConfigOpen(s_enabled.load(), "Prisma avoidance"))
     {
         s_state = SupportState::Off;
-        logger::info("Prisma avoidance disabled by configuration");
         return;
     }
     s_associationMessage = RegisterWindowMessageW(ASSOCIATION_MESSAGE_NAME);
