@@ -1,6 +1,6 @@
 [center][size=5][color=#00B176][b]SimpleIME-Unofficial-Update[/b][/color][/size]
 [size=3]Native IME support for Skyrim SE/AE · 为上古卷轴5 SE/AE 提供完整输入法支持[/size]
-[size=2]v3.0.0 · based on upstream v2.2.1 by cyfewlp · GPL-3.0-or-later[/size][/center]
+[size=2]v3.1.2-beta · based on upstream v2.2.1 by cyfewlp · GPL-3.0-or-later[/size][/center]
 
 [line]
 
@@ -8,11 +8,11 @@
 
 SimpleIME is a SKSE plugin that brings full IME (Input Method Editor) support to Skyrim SE/AE. It intercepts the OS input pipeline, activates your system input method automatically whenever a text field takes focus, and renders the composition string and candidate list natively inside the game with ImGui — so you can type Chinese, Japanese, Korean and other multi-byte languages in the console, in SkyUI search fields, and in every text box your mods expose.
 
-[b]This is the community-maintained continuation[/b] of [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136]cyfewlp's SimpleIME[/url], developed from upstream v2.2.1. On top of the original feature set it adds IME input for modern mod UI frameworks ([b]Meridian UI[/b], [b]SKSE Menu Framework[/b] — plus safe coexistence with [b]Prisma UI[/b]), fixes the stuck-IME and window-switching crash bugs, makes the UI sharp on high-DPI displays, and ships a redesigned settings window, language bar and default themes.
+[b]This is the community-maintained continuation[/b] of [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136]cyfewlp's SimpleIME[/url], developed from upstream v2.2.1. On top of the original feature set it adds IME input for modern mod UI frameworks ([b]Meridian UI[/b], [b]SKSE Menu Framework[/b] and [b]Prisma UI[/b]), fixes the stuck-IME and window-switching crash bugs, makes the UI sharp on high-DPI displays, and ships a redesigned settings window, language bar and default themes.
 
 SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入法（IME）支持。它接管系统输入管道，在文本框获得焦点时自动激活系统输入法，并用 ImGui 在游戏内原生渲染组字串与候选词窗口——让你能在控制台、SkyUI 搜索框以及一切模组文本框中输入中文、日文、韩文等多字节语言。
 
-[b]本页面是社区维护的非官方续更版[/b]，基于上游作者 cyfewlp 的 SimpleIME v2.2.1 继续开发：新增 Meridian UI、SKSE Menu Framework 两大模组 UI 框架的输入法支持（并对 Prisma UI 自动避让），修复了输入法卡死与切窗崩溃等顽疾，解决了高缩放屏 UI 发虚问题，并重做了设置界面、语言栏与默认主题。
+[b]本页面是社区维护的非官方续更版[/b]，基于上游作者 cyfewlp 的 SimpleIME v2.2.1 继续开发：新增 Meridian UI、SKSE Menu Framework、Prisma UI 三大模组 UI 框架的输入法支持，修复了输入法卡死与切窗崩溃等顽疾，解决了高缩放屏 UI 发虚问题，并重做了设置界面、语言栏与默认主题。
 
 [line]
 
@@ -44,8 +44,8 @@ SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入�
 [color=#CDC2DB]Meridian UI 输入（CEF）[/color] —— Meridian 界面（如 [b]Tailor[/b]）由 CEF 渲染，游戏字符事件无法到达。SimpleIME 在 Meridian 视图获得焦点时自动激活输入法，通过注入的 JS 桥提交文字并触发页面原生 input 事件；组字与候选以主题化浮层显示在页面内。
 [*][color=#CDC2DB]SKSE Menu Framework input (ImGui)[/color] — SKSEMF menus draw their text fields with the framework's own ImGui, which never raises the game's text-entry counter. SimpleIME resolves SKSEMF's public exports, acquires a text-entry lease through the native [i]AllowTextInput[/i] when a field wants text (language bar included), and injects committed characters on the framework's render callback. Plain English typing is untouched. Requires [b]SKSEMenuFramework.dll 3.7+[/b].
 [color=#CDC2DB]SKSE Menu Framework 输入（ImGui）[/color] —— SKSEMF 界面的文本框使用框架自带 ImGui 绘制，从不触发游戏的文本输入计数。SimpleIME 解析其公开导出，在字段需要输入时经原生 [i]AllowTextInput[/i] 取得文本输入租约（语言栏照常出现），并在框架渲染回调中注入上屏文字。纯英文输入完全不受影响。需要 [b]SKSEMenuFramework.dll 3.7+[/b]。
-[*][color=#CDC2DB]Prisma UI avoidance (Ultralight)[/color] — Prisma-based UIs (e.g. [b]Outfit Wheeler[/b]) handle IME input natively. SimpleIME stands down while a Prisma UI owns the keyboard, so the two never fight; if PrismaUI.dll is present but its API is unavailable, SimpleIME fails safe and stays out of the way entirely.
-[color=#CDC2DB]Prisma UI 避让（Ultralight）[/color] —— Prisma 界面（如 [b]Outfit Wheeler[/b]）自带输入法处理。SimpleIME 在其持有键盘焦点期间自动让位，两者互不抢占；若 PrismaUI.dll 存在但 API 不可用，SimpleIME 会完全退避以保证安全。
+[*][color=#CDC2DB]Prisma UI input (Ultralight)[/color] — Prisma-based UIs (e.g. [b]PMCM[/b], [b]HeroAvatarHUD[/b], [b]Outfit Wheeler[/b]) render their text fields through Ultralight, which neither stock activation nor Prisma's own helper alone can drive for a full IME session. SimpleIME polls Prisma's public [i]IVPrismaUI1[/i] focus state, engages the IME when a Prisma view gains focus, and commits typed text through the game window's message stream into the focused field; editing keys are forwarded while typing, and the candidate window is kept on top of Prisma's rendering, anchored to the clicked text field. If PrismaUI.dll is present but its API is unavailable, SimpleIME fails safe and leaves IME handling entirely to PrismaUI.
+[color=#CDC2DB]Prisma UI 输入（Ultralight）[/color] —— Prisma 界面（如 [b]PMCM[/b]、[b]HeroAvatarHUD[/b]、[b]Outfit Wheeler[/b]）的文本框由 Ultralight 渲染，仅靠系统激活或 Prisma 自带的输入助手都无法完成完整的输入法会话。SimpleIME 只读查询 Prisma 公开的 [i]IVPrismaUI1[/i] 焦点状态，在 Prisma 视图获得焦点时自动激活输入法，并将上屏文字经游戏窗口消息流写入当前字段；输入期间转发编辑按键，候选窗始终绘制在 Prisma 画面之上并锚定到所点击的文本框。若 PrismaUI.dll 存在但 API 不可用，SimpleIME 会完全退避，把输入处理交还给 PrismaUI 以保证安全。
 [*]All three integrations negotiate [b]public extension interfaces only[/b] and are inert when the host DLL is absent — install them whenever you like.
 [*]三种集成仅协商[b]公开扩展接口[/b]，宿主 DLL 不存在时自动失效——随时可选装。
 [/list]
@@ -62,6 +62,10 @@ SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入�
 [color=#CDC2DB]CJK 字形渲染修正[/color] —— 字号按 em 语义解释（上游按 asc+desc 跨度计算导致 CJK 比同号拉丁字小约 25%、底笔画被挤），FreeType 提示不再裁掉字形底部。
 [*][color=#CDC2DB]Redesigned settings window[/color] — live status strip, a compatibility card showing per-bridge support state, one-click diagnostics copy, hot log-level switching, open-config/log links, and new default dark & light themes.
 [color=#CDC2DB]设置界面重做[/color] —— 实时状态条、显示各桥接支持状态的兼容性卡片、一键复制诊断信息、日志级别热切换、打开配置/日志链接，以及全新默认深/浅主题。
+[*][color=#CDC2DB]Candidate window placement & layering[/color] — the candidate window anchors to the focused text field from the first keystroke (including framework menus, via the framework's own caret reporting), stays put while composing instead of chasing the cursor, and is always drawn on top of Prisma UI and SKSE Menu Framework menus.
+[color=#CDC2DB]候选窗定位与层级[/color] —— 候选窗从第一次敲键起即锚定到焦点文本框（框架菜单经由框架自身的插入符上报），组词期间位置锁定、不再跟随鼠标漂移，并始终绘制在 Prisma UI 与 SKSE Menu Framework 菜单之上。
+[*][color=#CDC2DB]中/英 indicator memory[/color] — the language bar no longer falls back to "EN" on every re-entry: IMEs that publish no mode state (e.g. WeChat) are tracked by behavior, and the last observed mode is remembered across disable/enable cycles and game restarts.
+[color=#CDC2DB]中/英 状态记忆[/color] —— 语言栏不再每次进入输入态都回落到「英」：对不公布模式状态的输入法（如微信）按行为推断，并跨停用/启用与游戏重启记住上次的中/英状态。
 [/list]
 
 [line]
@@ -73,7 +77,7 @@ SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入�
 [*][b][url=https://www.nexusmods.com/skyrimspecialedition/mods/32444]Address Library for SKSE Plugins[/url][/b] — the all-in-one file covering your runtime.
 [*]A game font covering your language for in-game text (any Chinese/Japanese/Korean font mod). Not required for the IME windows themselves — SimpleIME uses your system fonts, and Font Builder can load any ttf/otf directly.
 [*]Windows 8.1 or newer (TSF; older systems fall back to Imm32 with reduced features).
-[*]Optional, auto-detected: [b]MeridianUI[/b] (Meridian input), [b]SKSEMenuFramework.dll 3.7+[/b] (SKSEMF input), [b]PrismaUI[/b] (keyboard avoidance). Everything degrades to a no-op when the DLL is absent.
+[*]Optional, auto-detected: [b]MeridianUI[/b] (Meridian input), [b]SKSEMenuFramework.dll 3.7+[/b] (SKSEMF input), [b]PrismaUI[/b] (Prisma UI input). Everything degrades to a no-op when the DLL is absent.
 [/list]
 
 [b]上古卷轴 SE/AE 本体与对应版 SKSE、Address Library、一款覆盖你语言的游戏字体 Mod（可选装 MeridianUI / SKSEMenuFramework 3.7+ / PrismaUI 以启用对应桥接，缺省自动失效）。[/b]
@@ -111,7 +115,7 @@ SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入�
 [*]UI/text looks blurry → make sure [i]force_dpi_awareness = true[/i] (default) and you are not running the game through a scaling wrapper.
 [*]No candidates appear → check the OS input method is enabled; press F2 to see whether SimpleIME sees it. [i]Settings → Advanced[/i] can copy a full diagnostics summary for bug reports.
 [*]Typing does nothing in a SKSEMF menu → update SKSEMenuFramework.dll to 3.7 or newer.
-[*]A mod menu swallows keystrokes after closing → make sure you are on v3.0.0; the leaked text-entry counter that caused this is fixed here.
+[*]A mod menu swallows keystrokes after closing → make sure you are on the latest release; the leaked text-entry counter that caused this is fixed here.
 [/list]
 
 [line]
