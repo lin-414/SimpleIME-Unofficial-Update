@@ -69,7 +69,7 @@ Compatibility = "互換性"
 MeridianSupport = "Meridian UI 入力サポート"
 MeridianSupportToolTip = "Meridian UI（CEF 描画、例えば仕立て屋）がフォーカスを得ると自動的に IME を有効化し、確定した文字をその Web 入力欄へ直接送ります。MeridianUI.dll がない場合は効果がありません。変更はゲーム再起動後に有効になります。"
 PrismaAvoidance = "Prisma UI 入力譲りモード"
-PrismaAvoidanceToolTip = "Prisma UI（例: Outfit Wheeler）は独自の IME 処理を持ちます。有効時、Prisma UI がキーボードを持っている間は SimpleIME が自動的に譲り、二つの入力手段が競合しないようにします。変更はゲーム再起動後に有効になります。"
+PrismaAvoidanceToolTip = "Prisma UI（PMCM、Outfit Wheeler など）は独自の IME 関連付けで入力を取得します。有効時、Prisma ビューがフォーカスされている間は SimpleIME が文字入力を引き継ぎます。SimpleIME の候補ウィンドウが表示され、確定した文字はゲームウィンドウの文字ストリームを通じてビューへ入力されます。IME が無効になると、キーボードは Prisma のネイティブ処理に戻ります。PrismaUI の公開 V1 インターフェースが利用できない場合は、SimpleIME は完全に譲ります（ネイティブ変換のみ、候補ウィンドウなし）。変更はゲーム再起動後に有効になります。"
 SkseMenuFrameworkSupport = "SKSE Menu Framework 入力サポート"
 SkseMenuFrameworkSupportToolTip = "SKSE Menu Framework（ImGui ベースのメニュー）のテキスト欄にフォーカスがあると自動的に IME を有効化し、確定した文字を入力欄へ注入します。SKSEMenuFramework.dll 3.7 以降が必要です。変更はゲーム再起動後に有効になります。"
 

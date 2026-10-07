@@ -109,7 +109,7 @@ Compatibility = "Kompatibilität"
 MeridianSupport = "Meridian-UI-Eingabeunterstützung"
 MeridianSupportToolTip = "Erhält ein Meridian-Interface (CEF-gerendert, z. B. die Schneiderei) den Fokus, wird die IME automatisch aktiviert und der eingegebene Text direkt in dessen Web-Eingabefelder übergeben. Ohne MeridianUI.dll ohne Wirkung. Änderungen werden nach einem Neustart des Spiels wirksam."
 PrismaAvoidance = "Prisma-UI-Ausweichmodus"
-PrismaAvoidanceToolTip = "Prisma-Interfaces (z. B. Outfit Wheeler) verarbeiten IME-Eingaben selbst. Bei Aktivierung tritt SimpleIME zurück, solange eine Prisma-UI die Tastatur hält, damit sich die beiden nicht in die Quere kommen. Änderungen werden nach einem Neustart des Spiels wirksam."
+PrismaAvoidanceToolTip = "Prisma-Oberflächen (PMCM, Outfit Wheeler, ...) fangen Eingaben über ihre eigene IME-Zuordnung ab. Bei Aktivierung übernimmt SimpleIME die Texteingabe, solange eine Prisma-Ansicht fokussiert ist: Das eigene Kandidatenfenster wird angezeigt und der eingefügte Text wird über den Zeichenstrom des Spielfensters in die Ansicht eingespeist; beim Deaktivieren der IME geht die Tastatur an Prismas native Pipeline zurück. Ist die öffentliche V1-Schnittstelle von PrismaUI nicht verfügbar, tritt SimpleIME vollständig zurück (native Zusammensetzung, kein Kandidatenfenster). Änderungen werden nach einem Neustart des Spiels wirksam."
 SkseMenuFrameworkSupport = "SKSE-Menu-Framework-Eingabeunterstützung"
 SkseMenuFrameworkSupportToolTip = "Hat ein Textfeld des SKSE Menu Framework (ImGui-Menüs) den Fokus, wird die IME automatisch aktiviert und der eingegebene Text in das Feld eingefügt. Erfordert SKSEMenuFramework.dll 3.7 oder neuer. Änderungen werden nach einem Neustart des Spiels wirksam."
 
