@@ -50,8 +50,28 @@ namespace Hooks::NirnLabBridge
 namespace
 {
 using namespace ::NL::UI;
-using Browser         = ::NL::CEF::IBrowser;
+using Browser          = ::NL::CEF::IBrowser;
 using BrowserRefHandle = IUIPlatformAPI::BrowserRefHandle;
+
+/// REL::safe_write's assert is compiled out in NDEBUG, so a failed
+/// VirtualProtect silently no-ops: verify the slot before the write and read
+/// it back afterwards.
+bool PatchVtableSlot(void *slot, std::uintptr_t hook, std::uintptr_t expected, const char *what)
+{
+    const auto slotAddress = reinterpret_cast<std::uintptr_t>(slot);
+    if (std::memcmp(slot, &expected, sizeof(expected)) != 0)
+    {
+        logger::error("Vtable verify failed before write: {} slot at {:#x}", what, slotAddress);
+        return false;
+    }
+    REL::safe_write(slotAddress, hook);
+    if (std::memcmp(slot, &hook, sizeof(hook)) != 0)
+    {
+        logger::error("Vtable patch did not stick: {} slot at {:#x}", what, slotAddress);
+        return false;
+    }
+    return true;
+}
 
 using AddOrGetBrowserFn = BrowserRefHandle (__cdecl *)(IUIPlatformAPI *, const char *, ::NL::JS::JSFuncInfo *const *,
                                                        const std::uint32_t, const char *, Browser *&);
@@ -126,8 +146,13 @@ void TrackBrowser(const BrowserRefHandle handle, const char *name, Browser *brow
         // observer; the detour dispatches on the `this` argument.
         auto **table = *reinterpret_cast<std::uintptr_t ***>(browser);
         s_originalSetBrowserFocused = reinterpret_cast<SetBrowserFocusedFn>(table[SLOT_SET_BROWSER_FOCUSED]);
-        REL::safe_write(reinterpret_cast<std::uintptr_t>(&table[SLOT_SET_BROWSER_FOCUSED]),
-                        reinterpret_cast<std::uintptr_t>(&HookedSetBrowserFocused));
+        if (!PatchVtableSlot(&table[SLOT_SET_BROWSER_FOCUSED], reinterpret_cast<std::uintptr_t>(&HookedSetBrowserFocused),
+                             reinterpret_cast<std::uintptr_t>(s_originalSetBrowserFocused),
+                             "UIPlatform IBrowser::SetBrowserFocused"))
+        {
+            // Stay unhooked so the next browser retries the patch.
+            return;
+        }
         s_browserFocusHooked = true;
         logger::info("UIPlatform browser focus observer installed (IBrowser slot {})", SLOT_SET_BROWSER_FOCUSED);
     }
@@ -352,16 +377,37 @@ void OnResponseApi(const ResponseAPIMessage *response)
     auto **table = *reinterpret_cast<std::uintptr_t ***>(s_api);
     s_originalAddOrGetBrowser = reinterpret_cast<AddOrGetBrowserFn>(table[slots.addOrGetBrowser]);
     s_originalReleaseBrowserHandle = reinterpret_cast<ReleaseBrowserHandleFn>(table[slots.releaseBrowserHandle]);
-    REL::safe_write(reinterpret_cast<std::uintptr_t>(&table[slots.addOrGetBrowser]),
-                    reinterpret_cast<std::uintptr_t>(&HookedAddOrGetBrowser));
-    REL::safe_write(reinterpret_cast<std::uintptr_t>(&table[slots.releaseBrowserHandle]),
-                    reinterpret_cast<std::uintptr_t>(&HookedReleaseBrowserHandle));
+    if (!PatchVtableSlot(&table[slots.addOrGetBrowser], reinterpret_cast<std::uintptr_t>(&HookedAddOrGetBrowser),
+                         reinterpret_cast<std::uintptr_t>(s_originalAddOrGetBrowser),
+                         "IUIPlatformAPI::AddOrGetBrowser") ||
+        !PatchVtableSlot(&table[slots.releaseBrowserHandle], reinterpret_cast<std::uintptr_t>(&HookedReleaseBrowserHandle),
+                         reinterpret_cast<std::uintptr_t>(s_originalReleaseBrowserHandle),
+                         "IUIPlatformAPI::ReleaseBrowserHandle"))
+    {
+        s_state = SupportState::Failed;
+        return;
+    }
     if (slots.addOrGetBrowserSettings != 0)
     {
         s_originalAddOrGetBrowserSettings =
             reinterpret_cast<AddOrGetBrowserSettingsFn>(table[slots.addOrGetBrowserSettings]);
-        REL::safe_write(reinterpret_cast<std::uintptr_t>(&table[slots.addOrGetBrowserSettings]),
-                        reinterpret_cast<std::uintptr_t>(&HookedAddOrGetBrowserSettings));
+        if (!PatchVtableSlot(&table[slots.addOrGetBrowserSettings],
+                             reinterpret_cast<std::uintptr_t>(&HookedAddOrGetBrowserSettings),
+                             reinterpret_cast<std::uintptr_t>(s_originalAddOrGetBrowserSettings),
+                             "IUIPlatformAPI::AddOrGetBrowserSettings"))
+        {
+            // Unwind the two patches above: a half-hooked API would keep
+            // tracking browsers while the backend reports Failed.
+            PatchVtableSlot(&table[slots.addOrGetBrowser], reinterpret_cast<std::uintptr_t>(s_originalAddOrGetBrowser),
+                            reinterpret_cast<std::uintptr_t>(&HookedAddOrGetBrowser),
+                            "IUIPlatformAPI::AddOrGetBrowser (restore)");
+            PatchVtableSlot(&table[slots.releaseBrowserHandle],
+                            reinterpret_cast<std::uintptr_t>(s_originalReleaseBrowserHandle),
+                            reinterpret_cast<std::uintptr_t>(&HookedReleaseBrowserHandle),
+                            "IUIPlatformAPI::ReleaseBrowserHandle (restore)");
+            s_state = SupportState::Failed;
+            return;
+        }
     }
     s_state = SupportState::Active;
     logger::info("UIPlatform focus backend installed (IUIPlatformAPI slots {},{}{}); browsers created before this point are not tracked",

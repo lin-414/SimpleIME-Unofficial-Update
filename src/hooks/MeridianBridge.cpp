@@ -36,6 +36,7 @@
 #include <Windows.h>
 
 #include <atomic>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -51,6 +52,26 @@ using View    = ViewHandle;
 using Result  = FocusResult;
 using Mode    = FocusMode;
 using FocusFn = Result (*)(API *, View, Mode);
+
+/// REL::safe_write's assert is compiled out in NDEBUG, so a failed
+/// VirtualProtect silently no-ops: verify the slot before the write and read
+/// it back afterwards.
+bool PatchVtableSlot(void *slot, std::uintptr_t hook, std::uintptr_t expected, const char *what)
+{
+    const auto slotAddress = reinterpret_cast<std::uintptr_t>(slot);
+    if (std::memcmp(slot, &expected, sizeof(expected)) != 0)
+    {
+        logger::error("Vtable verify failed before write: {} slot at {:#x}", what, slotAddress);
+        return false;
+    }
+    REL::safe_write(slotAddress, hook);
+    if (std::memcmp(slot, &hook, sizeof(hook)) != 0)
+    {
+        logger::error("Vtable patch did not stick: {} slot at {:#x}", what, slotAddress);
+        return false;
+    }
+    return true;
+}
 
 /// Log-friendly name of a backend install state (the settings UI renders the
 /// full tokens from the same enum).
@@ -1091,7 +1112,12 @@ void Install()
     // technique ships on); a layout mismatch would divert an unrelated slot.
     std::uintptr_t **table = *reinterpret_cast<std::uintptr_t ***>(s_api);
     s_originalTryFocus = reinterpret_cast<FocusFn>(table[SLOT_TRY_FOCUS]);
-    REL::safe_write(reinterpret_cast<std::uintptr_t>(&table[SLOT_TRY_FOCUS]), reinterpret_cast<std::uintptr_t>(&HookedTryFocus));
+    if (!PatchVtableSlot(&table[SLOT_TRY_FOCUS], reinterpret_cast<std::uintptr_t>(&HookedTryFocus),
+                         reinterpret_cast<std::uintptr_t>(s_originalTryFocus), "Meridian View/1 TryFocus"))
+    {
+        s_state = SupportState::Failed;
+        return;
+    }
     s_state = SupportState::Active;
     logger::info("Meridian View/1 focus observer installed (fallback backend; UIPlatform backend: {})",
                  StateToken(NirnLabBridge::State()));

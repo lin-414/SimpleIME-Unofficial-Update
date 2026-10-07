@@ -848,8 +848,17 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
     {
         if (auto *io = s_api.getIo(); io != nullptr)
         {
-            reinterpret_cast<std::uint8_t *>(io)[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] = 1;
-            logger::info("SKSE Menu Framework io: ConfigDebugIgnoreFocusLoss enabled (our IME focus moves must not clear its input state)");
+            auto *ioBytes = reinterpret_cast<std::uint8_t *>(io);
+            ioBytes[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] = 1;
+            if (ioBytes[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] != 1)
+            {
+                logger::error("SKSE Menu Framework io write did not stick (offset {:#x})",
+                              IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET);
+            }
+            else
+            {
+                logger::info("SKSE Menu Framework io: ConfigDebugIgnoreFocusLoss enabled (our IME focus moves must not clear its input state)");
+            }
         }
     }
 
