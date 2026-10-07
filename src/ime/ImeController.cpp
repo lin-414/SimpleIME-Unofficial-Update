@@ -42,8 +42,7 @@ auto ImeController::EnableMod(bool enable) -> void
     // value, decide "no change", and never get queued — leaving the mod
     // disabled until the next unrelated event. Dedup at EXECUTION time instead
     // (the task body), where the flag is authoritative.
-    AddTask([this, enable] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this, enable] -> void {
         const bool prev = m_fEnabledMod.load();
         if (prev == enable)
         {
@@ -73,8 +72,7 @@ void ImeController::ActivateLangProfile(const GUID &guidProfile) const
     // FIX: capture guidProfile BY VALUE. AddTask defers execution to the IME
     // thread; `[&]` would bind a reference to the caller's GUID, which may
     // already be gone by the time the task runs (use-after-free).
-    AddTask([this, guidProfile] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this, guidProfile] -> void {
         ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
         if (IsModEnabled() && FAILED(imeWnd->ActivateLanguageProfile(guidProfile)))
         {
@@ -88,8 +86,7 @@ auto ImeController::CommitCandidate(DWORD index) const -> IImeModule::Result
 {
     if (!IsReady()) return IImeModule::Result::DISABLED;
 
-    AddTask([this, index] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this, index] -> void {
         ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
         if (IsModEnabled() && imeWnd != nullptr && !imeWnd->CommitCandidate(index))
         {
@@ -104,8 +101,7 @@ auto ImeController::SetConversionMode(DWORD conversionMode) const -> void
 {
     if (!IsReady()) return;
 
-    AddTask([this, conversionMode] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this, conversionMode] -> void {
         ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
         if (IsModEnabled() && imeWnd != nullptr)
         {
@@ -118,8 +114,7 @@ void ImeController::EnableIme(bool enable) const
 {
     if (!IsReady()) return;
 
-    AddTask([this, enable] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this, enable] -> void {
         if (IImeModule::IsFailed(DoEnableIme(enable)))
         {
             ErrorNotifier::GetInstance().Warning("Unexpected error: EnableIme failed.");
@@ -131,8 +126,7 @@ void ImeController::ForceFocusIme() const
 {
     if (!IsReady()) return;
 
-    AddTask([this] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this] -> void {
         if (IImeModule::IsFailed(DoForceFocusIme()))
         {
             ErrorNotifier::GetInstance().Warning("Unexpected error: ForceFocusIme failed.");
@@ -144,8 +138,7 @@ void ImeController::SyncImeState()
 {
     if (!IsReady()) return;
 
-    AddTask([this] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this] -> void {
         if (IImeModule::IsFailed(DoSyncImeState()))
         {
             ErrorNotifier::GetInstance().Warning("Unexpected error: SyncImeState failed");
@@ -157,8 +150,7 @@ void ImeController::TryFocusIme() const
 {
     if (!IsReady()) return;
 
-    AddTask([this] -> void {
-        if (!IsReady()) return; // may run after Shutdown nulls the members
+    PostToImeThread([this] -> void {
         if (IImeModule::IsFailed(DoTryFocusIme()))
         {
             ErrorNotifier::GetInstance().Warning("Unexpected error: TryFocusIme failed");
@@ -179,7 +171,7 @@ auto ImeController::DoEnableMod(const bool enable) -> IImeModule::Result
     bool fResult = IImeModule::IsSuccess(result);
     if (fResult)
     {
-        fResult = enable ? UnlockKeyboard() : RestoreKeyboard();
+        fResult = enable ? SetKeyboardCooperativeLevel(/*restore=*/false) : SetKeyboardCooperativeLevel(/*restore=*/true);
     }
     if (fResult)
     {
@@ -255,7 +247,6 @@ auto ImeController::DoForceFocusIme() const -> IImeModule::Result
     if (!IImeModule::IsSuccess(result))
     {
         ErrorNotifier::GetInstance().Warning("Unexpected error: ForceFocusIme failed");
-        return result;
     }
     return result;
 }
@@ -289,11 +280,15 @@ auto ImeController::DoSyncImeState() -> IImeModule::Result
     return result;
 }
 
-auto ImeController::RestoreKeyboard() const -> bool
+/// Hand the game's keyboard back (restore) or take it away (unlock) through
+/// the DirectInput shim's cooperative level. The two paths differ only in the
+/// DI flags, the log wording and the shim call.
+auto ImeController::SetKeyboardCooperativeLevel(const bool restore) const -> bool
 {
+    const char *const what = restore ? "RestoreKeyboard" : "UnlockKeyboard";
     if (m_gameHwnd == nullptr)
     {
-        logger::error("RestoreKeyboard: game HWND is null.");
+        logger::error("{}: game HWND is null.", what);
         return false;
     }
     // Keep the game window foreground so the DI cooperative-level change
@@ -301,50 +296,21 @@ auto ImeController::RestoreKeyboard() const -> bool
     // lock), so only log.
     if (FALSE == SetForegroundWindow(m_gameHwnd))
     {
-        logger::debug("RestoreKeyboard: SetForegroundWindow returned FALSE; continuing anyway");
+        logger::debug("{}: SetForegroundWindow returned FALSE; continuing anyway", what);
     }
-    logger::debug("Restore keyboard: EXCLUSIVE + FOREGROUND + NOWINKEY.");
+    logger::debug(restore ? "Restore keyboard: EXCLUSIVE + FOREGROUND + NOWINKEY." : "Unlock keyboard: NONEXCLUSIVE + BACKGROUND.");
     HRESULT hr = E_FAIL;
     if (auto *keyboard = Hooks::FakeDirectInputDevice::GetInstance(); keyboard != nullptr)
     {
-        hr = keyboard->TryRestoreCooperativeLevel(m_gameHwnd);
+        hr = restore ? keyboard->TryRestoreCooperativeLevel(m_gameHwnd) : keyboard->TryUnlockCooperativeLevel(m_gameHwnd);
     }
     else
     {
-        logger::error("RestoreKeyboard: FakeDirectInputDevice is not initialized.");
+        logger::error("{}: FakeDirectInputDevice is not initialized.", what);
     }
     if (FAILED(hr))
     {
-        logger::error("Failed lock keyboard.");
-    }
-    return SUCCEEDED(hr);
-}
-
-auto ImeController::UnlockKeyboard() const -> bool
-{
-    if (m_gameHwnd == nullptr)
-    {
-        logger::error("UnlockKeyboard: game HWND is null.");
-        return false;
-    }
-    // See RestoreKeyboard: log-only foreground promotion.
-    if (FALSE == SetForegroundWindow(m_gameHwnd))
-    {
-        logger::debug("UnlockKeyboard: SetForegroundWindow returned FALSE; continuing anyway");
-    }
-    logger::debug("Unlock keyboard: NONEXCLUSIVE + BACKGROUND.");
-    HRESULT hr = E_FAIL;
-    if (auto *keyboard = Hooks::FakeDirectInputDevice::GetInstance(); keyboard != nullptr)
-    {
-        hr = keyboard->TryUnlockCooperativeLevel(m_gameHwnd);
-    }
-    else
-    {
-        logger::error("UnlockKeyboard: FakeDirectInputDevice is not initialized.");
-    }
-    if (FAILED(hr))
-    {
-        logger::error("Failed unlock keyboard.");
+        logger::error(restore ? "Failed lock keyboard." : "Failed unlock keyboard.");
     }
     return SUCCEEDED(hr);
 }

@@ -99,9 +99,21 @@ private:
     auto DoSyncImeState() -> IImeModule::Result;
     auto DoTryFocusIme() const -> IImeModule::Result;
 
-    auto UnlockKeyboard() const -> bool;
-    auto RestoreKeyboard() const -> bool;
+    auto SetKeyboardCooperativeLevel(bool restore) const -> bool;
 
     void AddTask(TaskQueue::Task &&task) const;
+
+    /// Queue `body` on the IME thread with the standard readiness re-check:
+    /// Shutdown may null the members between queueing (any thread) and
+    /// execution (IME thread). Public wrappers keep their own outer IsReady()
+    /// gate — failing fast without a queue round-trip.
+    template <typename Body>
+    void PostToImeThread(Body &&body) const
+    {
+        AddTask([this, body = std::forward<Body>(body)]() -> void {
+            if (!IsReady()) return; // may run after Shutdown nulls the members
+            body();
+        });
+    }
 };
 } // namespace Ime
