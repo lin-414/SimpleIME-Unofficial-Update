@@ -322,14 +322,14 @@ void ImeApp::Uninitialize()
     Hooks::PrismaBridge::Uninstall();
     Hooks::SkseMenuFrameworkBridge::Uninstall();
     g_pInitErrorMessageShow.reset();
-    if (m_state.IsInitialized())
+    // Unwind by what was actually acquired, not by the state: a failed or
+    // shut-down init leaves these resources behind just the same.
+    UninstallHooks();
+    if (RealWndProc != nullptr)
     {
-        UninstallHooks();
-        if (RealWndProc != nullptr)
-        {
-            SetWindowLongPtrA(m_hWnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(RealWndProc));
-            RealWndProc = nullptr;
-        }
+        SetWindowLongPtrA(m_hWnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(RealWndProc));
+        RealWndProc = nullptr;
+        logger::info("Game window WndProc restored");
     }
     m_state.SetState(State::StateKey::DORMANCY);
 }
