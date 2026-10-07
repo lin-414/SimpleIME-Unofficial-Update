@@ -71,9 +71,11 @@ target_include_directories(
 include(GoogleTest)
 gtest_discover_tests(${TEST_PROJ_NAME})
 
+# The shipped default config feeds ShippedConfigurationTest: the shipped file
+# must convert to exactly the compiled-in default Settings.
 add_custom_command(
     TARGET "${TEST_PROJ_NAME}"
     PRE_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/test/resources" "$<TARGET_FILE_DIR:${TEST_PROJ_NAME}>/"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_SOURCE_DIR}/contrib/config/SimpleIME.toml" "$<TARGET_FILE_DIR:${TEST_PROJ_NAME}>/SimpleIME.toml"
     VERBATIM
 )

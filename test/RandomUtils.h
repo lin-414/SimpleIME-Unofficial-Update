@@ -12,10 +12,15 @@ namespace ImeTest
 
 class RandomUtils
 {
-    std::mt19937 gen;
+    std::mt19937  gen;
+    std::uint32_t seed;
 
 public:
-    explicit RandomUtils() : gen(std::random_device{}()) {}
+    /// Seed is injectable so a failing random round-trip can be reproduced:
+    /// pass the recorded seed back in instead of rerolling.
+    explicit RandomUtils(std::uint32_t seedValue = std::random_device{}()) : gen(seedValue), seed(seedValue) {}
+
+    [[nodiscard]] auto Seed() const -> std::uint32_t { return seed; }
 
     auto NextInt(int min, int max) -> int { return std::uniform_int_distribution<>(min, max)(gen); }
 
@@ -36,9 +41,14 @@ public:
     }
 };
 
-inline auto GetRandomConfiguation() -> Ime::Configuration
+inline auto GetRandomConfiguation(std::uint32_t *seedOut = nullptr) -> Ime::Configuration
 {
-    ImeTest::RandomUtils random;
+    const auto seed = std::random_device{}();
+    if (seedOut != nullptr)
+    {
+        *seedOut = seed;
+    }
+    ImeTest::RandomUtils random{seed};
     Ime::Configuration   configuration{};
     configuration.shortcut                      = random.NextString(10);
     configuration.enableMod                     = random.NextBool();

@@ -37,6 +37,10 @@ s2k2 = "s2v2"
 
 TEST(TranslatorManagerTest, should_return_key_if_not_found)
 {
+    // Translate() consults the process-wide translator; pin it to "absent"
+    // here so this test's meaning does not depend on ShouldStoreAsFullQualifyKey
+    // (which installs one, then removes it) having run first.
+    i18n::SetTranslator(nullptr);
     EXPECT_STREQ(Translate("Section1.k1").data(), "Section1.k1");
     EXPECT_STREQ(Translate("a invalid key").data(), "a invalid key");
 }

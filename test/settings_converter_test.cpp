@@ -3,6 +3,7 @@
 //
 
 #include "RandomUtils.h"
+#include "configs/ConfigSerializer.h"
 #include "configs/configuration.h"
 #include "configs/settings_converter.h"
 #include "imgui.h"
@@ -12,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <format>
 
 void ErrorNotifier::addError(std::string_view msg, const ErrorMsg::Level level)
 {
@@ -136,7 +138,11 @@ TEST(ConfigurationToSettingsTest, should_convert_WindowPolicy_string_to_enum)
 
 TEST(ConfigurationToSettingsTest, should_set_base_type_member_value_from_configuration)
 {
-    auto configuration = ImeTest::GetRandomConfiguation();
+    std::uint32_t seed = 0;
+    auto configuration = ImeTest::GetRandomConfiguation(&seed);
+    // Failure output includes the seed so the round-trip can be re-run with
+    // RandomUtils{seed} instead of rerolling.
+    SCOPED_TRACE(std::format("RandomUtils seed: {}", seed));
     // The default theme style replaces the configured source color with its fixed
     // accent, so the color passthrough asserted below is only defined for the
     // material style (the random config leaves themeStyle empty → default theme).
@@ -288,4 +294,60 @@ TEST(SettingsToConfigurationTest, should_apply_rgb_mask_to_source_color)
 
     auto config = Ime::ConvertSettingsToConfiguration(settings);
     EXPECT_EQ(config.appearance.themeSourceColor, 0x00345678) << "should apply RGB mask to source color when convert settings to configuration";
+}
+
+// The shipped contrib/config/SimpleIME.toml (copied next to the test binary by
+// test.cmake) is what a fresh install starts from. It pins documented values
+// for fields the compiled default leaves invalid; edited independently of the
+// code, new users would silently run defaults nobody compared. The behavioral
+// invariant: loaded through the real loader and converter it must produce
+// exactly GetDefaultSettings().
+TEST(ShippedConfigurationTest, shipped_toml_converts_to_default_settings)
+{
+    const Ime::ConfigSerializer::ConfigStatus status =
+        Ime::ConfigSerializer::ValidateConfiguration("SimpleIME.toml");
+    ASSERT_EQ(status.kind, Ime::ConfigSerializer::ConfigStatusKind::Ok) << status.detail;
+    ASSERT_TRUE(status.ignoredKeys.empty()) << "shipped config carries mistyped keys: "
+                                            << [&] {
+                                                   std::string keys;
+                                                   for (const auto &key : status.ignoredKeys)
+                                                   {
+                                                       keys += key + " ";
+                                                   }
+                                                   return keys;
+                                               }();
+
+    const Ime::Settings shipped  = Ime::ConvertConfigurationToSettings(Ime::ConfigSerializer::LoadConfiguration("SimpleIME.toml"));
+    const Ime::Settings expected = Ime::GetDefaultSettings();
+
+    EXPECT_EQ(shipped.shortcut, expected.shortcut);
+    EXPECT_EQ(shipped.enableMod, expected.enableMod);
+    EXPECT_EQ(shipped.enableTsf, expected.enableTsf);
+    EXPECT_EQ(shipped.fixInconsistentTextEntryCount, expected.fixInconsistentTextEntryCount);
+    EXPECT_EQ(shipped.autoToggleKeyboard, expected.autoToggleKeyboard);
+    EXPECT_EQ(shipped.forceDpiAwareness, expected.forceDpiAwareness);
+
+    EXPECT_EQ(shipped.logging.level, expected.logging.level);
+    EXPECT_EQ(shipped.logging.flushLevel, expected.logging.flushLevel);
+
+    EXPECT_EQ(shipped.resources.translationDir, expected.resources.translationDir);
+    EXPECT_EQ(shipped.resources.fontPathList, expected.resources.fontPathList);
+
+    EXPECT_EQ(shipped.appearance.schemeConfig.variant, expected.appearance.schemeConfig.variant);
+    EXPECT_EQ(shipped.appearance.schemeConfig.sourceColor, expected.appearance.schemeConfig.sourceColor);
+    EXPECT_EQ(shipped.appearance.schemeConfig.contrastLevel, expected.appearance.schemeConfig.contrastLevel);
+    EXPECT_EQ(shipped.appearance.schemeConfig.darkMode, expected.appearance.schemeConfig.darkMode);
+    EXPECT_EQ(shipped.appearance.language, expected.appearance.language);
+    EXPECT_EQ(shipped.appearance.zoom, expected.appearance.zoom);
+    EXPECT_EQ(shipped.appearance.errorDisplayDuration, expected.appearance.errorDisplayDuration);
+    EXPECT_EQ(shipped.appearance.verticalCandidateList, expected.appearance.verticalCandidateList);
+    EXPECT_EQ(shipped.appearance.autoToggleLanguageBar, expected.appearance.autoToggleLanguageBar);
+
+    EXPECT_EQ(shipped.input.posUpdatePolicy, expected.input.posUpdatePolicy);
+    EXPECT_EQ(shipped.input.enableUnicodePaste, expected.input.enableUnicodePaste);
+    EXPECT_EQ(shipped.input.keepImeOpen, expected.input.keepImeOpen);
+    EXPECT_EQ(shipped.input.meridianSupport, expected.input.meridianSupport);
+    EXPECT_EQ(shipped.input.prismaAvoidance, expected.input.prismaAvoidance);
+    EXPECT_EQ(shipped.input.skseMenuFrameworkSupport, expected.input.skseMenuFrameworkSupport);
+    EXPECT_EQ(shipped.input.lastNativeConversion, expected.input.lastNativeConversion);
 }
