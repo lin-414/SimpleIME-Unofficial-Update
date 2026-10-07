@@ -118,6 +118,13 @@ auto TextStore::TerminateComposition() const -> HRESULT
 
 auto TextStore::ClearFocus() const -> HRESULT
 {
+    // Same handle guards as Focus(): teardown may reach this before TSF init
+    // completed, and the calls below dereference all three.
+    if (m_threadMgr == nullptr || m_hWnd == nullptr)
+    {
+        logger::debug("Can't clear focus. Please first Initialize & set hwnd");
+        return E_FAIL;
+    }
     logger::debug("Clear Focus");
     // Terminate any active composition before clearing focus.
     // Passing nullptr to AssociateFocus suspends the IME state machine instead of
