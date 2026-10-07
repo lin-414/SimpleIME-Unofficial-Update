@@ -571,7 +571,6 @@ void AppearancePanel::DrawThemeRow(Settings &settings)
     // Reset is a quiet action, same weight as the shortcut row's reset link;
     // Customize stays the row's only button.
     const float resetWidth  = UI::Panels::TextLinkWidth(resetLabel);
-    const float resetHeight = UI::Panels::TextLinkHeight();
     const float trailingReserve = customizeWidth + buttonGap + resetWidth;
 
     const auto row = UI::Panels::BeginPlainSettingsRow({}, {}, trailingReserve, swatchSize);
@@ -593,8 +592,7 @@ void AppearancePanel::DrawThemeRow(Settings &settings)
             ImGui::OpenPopup("ThemeBuilder");
         }
 
-        ImGui::SetCursorScreenPos({row.trailingRight - resetWidth, row.centerY - resetHeight * 0.5F});
-        if (UI::Panels::TextLink("##ResetTheme", resetLabel))
+        if (UI::Panels::RowTrailingTextLink(row, "##ResetTheme", resetLabel))
         {
             const ImGuiEx::M3::SchemeConfig defaultScheme = ImGuiEx::M3::GetDefaultSchemeConfig(m3Styles.Colors().IsDark());
             m3Styles.RebuildColors(defaultScheme);

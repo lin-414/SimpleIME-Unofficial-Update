@@ -892,6 +892,27 @@ inline auto ComboButtonHeight() -> float
     return Context::GetM3Styles().GetPixels(Spec::dp<40>());
 }
 
+//! Right-anchor a quiet TextLink to the row's trailing edge: vertically
+//! centered on the row, right edge at trailingRight (rightOffset reserves room
+//! for sibling trailing widgets to its right). Runs of several links and
+//! stacked (second-line) rows position themselves and call TextLink directly.
+inline bool RowTrailingTextLink(
+    const SettingsRowScope            &row,
+    const char                        *strId,
+    const std::string_view             label,
+    const float                        rightOffset = 0.0F,
+    const ImGuiEx::M3::Spec::ColorRole role   = ImGuiEx::M3::Spec::ColorRole::onSurface,
+    const ImGuiEx::M3::Spec::ColorRole bgRole = ImGuiEx::M3::Spec::ColorRole::surfaceContainerHighest
+)
+{
+    if (!row)
+    {
+        return false;
+    }
+    ImGui::SetCursorScreenPos({row.trailingRight - rightOffset - TextLinkWidth(label), row.centerY - TextLinkHeight() * 0.5F});
+    return TextLink(strId, label, role, bgRole);
+}
+
 //! Width a trailing combo will occupy for `preview` inside a row whose content
 //! spans `contentWidth` px — the single source of truth shared with
 //! BeginRowTrailingCombo, so rows can reserve the exact trailing space before

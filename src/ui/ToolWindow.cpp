@@ -950,8 +950,7 @@ void ToolWindow::DrawMenuAdvanced(Settings &settings)
             {
                 Panels::RowTitle(row);
                 Panels::RowSupporting(row, Translate("Settings.Advanced.ConfigDescription"));
-                ImGui::SetCursorScreenPos({row.trailingRight - openW, row.centerY - linkH * 0.5F});
-                if (Panels::TextLink("##OpenConfigDir", openLabel))
+                if (Panels::RowTrailingTextLink(row, "##OpenConfigDir", openLabel))
                 {
                     OpenInExplorer(SettingsManager::ConfigFilePath(), true);
                 }
@@ -1000,8 +999,7 @@ void ToolWindow::DrawLogPathRow()
             ImGuiEx::M3::SetItemToolTip(logPath.c_str());
         }
 
-        ImGui::SetCursorScreenPos({row.trailingRight - openW, row.centerY - linkH * 0.5F});
-        if (Panels::TextLink("##OpenLogFile", openLabel))
+        if (Panels::RowTrailingTextLink(row, "##OpenLogFile", openLabel))
         {
             const std::filesystem::path logFile = ResolveLogFile();
             if (!logFile.empty())
@@ -1309,8 +1307,7 @@ void ToolWindow::DrawShortcutSection(Settings &settings)
         if (row)
         {
             ImGuiEx::M3::AlignedLabel(Translate("Settings.Behaviour.CapturingShortcut"), M3Spec::ColorRole::primary);
-            ImGui::SetCursorScreenPos({row.trailingRight - cancelWidth, row.centerY - linkHeight * 0.5F});
-            if (Panels::TextLink("##CancelShortcutCapture", cancelLabel))
+            if (Panels::RowTrailingTextLink(row, "##CancelShortcutCapture", cancelLabel))
             {
                 m_capturingShortcut = false;
             }
