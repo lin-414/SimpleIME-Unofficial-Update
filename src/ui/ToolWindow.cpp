@@ -397,11 +397,64 @@ auto ResolveLogDir() -> std::filesystem::path
     return cached;
 }
 
+//! Resolves `path` to the physical location Explorer can reach. Mod managers
+//! virtualize Data\ paths inside the game process (the file really lives in
+//! the mod folder), but explorer.exe runs outside that VFS, so spawning it
+//! with the virtual path fails with "location unavailable". Opening the path
+//! here goes through the VFS and GetFinalPathNameByHandleW reads the real
+//! path back off the resulting kernel handle. Unvirtualized installs resolve
+//! to themselves; if the path can't be opened the input is returned as-is.
+auto ResolveExplorerPath(const std::filesystem::path &path) -> std::filesystem::path
+{
+    // FILE_FLAG_BACKUP_SEMANTICS alone opens both files and directories; a
+    // zero access mask keeps it a pure query, no privileges required.
+    const HANDLE handle = CreateFileW(path.c_str(), 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        return path;
+    }
+    std::wstring resolved;
+    for (DWORD size = 0;;)
+    {
+        resolved.resize(size == 0 ? MAX_PATH : size);
+        size = GetFinalPathNameByHandleW(handle, resolved.data(), static_cast<DWORD>(resolved.size()),
+            FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        if (size == 0)
+        {
+            resolved.clear();
+            break;
+        }
+        if (size < resolved.size())
+        {
+            resolved.resize(size);
+            break;
+        }
+    }
+    CloseHandle(handle);
+    if (resolved.empty())
+    {
+        return path;
+    }
+    // Strip \\?\ (\\?\UNC\ → \\) so explorer /select accepts the path.
+    if (resolved.starts_with(LR"(\\?\UNC\)"))
+    {
+        resolved = LR"(\\)" + resolved.substr(8);
+    }
+    else if (resolved.starts_with(LR"(\\?\)"))
+    {
+        resolved.erase(0, 4);
+    }
+    return { resolved.begin(), resolved.end() };
+}
+
 //! Opens `target` in Explorer. With selectFile, highlights the file inside its
-//! parent folder (explorer /select) — used for the config file; otherwise the
-//! folder itself opens (the log directory). Fire-and-forget: a shell failure
-//! (unresolvable path) leaves the UI unchanged, the copy links remain the
-//! reliable path.
+//! parent folder (explorer /select) — used for the config file and the log
+//! file; otherwise the folder itself opens. The target is first resolved to
+//! its physical path (mod-manager VFS). Fire-and-forget: if the file to
+//! select can't be confirmed to exist, its parent folder opens instead of
+//! letting Explorer error on a missing /select target.
 void OpenInExplorer(const std::filesystem::path &target, const bool selectFile)
 {
     std::error_code ec;
@@ -410,14 +463,25 @@ void OpenInExplorer(const std::filesystem::path &target, const bool selectFile)
     {
         return;
     }
+    const std::filesystem::path physical = ResolveExplorerPath(absolute);
     if (selectFile)
     {
-        const std::wstring params = std::format(L"/select,\"{}\"", absolute.wstring());
-        ShellExecuteW(nullptr, L"open", L"explorer.exe", params.c_str(), nullptr, SW_SHOWNORMAL);
+        std::error_code existsEc;
+        if (std::filesystem::exists(physical, existsEc) && !existsEc)
+        {
+            const std::wstring params = std::format(L"/select,\"{}\"", physical.wstring());
+            ShellExecuteW(nullptr, L"open", L"explorer.exe", params.c_str(), nullptr, SW_SHOWNORMAL);
+        }
+        else
+        {
+            // File gone (e.g. the config was never shipped): settle for the
+            // parent folder instead of Explorer erroring on a missing target.
+            ShellExecuteW(nullptr, L"open", physical.parent_path().wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
     }
     else
     {
-        ShellExecuteW(nullptr, L"open", absolute.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        ShellExecuteW(nullptr, L"open", physical.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 }
 
@@ -504,12 +568,12 @@ auto BridgeStateToken(const Hooks::SupportState state) -> std::string_view
     return "unknown";
 }
 
-//! The SKSE log file's path as UTF-8 for the clipboard (cached: the location
-//! is fixed once the plugin DLL path is known). Empty when SKSE cannot
-//! resolve its log directory.
-auto ResolveLogFilePath() -> std::string
+//! The SKSE log file, `<log dir>\<plugin>.log` (cached: the location is fixed
+//! once the plugin DLL path is known). Empty when SKSE cannot resolve its log
+//! directory.
+auto ResolveLogFile() -> std::filesystem::path
 {
-    static const std::string cached = []() -> std::string {
+    static const std::filesystem::path cached = []() -> std::filesystem::path {
         const auto logDir = SKSE::log::log_directory();
         if (!logDir)
         {
@@ -518,8 +582,16 @@ auto ResolveLogFilePath() -> std::string
         std::filesystem::path file = *logDir;
         file /= SKSE::PluginDeclaration::GetSingleton()->GetName();
         file += L".log";
-        return WCharUtils::ToString(file.wstring());
+        return file;
     }();
+    return cached;
+}
+
+//! The SKSE log file's path as UTF-8 for the clipboard. Empty when SKSE
+//! cannot resolve its log directory.
+auto ResolveLogFilePath() -> std::string
+{
+    static const std::string cached = WCharUtils::ToString(ResolveLogFile().wstring());
     return cached;
 }
 
@@ -869,7 +941,7 @@ void ToolWindow::DrawMenuAdvanced(Settings &settings)
 }
 
 //! "复制日志路径" row: puts the SKSE log file's location (UTF-8) on the
-//! clipboard, with a sibling link that opens the log folder in Explorer; the
+//! clipboard, with a sibling link that locates the log file in Explorer; the
 //! trailing copy link flips to a brief acknowledgment after a copy.
 void ToolWindow::DrawLogPathRow()
 {
@@ -903,9 +975,17 @@ void ToolWindow::DrawLogPathRow()
         }
 
         ImGui::SetCursorScreenPos({row.trailingRight - openW, row.centerY - linkH * 0.5F});
-        if (Panels::TextLink("##OpenLogDir", openLabel))
+        if (Panels::TextLink("##OpenLogFile", openLabel))
         {
-            OpenInExplorer(ResolveLogDir(), false);
+            const std::filesystem::path logFile = ResolveLogFile();
+            if (!logFile.empty())
+            {
+                OpenInExplorer(logFile, true);
+            }
+            else
+            {
+                OpenInExplorer(ResolveLogDir(), false);
+            }
         }
         Panels::EndSettingsRow(row);
     }
