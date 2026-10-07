@@ -618,7 +618,10 @@ void ImeWnd::Draw(Settings &settings)
         for (const auto &fontPath : settings.resources.fontPathList)
         {
             std::error_code ec;
-            if (std::filesystem::exists(std::filesystem::path(fontPath), ec))
+            // The config stores font paths as UTF-8; the plain string ctor
+            // would decode them in the ANSI codepage and disagree with the
+            // UTF-8 decoding every other consumer applies.
+            if (std::filesystem::exists(std::filesystem::u8path(fontPath), ec))
             {
                 palette.primaryFontPath = fontPath;
                 break;
