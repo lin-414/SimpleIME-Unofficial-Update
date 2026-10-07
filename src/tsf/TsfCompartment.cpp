@@ -33,7 +33,7 @@ auto Tsf::TsfCompartment::Initialize(
         logger::warn("TsfCompartment already initialized.");
         return S_FALSE;
     }
-    HRESULT hresult   = E_FAIL;
+    HRESULT hresult = E_FAIL;
     m_tfClientId      = tfClientId;
     m_guidCompartment = guidCompartment;
     m_callback        = callback;
@@ -42,10 +42,23 @@ auto Tsf::TsfCompartment::Initialize(
     {
         if (const CComQIPtr<ITfSource> tfSource(m_tfCompartment); tfSource != nullptr)
         {
-            return tfSource->AdviseSink(IID_ITfCompartmentEventSink, this, &m_dwCookie);
+            hresult = tfSource->AdviseSink(IID_ITfCompartmentEventSink, this, &m_dwCookie);
+        }
+        else
+        {
+            // The compartment exposes no ITfSource, so it can never be advised.
+            hresult = E_FAIL;
         }
     }
-
+    if (FAILED(hresult))
+    {
+        // Roll back the half-initialization: the guid gate at the top would
+        // otherwise report S_FALSE "already initialized" on every retry.
+        m_dwCookie        = TF_INVALID_COOKIE;
+        m_guidCompartment = GUID_NULL;
+        m_callback        = nullptr;
+        m_tfCompartment.Release();
+    }
     return hresult;
 }
 
@@ -65,6 +78,7 @@ auto Tsf::TsfCompartment::UnInitialize() -> HRESULT
 
         m_tfCompartment.Release();
     }
+    m_dwCookie        = TF_INVALID_COOKIE;
     m_guidCompartment = GUID_NULL;
     return hr;
 }

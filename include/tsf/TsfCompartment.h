@@ -24,16 +24,17 @@ public:
     auto operator=(TsfCompartment &&other) noexcept -> TsfCompartment & = delete;
 
     /// Thread-manager-level compartment (the per-thread default values).
-    auto Initialize(ITfThreadMgr *pThreadMgr, TfClientId tfClientId, const GUID &guidCompartment, const CompartmentChangeCallback &callback = nullptr)
+    /// The change callback is required: OnChange calls it unconditionally.
+    auto Initialize(ITfThreadMgr *pThreadMgr, TfClientId tfClientId, const GUID &guidCompartment, const CompartmentChangeCallback &callback)
         -> HRESULT;
     /// Context-level compartment: the focused context's own values. IMEs keep
     /// the live conversion mode here (this is what the OS mode indicator reads),
     /// while the thread-manager-level compartment only holds per-thread defaults.
-    auto Initialize(ITfContext *pContext, TfClientId tfClientId, const GUID &guidCompartment, const CompartmentChangeCallback &callback = nullptr)
+    auto Initialize(ITfContext *pContext, TfClientId tfClientId, const GUID &guidCompartment, const CompartmentChangeCallback &callback)
         -> HRESULT;
     /// Direct compartment-manager form (e.g. the cross-process global
     /// compartment from ITfThreadMgr::GetGlobalCompartment).
-    auto Initialize(ITfCompartmentMgr *pCompartmentMgr, TfClientId tfClientId, const GUID &guidCompartment, const CompartmentChangeCallback &callback = nullptr)
+    auto Initialize(ITfCompartmentMgr *pCompartmentMgr, TfClientId tfClientId, const GUID &guidCompartment, const CompartmentChangeCallback &callback)
         -> HRESULT;
     auto UnInitialize() -> HRESULT;
     auto SetValue(ULONG value) const -> HRESULT;
