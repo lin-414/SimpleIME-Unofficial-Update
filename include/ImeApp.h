@@ -126,6 +126,9 @@ private:
     void OnD3DInit();
     void Start(const RE::BSGraphics::RendererData &renderData);
     void Shutdown();
+    /// Post WM_QUIT to the IME worker and wait — bounded — for its teardown
+    /// latch. Idempotent: safe to call from both Shutdown() and Uninitialize().
+    bool RequestImeThreadTeardown();
 
     static void InstallHooks();
     static void UninstallHooks();
@@ -139,9 +142,12 @@ private:
     /// (which only exits on a thread-queue WM_QUIT) would keep running.
     std::atomic<DWORD> m_imeThreadId{0};
     /// Set by the IME worker when its full teardown (WM_DESTROY → OnDestroy →
-    /// UnInitialize) completed. Shutdown waits for it (bounded) so the
-    /// game-thread Uninitialize does not race the IME-thread teardown.
+    /// UnInitialize) completed. Shutdown/Uninitialize wait for it (bounded) so
+    /// the game-thread teardown does not race the IME-thread teardown.
     std::atomic<bool> m_imeTeardownDone{false};
+    /// One-shot latch for Uninitialize(): both Shutdown() and WM_NCDESTROY
+    /// route here, and the ImGui/TSF teardown below must run exactly once.
+    std::atomic_flag m_uninitializeStarted{};
     State              m_state;
 
     friend void           Ime::D3DInit();

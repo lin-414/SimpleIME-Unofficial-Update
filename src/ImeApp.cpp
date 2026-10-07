@@ -287,6 +287,16 @@ void ImeApp::OnInputLoaded()
 
 void ImeApp::Uninitialize()
 {
+    // One-shot: both Shutdown() and the WM_NCDESTROY path route here; a second
+    // entry must not repeat the ImGui/TSF teardown below.
+    if (m_uninitializeStarted.test_and_set(std::memory_order_acq_rel))
+    {
+        return;
+    }
+    // The WM_NCDESTROY path reaches Uninitialize without passing Shutdown, so
+    // the worker's quit request (and the bounded wait) belongs here, not only
+    // in Shutdown().
+    RequestImeThreadTeardown();
     SaveSettings();
     if (m_imeTeardownDone.load())
     {
@@ -544,12 +554,24 @@ void ImeApp::Shutdown()
 {
     logger::LogStacktrace();
     m_state.SetState(State::StateKey::SHUTDOWN);
+    RequestImeThreadTeardown();
+    Uninitialize();
+}
+
+bool ImeApp::RequestImeThreadTeardown()
+{
+    // Both the Shutdown path and the WM_NCDESTROY → Uninitialize path call
+    // this; only the first call may post and wait.
+    if (m_imeTeardownDone.load(std::memory_order_acquire) || m_imeThreadId.load(std::memory_order_acquire) == 0)
+    {
+        return true;
+    }
     logger::info("Force close ImeWnd...");
     // Post a THREAD message: ImeWnd::Run only exits when PeekMessage retrieves
     // a thread-queue WM_QUIT — sending WM_QUIT to the window (the old
     // SendNotifyMessage path) reaches the WndProc, which ignores it, and the
     // loop kept running while teardown proceeded underneath.
-    if (const DWORD imeThreadId = m_imeThreadId.load(); imeThreadId != 0 && !PostThreadMessageW(imeThreadId, WM_QUIT, 0, 0))
+    if (const DWORD imeThreadId = m_imeThreadId.load(); !PostThreadMessageW(imeThreadId, WM_QUIT, 0, 0))
     {
         logger::error("Can't close ImeWnd! May IME uninitialized?");
     }
@@ -566,7 +588,7 @@ void ImeApp::Shutdown()
     {
         logger::warn("IME thread did not finish teardown within 2s, continuing on the game thread.");
     }
-    Uninitialize();
+    return m_imeTeardownDone.load();
 }
 
 void ImeApp::SaveSettings()
