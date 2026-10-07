@@ -189,10 +189,7 @@ void Refresh()
         // any focused view: re-evaluate the IME decision (a keepImeOpen user
         // gets the IME back without touching anything).
         logger::info("Prisma released the keyboard, re-syncing IME state");
-        if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
-        {
-            controller->SyncImeState();
-        }
+        Ime::ImeController::GetInstance()->SyncImeStateIfReady();
     }
     if (focus != previous)
     {
@@ -211,10 +208,7 @@ void Refresh()
             s_fieldAnchorValid.store(false, std::memory_order_release);
             s_anchorPinned.store(false, std::memory_order_release);
         }
-        if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
-        {
-            controller->SyncImeState();
-        }
+        Ime::ImeController::GetInstance()->SyncImeStateIfReady();
     }
 }
 
@@ -229,10 +223,7 @@ void OnAssociationMessage(bool associated)
         // Prisma disassociated its context (input capture released). Re-evaluate
         // instead of latching: the counter path and the next Refresh decide.
         logger::info("PrismaUI disassociated its IME context; re-evaluating IME state");
-        if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
-        {
-            controller->SyncImeState();
-        }
+        Ime::ImeController::GetInstance()->SyncImeStateIfReady();
         return;
     }
     s_associationLatch = true;
@@ -240,10 +231,7 @@ void OnAssociationMessage(bool associated)
     // Take the focus decision immediately instead of waiting for the next
     // Refresh: Prisma is about to own the keyboard.
     s_hasActiveFocus = true;
-    if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
-    {
-        controller->SyncImeState();
-    }
+    Ime::ImeController::GetInstance()->SyncImeStateIfReady();
 }
 
 bool OwnsInput()

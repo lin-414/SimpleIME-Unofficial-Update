@@ -541,10 +541,7 @@ void OnListenerPayload(const char *payload);
 // text entry or keepImeOpen keeps it on).
 void RequestImeSync()
 {
-    if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
-    {
-        controller->SyncImeState();
-    }
+    Ime::ImeController::GetInstance()->SyncImeStateIfReady();
 }
 
 /// Arm the capture probe and the theme re-push for a target about to

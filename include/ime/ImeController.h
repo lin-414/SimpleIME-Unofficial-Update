@@ -42,6 +42,16 @@ public:
 
     auto IsModEnabled() const -> bool { return m_fEnabledMod.load(); }
 
+    /// No-op unless the controller is ready — the shared shape of every
+    /// bridge's "re-evaluate the IME decision" hop.
+    auto SyncImeStateIfReady() -> void
+    {
+        if (IsReady())
+        {
+            SyncImeState();
+        }
+    }
+
     /**
      * notify @c ImeWnd activate a @c LangProfile by specify guid.
      * @param guidProfile the @c LangProfile guid
