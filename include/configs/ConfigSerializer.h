@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace Ime
 {
@@ -28,6 +29,9 @@ struct ConfigStatus
 {
     ConfigStatusKind kind    = ConfigStatusKind::Ok;
     std::string      detail; ///< raw error message; empty when kind == Ok
+    /// Keys present in the file with a value type the schema does not accept;
+    /// the loader kept the default for them. Empty unless kind == Ok.
+    std::vector<std::string> ignoredKeys;
 };
 
 //! @brief Save the configuration to a file. Will overwrite the file if it already exists.

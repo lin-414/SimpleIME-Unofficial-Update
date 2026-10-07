@@ -1037,8 +1037,8 @@ void ToolWindow::DrawConfigStatusRow()
     switch (status.kind)
     {
         case ConfigSerializer::ConfigStatusKind::Ok:
-            label       = Translate("Settings.Advanced.ConfigStatusOk");
-            labelColor  = M3Spec::ColorRole::primary;
+            label      = Translate("Settings.Advanced.ConfigStatusOk");
+            labelColor = status.ignoredKeys.empty() ? M3Spec::ColorRole::primary : M3Spec::ColorRole::error;
             break;
         case ConfigSerializer::ConfigStatusKind::NotFound:
             label = Translate("Settings.Advanced.ConfigStatusMissing");
@@ -1048,6 +1048,21 @@ void ToolWindow::DrawConfigStatusRow()
             labelColor = M3Spec::ColorRole::error;
             break;
     }
+
+    // Mistyped keys parse fine but were dropped in favor of the defaults at
+    // load time; list them so the divergence from the on-disk file is visible.
+    std::string ignoredDetail;
+    if (status.kind == ConfigSerializer::ConfigStatusKind::Ok && !status.ignoredKeys.empty())
+    {
+        ignoredDetail = std::format("{} config key(s) ignored, unexpected type:", status.ignoredKeys.size());
+        for (const auto &key : status.ignoredKeys)
+        {
+            ignoredDetail += std::format(" {}", key);
+        }
+    }
+    const std::string_view supporting =
+        status.kind == ConfigSerializer::ConfigStatusKind::ParseError ? std::string_view{status.detail}
+                                                                      : std::string_view{ignoredDetail};
 
     // Reserve the trailing label's width so the title wraps short of it
     // instead of colliding under long translations, and measure the row with
@@ -1061,7 +1076,7 @@ void ToolWindow::DrawConfigStatusRow()
     }
     const auto row = Panels::BeginPlainSettingsRow(
         Translate("Settings.Advanced.ConfigStatus"),
-        status.kind == ConfigSerializer::ConfigStatusKind::ParseError ? status.detail : std::string_view{},
+        supporting,
         statusW,
         0.0F,
         SupportingMeasure()
@@ -1069,9 +1084,9 @@ void ToolWindow::DrawConfigStatusRow()
     if (row)
     {
         Panels::RowTitle(row, Translate("Settings.Advanced.ConfigStatus"));
-        if (status.kind == ConfigSerializer::ConfigStatusKind::ParseError)
+        if (!supporting.empty())
         {
-            Panels::RowSupporting(row, status.detail);
+            Panels::RowSupporting(row, supporting);
         }
         Panels::RowTrailingText(row, label, labelColor);
         Panels::EndSettingsRow(row);

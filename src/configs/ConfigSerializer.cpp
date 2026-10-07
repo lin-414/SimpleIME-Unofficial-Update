@@ -183,75 +183,127 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
     return toml::format(tomlTable);
 }
 
-auto ParseConfigurationFromToml(toml::value &rawToml) -> Configuration
+/// Strictly-typed key reader. toml::find_or swallows type mismatches into the
+/// default, making a mistyped key indistinguishable from an absent one; here
+/// a present-but-wrong value is warned about, collected and ignored.
+template <typename T>
+auto findAndSetStrict(toml::value &tomlTable, const char *key, T &value, std::vector<std::string> &ignoredKeys) -> void
 {
-    auto findAndSet = [](auto &tomlTable, const char *key, auto &value) -> void {
-        value = toml::find_or(tomlTable, key, value);
-    };
-    // toml11 is strictly typed: a bare `zoom = 1` (integer) throws inside
-    // get<float>, and find_or swallows the throw into the default — the user's
-    // value vanished without a word. Accept integers for the floating fields.
-    auto findAndSetFloat = [](auto &tomlTable, const char *key, auto &value) -> void {
-        if (tomlTable.contains(key))
+    if (!tomlTable.contains(key))
+    {
+        return; // absent: the default stays
+    }
+    auto &node = tomlTable.at(key);
+    if constexpr (std::is_same_v<T, bool>)
+    {
+        if (node.is_boolean())
         {
-            auto &node = tomlTable.at(key);
-            if (node.is_integer())
-            {
-                value = static_cast<std::remove_reference_t<decltype(value)>>(node.as_integer());
-                return;
-            }
+            value = node.as_boolean();
+            return;
         }
-        value = toml::find_or(tomlTable, key, value);
+    }
+    else if constexpr (std::is_integral_v<T>)
+    {
+        if (node.is_integer())
+        {
+            value = static_cast<T>(node.as_integer());
+            return;
+        }
+    }
+    else if constexpr (std::is_floating_point_v<T>)
+    {
+        // toml11 is strictly typed: a bare `zoom = 1` is an integer, so the
+        // floating fields also accept integers.
+        if (node.is_floating())
+        {
+            value = static_cast<T>(node.as_floating());
+            return;
+        }
+        if (node.is_integer())
+        {
+            value = static_cast<T>(node.as_integer());
+            return;
+        }
+    }
+    else if constexpr (std::is_same_v<T, std::string>)
+    {
+        if (node.is_string())
+        {
+            value = node.as_string();
+            return;
+        }
+    }
+    else if constexpr (std::is_same_v<T, std::vector<std::string>>)
+    {
+        if (node.is_array() && std::ranges::all_of(node.as_array(), [](const auto &element) { return element.is_string(); }))
+        {
+            value = toml::get<std::vector<std::string>>(node);
+            return;
+        }
+    }
+    logger::warn("config key {} has unexpected type, ignoring user value", key);
+    ignoredKeys.emplace_back(key);
+}
+
+auto ParseConfigurationFromToml(toml::value &rawToml, std::vector<std::string> *ignoredKeysOut) -> Configuration
+{
+    std::vector<std::string> ignoredKeys;
+    auto apply = [&ignoredKeys](auto &tomlTable, const char *key, auto &value) -> void {
+        findAndSetStrict(tomlTable, key, value, ignoredKeys);
     };
     Configuration config = GetDefaultConfiguration();
     if (rawToml.contains(KEY_SECTION_CORE))
     {
         auto &coreToml = rawToml[KEY_SECTION_CORE];
-        findAndSet(coreToml, KEY_SHORTCUT, config.shortcut);
-        findAndSet(coreToml, KEY_ENABLE_TSF, config.enableTsf);
-        findAndSet(coreToml, KEY_ENABLE_MOD, config.enableMod);
-        findAndSet(coreToml, KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT, config.fixInconsistentTextEntryCount);
-        findAndSet(coreToml, KEY_AUTO_TOGGLE_KEYBOARD, config.autoToggleKeyboard);
-        findAndSet(coreToml, KEY_FORCE_DPI_AWARENESS, config.forceDpiAwareness);
+        apply(coreToml, KEY_SHORTCUT, config.shortcut);
+        apply(coreToml, KEY_ENABLE_TSF, config.enableTsf);
+        apply(coreToml, KEY_ENABLE_MOD, config.enableMod);
+        apply(coreToml, KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT, config.fixInconsistentTextEntryCount);
+        apply(coreToml, KEY_AUTO_TOGGLE_KEYBOARD, config.autoToggleKeyboard);
+        apply(coreToml, KEY_FORCE_DPI_AWARENESS, config.forceDpiAwareness);
         if (coreToml.contains(KEY_SECTION_LOGGING))
         {
-            auto &loggingToml         = coreToml[KEY_SECTION_LOGGING];
-            config.logging.level      = toml::find_or(loggingToml, KEY_LOG_LEVEL, config.logging.level);
-            config.logging.flushLevel = toml::find_or(loggingToml, KEY_LOG_FLUSH_LEVEL, config.logging.flushLevel);
+            auto &loggingToml = coreToml[KEY_SECTION_LOGGING];
+            apply(loggingToml, KEY_LOG_LEVEL, config.logging.level);
+            apply(loggingToml, KEY_LOG_FLUSH_LEVEL, config.logging.flushLevel);
         }
     }
 
     if (rawToml.contains(KEY_SECTION_RESOURCES))
     {
         auto &resourcesToml = rawToml[KEY_SECTION_RESOURCES];
-        findAndSet(resourcesToml, KEY_TRANSLATION_DIR, config.resources.translationDir);
-        findAndSet(resourcesToml, KEY_FONTS, config.resources.fontPathList);
+        apply(resourcesToml, KEY_TRANSLATION_DIR, config.resources.translationDir);
+        apply(resourcesToml, KEY_FONTS, config.resources.fontPathList);
     }
 
     if (rawToml.contains(KEY_SECTION_APPEARANCE))
     {
         auto &appearanceToml = rawToml[KEY_SECTION_APPEARANCE];
-        findAndSetFloat(appearanceToml, KEY_ZOOM, config.appearance.zoom);
-        findAndSet(appearanceToml, KEY_LANGUAGE, config.appearance.language);
-        findAndSet(appearanceToml, KEY_THEME_STYLE, config.appearance.themeStyle);
-        findAndSet(appearanceToml, KEY_THEME_SOURCE_COLOR, config.appearance.themeSourceColor);
-        findAndSet(appearanceToml, KEY_THEME_DARK_MODE, config.appearance.themeDarkMode);
-        findAndSetFloat(appearanceToml, KEY_THEME_CONTRAST_LEVEL, config.appearance.themeContrastLevel);
-        findAndSet(appearanceToml, KEY_ERROR_DISPLAY_DURATION, config.appearance.errorDisplayDuration);
-        findAndSet(appearanceToml, KEY_VERTICAL_CANDIDATE_LIST, config.appearance.verticalCandidateList);
-        findAndSet(appearanceToml, KEY_AUTO_TOGGLE_LANGUAGE_BAR, config.appearance.autoToggleLanguageBar);
+        apply(appearanceToml, KEY_ZOOM, config.appearance.zoom);
+        apply(appearanceToml, KEY_LANGUAGE, config.appearance.language);
+        apply(appearanceToml, KEY_THEME_STYLE, config.appearance.themeStyle);
+        apply(appearanceToml, KEY_THEME_SOURCE_COLOR, config.appearance.themeSourceColor);
+        apply(appearanceToml, KEY_THEME_DARK_MODE, config.appearance.themeDarkMode);
+        apply(appearanceToml, KEY_THEME_CONTRAST_LEVEL, config.appearance.themeContrastLevel);
+        apply(appearanceToml, KEY_ERROR_DISPLAY_DURATION, config.appearance.errorDisplayDuration);
+        apply(appearanceToml, KEY_VERTICAL_CANDIDATE_LIST, config.appearance.verticalCandidateList);
+        apply(appearanceToml, KEY_AUTO_TOGGLE_LANGUAGE_BAR, config.appearance.autoToggleLanguageBar);
     }
 
     if (rawToml.contains(KEY_SECTION_INPUT))
     {
         auto &input = rawToml[KEY_SECTION_INPUT];
-        findAndSet(input, KEY_ENABLE_UNICODE_PASTE, config.input.enableUnicodePaste);
-        findAndSet(input, KEY_KEEP_IME_OPEN, config.input.keepImeOpen);
-        findAndSet(input, KEY_POS_UPDATE_POLICY, config.input.posUpdatePolicy);
-        findAndSet(input, KEY_MERIDIAN_SUPPORT, config.input.meridianSupport);
-        findAndSet(input, KEY_PRISMA_AVOIDANCE, config.input.prismaAvoidance);
-        findAndSet(input, KEY_SKSEMF_SUPPORT, config.input.skseMenuFrameworkSupport);
-        findAndSet(input, KEY_LAST_NATIVE_CONVERSION, config.input.lastNativeConversion);
+        apply(input, KEY_ENABLE_UNICODE_PASTE, config.input.enableUnicodePaste);
+        apply(input, KEY_KEEP_IME_OPEN, config.input.keepImeOpen);
+        apply(input, KEY_POS_UPDATE_POLICY, config.input.posUpdatePolicy);
+        apply(input, KEY_MERIDIAN_SUPPORT, config.input.meridianSupport);
+        apply(input, KEY_PRISMA_AVOIDANCE, config.input.prismaAvoidance);
+        apply(input, KEY_SKSEMF_SUPPORT, config.input.skseMenuFrameworkSupport);
+        apply(input, KEY_LAST_NATIVE_CONVERSION, config.input.lastNativeConversion);
+    }
+    if (ignoredKeysOut != nullptr)
+    {
+        *ignoredKeysOut = std::move(ignoredKeys);
     }
     return config;
 }
@@ -306,7 +358,7 @@ auto LoadConfiguration(const std::filesystem::path &filePath) -> Configuration
     try
     {
         auto tomlValue = toml::parse(filePath);
-        return ParseConfigurationFromToml(tomlValue);
+        return ParseConfigurationFromToml(tomlValue, nullptr);
     }
     catch (toml::exception &exception)
     {
@@ -324,8 +376,10 @@ auto ValidateConfiguration(const std::filesystem::path &filePath) -> ConfigStatu
     }
     try
     {
-        (void)toml::parse(filePath);
-        return {.kind = ConfigStatusKind::Ok, .detail = {}};
+        auto                     tomlValue = toml::parse(filePath);
+        std::vector<std::string> ignoredKeys;
+        (void)ParseConfigurationFromToml(tomlValue, &ignoredKeys);
+        return {.kind = ConfigStatusKind::Ok, .detail = {}, .ignoredKeys = std::move(ignoredKeys)};
     }
     catch (toml::exception &exception)
     {
