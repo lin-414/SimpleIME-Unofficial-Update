@@ -203,29 +203,20 @@ auto OnMouseEvent(RE::GFxEvent *event, const bool down) -> RE::UI_MESSAGE_RESULT
     io.AddMouseSourceEvent(mouseSource);
     io.AddMouseButtonEvent(static_cast<int>(mouseEvent->button), down);
 
-    // While a Prisma view owns input, every left press refreshes the field
-    // anchor: a click on a text field IS the field, so the next composition
-    // anchors there instead of chasing the live cursor. MenuCursor is the
-    // coordinate space the candidate window lives in — trust it only while the
-    // engine cursor menu keeps it fresh (Prisma draws its own cursor sprite
-    // under its FocusMenu); otherwise the event's stage coords are the best
-    // available observation, even though their space is not verified. Clicks
-    // consumed by the IME window itself (candidate selection) must not move
-    // the anchor onto the candidate window.
-    if (down && mouseEvent->button == 0 && Hooks::PrismaBridge::ShouldRoute() && !io.WantCaptureMouse)
+    // While a Prisma view owns input, a left press pins the field anchor to
+    // the click: a click on a text field IS the field, and the mouse wandering
+    // off afterwards must not drag the anchor away. The engine input-event
+    // sink (EventHandler) observes the same presses for every surface —
+    // including PMCM, whose kModal FocusMenu swallows Scaleform mouse events
+    // before they ever reach this menu — so this path is only a redundant
+    // mirror for menus where ImeMenu does observe clicks. NotifyLeftPress
+    // refuses presses made while a composition is showing, so clicks consumed
+    // by the IME window itself (candidate selection) never move the anchor
+    // by the IME window itself (candidate selection) never move the anchor
+    // onto the candidate window.
+    if (down && mouseEvent->button == 0 && !io.WantCaptureMouse)
     {
-        float anchorX = mouseEvent->x;
-        float anchorY = mouseEvent->y;
-        auto  *ui     = RE::UI::GetSingleton();
-        if (ui != nullptr && ui->IsMenuOpen(RE::CursorMenu::MENU_NAME))
-        {
-            if (const auto *cursor = RE::MenuCursor::GetSingleton(); cursor != nullptr)
-            {
-                anchorX = cursor->cursorPosX;
-                anchorY = cursor->cursorPosY;
-            }
-        }
-        Hooks::PrismaBridge::UpdateFieldAnchor(anchorX, anchorY);
+        Hooks::PrismaBridge::NotifyLeftPress();
     }
 
     if (Core::State::GetInstance().IsImeInputting())

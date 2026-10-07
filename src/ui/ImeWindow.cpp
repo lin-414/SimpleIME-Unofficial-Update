@@ -298,12 +298,12 @@ auto UpdateImeWindowPosByCaret(ImVec2 &windowPos) -> bool
 
     // Meridian pages are CEF — the bridge renders candidates into the page
     // itself, this window must not compete. Prisma fields are Ultralight and
-    // have no Scaleform caret either, but the bridge keeps a session-sticky
-    // field anchor (seeded from the session-start cursor and refreshed on
-    // every left click inside the view) — anchor there instead of chasing the
-    // live cursor. Returning false when no anchor exists yet leaves the
-    // position untouched (no cursor fallback here) and keeps the anchor
-    // unlocked so the retry cadence re-reads it once one is seeded.
+    // have no Scaleform caret either, but the bridge tracks a field anchor
+    // from the live cursor while the session is open (paused while a
+    // composition shows) — anchor there instead of chasing the live cursor.
+    // Returning false when no anchor exists yet leaves the position
+    // untouched (no cursor fallback here) and keeps the anchor unlocked so
+    // the retry cadence re-reads it once tracking has captured one.
     if (Hooks::MeridianBridge::HasFocus())
     {
         return false;
@@ -338,9 +338,10 @@ auto UpdateImeWindowPos(Settings::WindowPosUpdatePolicy policy, ImVec2 &windowPo
 {
     // Prisma fields have no Scaleform caret and must never fall back to the
     // live cursor — that is the "candidate box appears wherever the mouse is"
-    // bug. The bridge's field anchor (clicks, session-start cursor) is the
-    // only truthful anchor; while it is missing, the previous position stands
-    // and the retry cadence re-reads it once one is seeded.
+    // bug. The bridge's field anchor (tracked from the live cursor while the
+    // session is open, refreshed on clicks ImeMenu observes) is the only
+    // truthful anchor; while it is missing, the previous position stands
+    // and the retry cadence re-reads it once tracking has captured one.
     if (Hooks::PrismaBridge::ShouldRoute())
     {
         return UpdateImeWindowPosByCaret(windowPos);

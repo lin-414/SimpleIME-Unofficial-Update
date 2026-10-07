@@ -19,6 +19,7 @@
 #include "hooks/PrismaBridge.h"
 
 #include "ImeApp.h"
+#include "core/State.h"
 #include "ime/ImeController.h"
 #include "log.h"
 #include "PrismaUI/PrismaUI_API.h"
@@ -49,13 +50,14 @@ std::atomic<std::uint64_t>  s_lastRefreshMs{0};
 std::atomic<HWND>           s_gameHwnd{nullptr}; ///< set by ImeWnd once created; the WM_CHAR commit target
 std::atomic<std::uint64_t>  s_fieldAnchor{0}; ///< both coordinates bit-packed (X low, Y high); see UpdateFieldAnchor
 std::atomic<bool>           s_fieldAnchorValid{false};
+std::atomic<bool>           s_anchorPinned{false}; ///< a click was observed on the view: the anchor IS the field, stop tracking the cursor
 
-/// Seed the field anchor from the engine cursor — but only while the engine
+/// Track the engine cursor into the field anchor — but only while the engine
 /// cursor menu is open and keeping MenuCursor fresh (Prisma's FocusMenu sets
 /// kUsesCursor, so this holds for PMCM-style takeovers). Reading the
 /// singleton without that guard would write a stale position, which is worse
 /// than no anchor: a valid garbage anchor suppresses every fallback.
-void SeedFieldAnchorFromCursor()
+void TrackFieldAnchorFromCursor()
 {
     auto *ui = RE::UI::GetSingleton();
     if (ui == nullptr || !ui->IsMenuOpen(RE::CursorMenu::MENU_NAME))
@@ -64,8 +66,44 @@ void SeedFieldAnchorFromCursor()
     }
     if (const auto *cursor = RE::MenuCursor::GetSingleton(); cursor != nullptr)
     {
+        if (!s_fieldAnchorValid.load(std::memory_order_acquire))
+        {
+            logger::info(
+                "Prisma field anchor starts tracking the cursor at ({:.0f},{:.0f})",
+                cursor->cursorPosX,
+                cursor->cursorPosY);
+        }
         UpdateFieldAnchor(cursor->cursorPosX, cursor->cursorPosY);
     }
+}
+
+/// Per-frame anchor tracking for a live Prisma session, before the first
+/// observed click. The one-shot seed this replaces captured the cursor once
+/// at focus-gain — for PMCM that is the pre-open mouse position
+/// (HasAnyActiveFocus flips before the user has steered the cursor onto a
+/// field), and the click refresh in ImeMenu::OnMouseEvent cannot repair it
+/// because the engine routes Scaleform mouse events to the top menu, where
+/// Prisma's FocusMenu (kModal, equal depth priority) takes them. Tracking
+/// every frame means the anchor is wherever the user is pointing when a
+/// composition starts — good enough while no click has been observed (e.g. a
+/// field the menu auto-focused). Once NotifyLeftPress pins the anchor to a
+/// click, tracking stands down: the click point IS the field, and the mouse
+/// wandering off afterwards must not drag the anchor away with it. Paused
+/// while a composition is showing so the value under the candidate window's
+/// appearance-frame capture cannot drift mid-typing; that capture is
+/// one-shot anyway (m_caretAnchorLocked), so tracking never chases the
+/// cursor beneath a showing candidate window. PrismaUI itself draws its
+/// cursor sprite and feeds its views from this same MenuCursor position
+/// (ViewRenderer::DrawCursor / InputHandler::MouseEventListener), so the
+/// coordinate spaces agree by construction.
+void TrackFieldAnchor()
+{
+    if (!ShouldRoute() || s_anchorPinned.load(std::memory_order_acquire) ||
+        Ime::Core::State::GetInstance().IsImeInputting())
+    {
+        return;
+    }
+    TrackFieldAnchorFromCursor();
 }
 } // namespace
 
@@ -131,6 +169,11 @@ void Refresh()
     {
         return;
     }
+    // Cheap per-frame work first, ahead of the throttled focus query: the
+    // field anchor must reflect the cursor at composition start, which can
+    // land inside a single 500ms focus-query window.
+    TrackFieldAnchor();
+
     const std::uint64_t now = GetTickCount64();
     if (now - s_lastRefreshMs.load() < REFRESH_INTERVAL_MS)
     {
@@ -163,22 +206,15 @@ void Refresh()
         logger::info("Prisma view focus {} — re-evaluating IME state", focus ? "GAINED" : "lost");
         if (!focus)
         {
-            // Session over: drop the anchor so the next session re-seeds.
+            // Session over: drop the anchor (and its click pin) so the next
+            // session re-seeds.
             s_fieldAnchorValid.store(false, std::memory_order_release);
+            s_anchorPinned.store(false, std::memory_order_release);
         }
         if (auto *controller = Ime::ImeController::GetInstance(); controller->IsReady())
         {
             controller->SyncImeState();
         }
-    }
-    // Live session without a field anchor yet — a freshly gained focus, or an
-    // association handshake that flipped s_hasActiveFocus before this loop
-    // ever saw a transition. Seed from the engine cursor; retried every tick
-    // until a seed or a click provides one, and never overwrites a click-set
-    // anchor because it only runs while the anchor is invalid.
-    if (ShouldRoute() && !s_fieldAnchorValid.load(std::memory_order_acquire))
-    {
-        SeedFieldAnchorFromCursor();
     }
 }
 
@@ -288,6 +324,50 @@ bool GetFieldAnchor(float &x, float &y)
     x = std::bit_cast<float>(static_cast<std::uint32_t>(packed));
     y = std::bit_cast<float>(static_cast<std::uint32_t>(packed >> 32));
     return true;
+}
+
+void NotifyLeftPress()
+{
+    // Game thread, from the input-event sink. Scaleform mouse events never
+    // reach ImeMenu under PMCM-style takeovers (the engine routes them to the
+    // top menu, Prisma's kModal FocusMenu), so the engine input stream is the
+    // only click observation we get — the same stream Prisma's own
+    // MouseEventListener feeds its views from. A left press while a Prisma
+    // view owns input is the strongest field proxy there is (the user just
+    // clicked where they are about to type), so pin the anchor to it: the
+    // per-frame cursor tracking stands down until the session ends, and the
+    // mouse wandering off after the click cannot drag the anchor away.
+    if (!s_enabled.load() || s_unavailable || !ShouldRoute())
+    {
+        return;
+    }
+    if (Ime::Core::State::GetInstance().IsImeInputting())
+    {
+        // A press during composition goes to the candidate window (selection)
+        // or aborts it — either way it must not move the field anchor onto
+        // the candidate window.
+        return;
+    }
+    auto *ui = RE::UI::GetSingleton();
+    if (ui == nullptr || !ui->IsMenuOpen(RE::CursorMenu::MENU_NAME))
+    {
+        return; // MenuCursor would be stale — see TrackFieldAnchorFromCursor
+    }
+    const auto *cursor = RE::MenuCursor::GetSingleton();
+    if (cursor == nullptr)
+    {
+        return;
+    }
+    const bool firstPin = !s_anchorPinned.load(std::memory_order_acquire);
+    UpdateFieldAnchor(cursor->cursorPosX, cursor->cursorPosY);
+    s_anchorPinned.store(true, std::memory_order_release);
+    if (firstPin)
+    {
+        logger::info(
+            "Prisma field anchor pinned to left press at ({:.0f},{:.0f})",
+            cursor->cursorPosX,
+            cursor->cursorPosY);
+    }
 }
 
 unsigned AssociationMessage()

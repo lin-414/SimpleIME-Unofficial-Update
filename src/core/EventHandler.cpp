@@ -3,6 +3,7 @@
 #include "ImeApp.h"
 #include "ImeWnd.hpp"
 #include "RE/ControlMap.h"
+#include "hooks/PrismaBridge.h"
 #include "hooks/ScaleformHook.h"
 #include "hooks/SkseMenuFrameworkBridge.h"
 #include "ime/ImeController.h"
@@ -35,11 +36,50 @@ private:
     static void FixInconsistentTextEntryCount(const Event *event);
 };
 
+/// Engine input stream observer. Scaleform mouse events only reach the top
+/// menu (Prisma's kModal FocusMenu under PMCM), so ImeMenu never sees clicks
+/// there — this sink watches the same raw button stream PrismaUI's own
+/// MouseEventListener feeds its views from, and hands left presses to the
+/// Prisma bridge so it can pin the candidate-window field anchor to the
+/// click. Cheap gate first: this fires for every input event batch in the
+/// game.
+class InputEventSink final : public RE::BSTEventSink<RE::InputEvent *>
+{
+public:
+    auto ProcessEvent(RE::InputEvent *const *a_event, RE::BSTEventSource<RE::InputEvent *> * /*a_eventSource*/)
+        -> RE::BSEventNotifyControl override
+    {
+        if (a_event == nullptr || *a_event == nullptr || !Hooks::PrismaBridge::ShouldRoute())
+        {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        for (auto *event = *a_event; event != nullptr; event = event->next)
+        {
+            const auto *button = event->AsButtonEvent();
+            if (button == nullptr || button->GetDevice() != RE::INPUT_DEVICE::kMouse)
+            {
+                continue;
+            }
+            if (button->GetIDCode() == 0 && button->IsPressed())
+            {
+                Hooks::PrismaBridge::NotifyLeftPress();
+            }
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
 namespace
 {
 auto GetMenuOpenCloseEventSink() -> std::unique_ptr<MenuOpenCloseEventSink> &
 {
     static std::unique_ptr<MenuOpenCloseEventSink> instance = nullptr;
+    return instance;
+}
+
+auto GetInputEventSink() -> std::unique_ptr<InputEventSink> &
+{
+    static std::unique_ptr<InputEventSink> instance = nullptr;
     return instance;
 }
 
@@ -126,6 +166,14 @@ void InstallEventSinks()
             ui->AddEventSink(menuSink.get());
         }
     }
+    if (auto &inputSink = GetInputEventSink(); inputSink == nullptr)
+    {
+        if (auto *devices = RE::BSInputDeviceManager::GetSingleton(); devices)
+        {
+            inputSink = std::make_unique<InputEventSink>();
+            devices->AddEventSink(inputSink.get());
+        }
+    }
 }
 
 void UnInstallEventSinks()
@@ -137,6 +185,14 @@ void UnInstallEventSinks()
             ui->RemoveEventSink(menuSink.get());
         }
         menuSink.reset();
+    }
+    if (auto &inputSink = GetInputEventSink(); inputSink != nullptr)
+    {
+        if (auto *devices = RE::BSInputDeviceManager::GetSingleton(); devices)
+        {
+            devices->RemoveEventSink(inputSink.get());
+        }
+        inputSink.reset();
     }
 }
 
