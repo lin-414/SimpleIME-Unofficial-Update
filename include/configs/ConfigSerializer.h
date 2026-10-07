@@ -36,8 +36,10 @@ struct ConfigStatus
 
 //! @brief Save the configuration to a file. Will overwrite the file if it already exists.
 //! All exceptions will be caught and logged, and the function will not throw.
-//! The file shall not be written if any error occurs during serialization, and the original file will be kept intact.
-void SaveConfiguration(const std::filesystem::path &filePath, const Configuration &configuration);
+//! Returns false on failure (the user is notified through the ErrorNotifier
+//! and the temp file is removed). The temp-file + rename write keeps the
+//! original file intact unless the direct-write fallback fails too.
+auto SaveConfiguration(const std::filesystem::path &filePath, const Configuration &configuration) -> bool;
 
 auto LoadConfiguration(const std::filesystem::path &filePath) -> Configuration;
 

@@ -29,10 +29,10 @@ constexpr auto Load() -> Settings
     return ConvertConfigurationToSettings(configuration);
 }
 
-constexpr void Save(const Settings &settings)
+constexpr auto Save(const Settings &settings) -> bool
 {
     const auto config = ConvertSettingsToConfiguration(settings);
-    ConfigSerializer::SaveConfiguration(ConfigFilePath(), config);
+    return ConfigSerializer::SaveConfiguration(ConfigFilePath(), config);
 }
 
 } // namespace SettingsManager

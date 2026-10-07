@@ -53,7 +53,10 @@ auto ToolWindowMenu::ProcessMessage(RE::UIMessage &a_message) -> RE::UI_MESSAGE_
         }
         case RE::UI_MESSAGE_TYPE::kHide: {
             ImeController::GetInstance()->SyncImeState(); // TODO: really need this?
-            ImeApp::GetInstance().SaveSettings();
+            if (!ImeApp::GetInstance().SaveSettings())
+            {
+                logger::error("ToolWindowMenu: settings were not saved on hide");
+            }
             results = RE::UI_MESSAGE_RESULTS::kHandled;
             break;
         }

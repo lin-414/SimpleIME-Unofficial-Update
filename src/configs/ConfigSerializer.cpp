@@ -4,6 +4,7 @@
 #include "configs/ConfigSerializer.h"
 
 #include "configs/configuration.h"
+#include "imguiex/ErrorNotifier.h"
 #include "log.h"
 #include "toml/toml.hpp"
 
@@ -309,18 +310,19 @@ auto ParseConfigurationFromToml(toml::value &rawToml, std::vector<std::string> *
 }
 } // namespace
 
-void SaveConfiguration(const std::filesystem::path &filePath, const Configuration &configuration)
+auto SaveConfiguration(const std::filesystem::path &filePath, const Configuration &configuration) -> bool
 {
+    // Write to a temp file first, then replace atomically: opening the real
+    // file with trunc used to mean a mid-write failure left a truncated
+    // (config-losing) file behind. MSVC's filesystem::rename implements
+    // POSIX semantics (replaces the target).
+    std::filesystem::path tempPath = filePath;
+    tempPath += ".tmp";
+    bool success = false;
     try
     {
         const auto tomlString = FormatConfigurationToToml(configuration);
 
-        // Write to a temp file first, then replace atomically: opening the real
-        // file with trunc used to mean a mid-write failure left a truncated
-        // (config-losing) file behind. MSVC's filesystem::rename implements
-        // POSIX semantics (replaces the target).
-        std::filesystem::path tempPath = filePath;
-        tempPath += ".tmp";
         {
             std::ofstream file;
             file.exceptions(std::ios::failbit | std::ios::badbit);
@@ -338,6 +340,7 @@ void SaveConfiguration(const std::filesystem::path &filePath, const Configuratio
             file << tomlString;
         }
         logger::info("Configuration saved successfully to {}", filePath.generic_string());
+        success = true;
     }
     catch (const std::ios_base::failure &e)
     {
@@ -351,6 +354,15 @@ void SaveConfiguration(const std::filesystem::path &filePath, const Configuratio
     {
         logger::error("Unknown error during serialization: {}", e.what());
     }
+    if (!success)
+    {
+        // Best effort: a failed rename leaves the temp file behind, and a
+        // failed write leaves a partial one.
+        std::error_code removeError;
+        std::filesystem::remove(tempPath, removeError);
+        ErrorNotifier::GetInstance().Error("Failed to save the configuration");
+    }
+    return success;
 }
 
 auto LoadConfiguration(const std::filesystem::path &filePath) -> Configuration

@@ -609,7 +609,7 @@ bool ImeApp::RequestImeThreadTeardown()
     return m_imeTeardownDone.load();
 }
 
-void ImeApp::SaveSettings()
+auto ImeApp::SaveSettings() -> bool
 {
     // Stamp the last in-game observed 中/英 state into the runtime cache
     // before the write. Only when this session actually observed a mode: the
@@ -622,7 +622,7 @@ void ImeApp::SaveSettings()
     {
         m_settings.input.lastNativeConversion = conversionState.GetConversionMode().IsNative();
     }
-    SettingsManager::Save(m_settings);
+    return SettingsManager::Save(m_settings);
 }
 
 void ImeApp::InstallHooks()

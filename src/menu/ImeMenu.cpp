@@ -337,7 +337,10 @@ void ImeMenu::OnShow()
 void ImeMenu::OnHide()
 {
     logger::trace("ImeMenu: Hide");
-    ImeApp::GetInstance().SaveSettings();
+    if (!ImeApp::GetInstance().SaveSettings())
+    {
+        logger::error("ImeMenu: settings were not saved on hide");
+    }
 }
 
 auto ImeMenu::ProcessScaleformEvent(const RE::BSUIScaleformData *data) -> RE::UI_MESSAGE_RESULTS

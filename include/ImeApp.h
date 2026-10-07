@@ -123,7 +123,7 @@ public:
     void OnInputLoaded();
     void Draw();
     void Uninitialize();
-    void SaveSettings();
+    auto SaveSettings() -> bool;
 
     /// Fallback frame driver for Meridian sessions: the engine stops calling
     /// ImeMenu::PostDisplay (the normal ImGui frame source) while a Meridian
