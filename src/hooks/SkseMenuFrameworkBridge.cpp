@@ -163,6 +163,32 @@ void HookedSetPlatformImeData(void *viewport, void *imeData)
     }
 }
 
+/// The framework module handle, resolved at every use site (nothing here can
+/// keep the DLL pinned against unload).
+HMODULE FrameworkModule()
+{
+    return GetModuleHandleW(L"SKSEMenuFramework.dll");
+}
+
+/// Identity (size, last-write time) of the loaded framework DLL — the
+/// fingerprint keying the anchor cache. False when the module is gone or its
+/// file attributes cannot be queried.
+bool TryFrameworkIdentity(std::uint64_t &a_size, std::uint64_t &a_mtime)
+{
+    const HMODULE module = FrameworkModule();
+    wchar_t path[MAX_PATH] = {};
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (module == nullptr || GetModuleFileNameW(module, path, MAX_PATH) == 0 ||
+        !GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    {
+        return false;
+    }
+    a_size  = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
+    a_mtime = (static_cast<std::uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
+              attributes.ftLastWriteTime.dwLowDateTime;
+    return true;
+}
+
 void InstallPlatformImeDataHook(void *io)
 {
     if (io == nullptr || s_platformImeHookInstalled.load(std::memory_order_acquire))
@@ -173,7 +199,7 @@ void InstallPlatformImeDataHook(void *io)
         reinterpret_cast<std::uint8_t *>(io) + IMGUI_IO_SET_PLATFORM_IME_DATA_FN_OFFSET);
     const auto original = *slot;
     HMODULE owner = nullptr;
-    const HMODULE frameworkModule = GetModuleHandleW(L"SKSEMenuFramework.dll");
+    const HMODULE frameworkModule = FrameworkModule();
     if (original == nullptr || frameworkModule == nullptr ||
         !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                             reinterpret_cast<LPCWSTR>(original), &owner) ||
@@ -239,7 +265,7 @@ struct FrameworkApi
 
     [[nodiscard]] bool Resolve()
     {
-        module = GetModuleHandleW(L"SKSEMenuFramework.dll");
+        module = FrameworkModule();
         if (module == nullptr)
         {
             return false;
@@ -369,7 +395,7 @@ void RestoreCalibratedImeDataOffset()
     {
         return;
     }
-    std::uint64_t size = 0, mtime = 0, offset = 0;
+    std::uint64_t size = 0, mtime = 0;
     std::uint64_t cachedSize = 0, cachedMtime = 0, cachedOffset = 0;
     bool haveSize = false, haveMtime = false, haveOffset = false;
     for (std::string line; std::getline(file, line);)
@@ -390,17 +416,10 @@ void RestoreCalibratedImeDataOffset()
     {
         return;
     }
-    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
-    wchar_t path[MAX_PATH] = {};
-    WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (module == nullptr || GetModuleFileNameW(module, path, MAX_PATH) == 0 ||
-        !GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    if (!TryFrameworkIdentity(size, mtime))
     {
         return;
     }
-    size  = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
-    mtime = (static_cast<std::uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
-            attributes.ftLastWriteTime.dwLowDateTime;
     if (size != cachedSize || mtime != cachedMtime || cachedOffset < IMGUI_CTX_SCAN_MIN ||
         cachedOffset + sizeof(ImGuiPlatformImeDataMirror) > IMGUI_CTX_SCAN_MAX)
     {
@@ -413,11 +432,8 @@ void RestoreCalibratedImeDataOffset()
 
 void SaveAnchorCache(std::size_t offset)
 {
-    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
-    wchar_t path[MAX_PATH] = {};
-    WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (module == nullptr || GetModuleFileNameW(module, path, MAX_PATH) == 0 ||
-        !GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    std::uint64_t size = 0, mtime = 0;
+    if (!TryFrameworkIdentity(size, mtime))
     {
         return;
     }
@@ -428,9 +444,8 @@ void SaveAnchorCache(std::size_t offset)
     {
         return;
     }
-    file << "framework_size=" << ((static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow) << "\n"
-         << "framework_mtime=" << ((static_cast<std::uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
-                                   attributes.ftLastWriteTime.dwLowDateTime) << "\n"
+    file << "framework_size=" << size << "\n"
+         << "framework_mtime=" << mtime << "\n"
          << "ime_data_offset=" << offset << "\n";
 }
 
@@ -451,15 +466,12 @@ constexpr KnownFrameworkImeOffset kKnownImeOffsets[] = {
 
 std::uint32_t FrameworkDllSize()
 {
-    const HMODULE module = GetModuleHandleW(L"SKSEMenuFramework.dll");
-    wchar_t path[MAX_PATH] = {};
-    WIN32_FILE_ATTRIBUTE_DATA attributes{};
-    if (module == nullptr || GetModuleFileNameW(module, path, MAX_PATH) == 0 ||
-        !GetFileAttributesExW(path, GetFileExInfoStandard, &attributes))
+    std::uint64_t size = 0, mtime = 0;
+    if (!TryFrameworkIdentity(size, mtime))
     {
         return 0;
     }
-    return attributes.nFileSizeLow;
+    return static_cast<std::uint32_t>(size);
 }
 
 void FinishCalibration(std::size_t offset)
