@@ -1044,24 +1044,49 @@ void ImeWnd::DrawImeStates()
     const bool inputProcessorActive =
         state.Has(Core::State::INPUT_PROCESSOR_ACTIVATED) && m_inputMethodManager != nullptr &&
         m_inputMethodManager->GetActiveLangProfile().dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR;
-    stateIcon(textServiceFocused);                                 ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("TEXT_SERVICE_FOCUS");
-    stateIcon(state.Has(Core::State::IN_COMPOSING));        ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("IN_COMPOSING");
-    stateIcon(state.Has(Core::State::IN_CAND_CHOOSING));    ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("IN_CAND_CHOOSING");
-    stateIcon(conversionMode.IsAlphanumeric());             ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMODE Native"); ImGui::SameLine();
-    stateIcon(conversionMode.IsNative());                   ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: NATIVE"); ImGui::SameLine();
-    stateIcon(conversionMode.IsKatakana());                 ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: KATAKANA"); ImGui::SameLine();
-    stateIcon(conversionMode.IsFullShape());                ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: FULLSHAPE"); ImGui::SameLine();
-    stateIcon(conversionMode.IsRoman());                    ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: ROMAN"); ImGui::SameLine();
-    stateIcon(conversionMode.IsCharCode());                 ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: CHARCODE"); ImGui::SameLine();
-    stateIcon(conversionMode.IsSoftKeyboard());             ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: SOFTKEYBOARD"); ImGui::SameLine();
-    stateIcon(conversionMode.IsNoConversion());             ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: NOCONVERSION"); ImGui::SameLine();
-    stateIcon(conversionMode.IsEudc());                     ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: EUDC"); ImGui::SameLine();
-    stateIcon(conversionMode.IsSymbol());                   ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: SYMBOL"); ImGui::SameLine();
-    stateIcon(conversionMode.IsFixed());                    ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("CMode: FIXED");
-    stateIcon(inputProcessorActive);                        ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("INPUT_PROCESSOR_ACTIVATED");
-    stateIcon(state.Has(Core::State::IME_DISABLED));        ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("IME_DISABLED");
-    stateIcon(state.Has(Core::State::GAME_LOADING));        ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("GAME_LOADING");
-    stateIcon(state.Has(Core::State::KEYBOARD_OPEN));       ImGui::SameLine(); ImGuiEx::M3::AlignedLabel("KEYBOARD_OPEN");
+    struct DebugFlag
+    {
+        bool        on;
+        const char *label;
+    };
+    // Chips flow left to right inside one group; a new group starts a new line
+    // (SameLine only between chips — a trailing one would glue the groups).
+    const auto drawFlags = [&stateIcon](const std::initializer_list<DebugFlag> &flags) {
+        bool first = true;
+        for (const auto &flag : flags)
+        {
+            if (!first)
+            {
+                ImGui::SameLine();
+            }
+            first = false;
+            stateIcon(flag.on);
+            ImGui::SameLine();
+            ImGuiEx::M3::AlignedLabel(flag.label);
+        }
+    };
+    drawFlags({
+        {textServiceFocused,                       "TEXT_SERVICE_FOCUS"},
+        {state.Has(Core::State::IN_COMPOSING),     "IN_COMPOSING"},
+        {state.Has(Core::State::IN_CAND_CHOOSING), "IN_CAND_CHOOSING"},
+        {conversionMode.IsAlphanumeric(),          "CMode: ALPHANUMERIC"},
+        {conversionMode.IsNative(),                "CMode: NATIVE"},
+        {conversionMode.IsKatakana(),              "CMode: KATAKANA"},
+        {conversionMode.IsFullShape(),             "CMode: FULLSHAPE"},
+        {conversionMode.IsRoman(),                 "CMode: ROMAN"},
+        {conversionMode.IsCharCode(),              "CMode: CHARCODE"},
+        {conversionMode.IsSoftKeyboard(),          "CMode: SOFTKEYBOARD"},
+        {conversionMode.IsNoConversion(),          "CMode: NOCONVERSION"},
+        {conversionMode.IsEudc(),                  "CMode: EUDC"},
+        {conversionMode.IsSymbol(),                "CMode: SYMBOL"},
+        {conversionMode.IsFixed(),                 "CMode: FIXED"},
+    });
+    drawFlags({
+        {inputProcessorActive,               "INPUT_PROCESSOR_ACTIVATED"},
+        {state.Has(Core::State::IME_DISABLED), "IME_DISABLED"},
+        {state.Has(Core::State::GAME_LOADING), "GAME_LOADING"},
+        {state.Has(Core::State::KEYBOARD_OPEN), "KEYBOARD_OPEN"},
+    });
     // clang-format on
     ImGui::End();
 #endif
