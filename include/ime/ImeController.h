@@ -49,7 +49,9 @@ public:
      * @param guidProfile the @c LangProfile guid
      */
     void ActivateLangProfile(const GUID &guidProfile) const;
-    auto CommitCandidate(DWORD index) const -> void;
+    /// The actual commit runs on the IME thread; a failure there is reported
+    /// through the ErrorNotifier. SUCCESS here means the task was dispatched.
+    auto CommitCandidate(DWORD index) const -> IImeModule::Result;
     auto SetConversionMode(DWORD conversionMode) const -> void;
 
     //////////////////////////////////////////////////

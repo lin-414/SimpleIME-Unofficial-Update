@@ -201,13 +201,14 @@ auto Imm32TextService::CommitCandidate(DWORD index) -> bool
 {
     logger::debug("CommitCandidate {}", index);
     HIMC hImc = ImmGetContext(m_imeHwnd);
-
-    bool result = true;
-    if (hImc != nullptr)
+    if (hImc == nullptr)
     {
-        result = ImmNotifyIME(hImc, NI_SELECTCANDIDATESTR, 0, index) != FALSE;
+        // Without a context the selection can never reach the IME.
+        logger::error("CommitCandidate({}) failed: no input context on the IME window", index);
+        return false;
     }
 
+    const bool result = ImmNotifyIME(hImc, NI_SELECTCANDIDATESTR, 0, index) != FALSE;
     ImmReleaseContext(m_imeHwnd, hImc);
     return result;
 }

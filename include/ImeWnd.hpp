@@ -64,12 +64,9 @@ public:
 
     //! Must call from IME thread.
     //! @see ImeController::CommitCandidate
-    void CommitCandidate(const DWORD index) const
+    [[nodiscard]] bool CommitCandidate(const DWORD index) const
     {
-        if (m_textService)
-        {
-            m_textService->CommitCandidate(index);
-        }
+        return m_textService != nullptr && m_textService->CommitCandidate(index);
     }
 
     //! Must call from IME thread.

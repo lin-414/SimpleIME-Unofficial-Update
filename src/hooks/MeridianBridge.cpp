@@ -661,7 +661,11 @@ void OnListenerPayload(const char *payload)
         // CommitCandidate marshals to the IME thread via AddTask (task queue
         // + PostMessage), so calling it from this CEF callback thread is safe;
         // AddTask touches none of this section's locks.
-        Ime::ImeController::GetInstance()->CommitCandidate(pickIndex);
+        if (const auto result = Ime::ImeController::GetInstance()->CommitCandidate(pickIndex);
+            !Ime::IImeModule::IsSuccess(result))
+        {
+            logger::error("Meridian candidate pick {} was not dispatched", pickIndex);
+        }
         return;
     }
     ListenerOutcome outcome = ListenerOutcome::Ignore;

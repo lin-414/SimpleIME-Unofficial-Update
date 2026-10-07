@@ -170,7 +170,11 @@ void DrawCandidates(const CandidateUi &candidateUi)
         }
         if (clicked < candidateList.size())
         {
-            ImeController::GetInstance()->CommitCandidate(static_cast<DWORD>(clicked));
+            if (const auto result = ImeController::GetInstance()->CommitCandidate(static_cast<DWORD>(clicked));
+                !IImeModule::IsSuccess(result))
+            {
+                logger::error("Candidate commit was not dispatched ({})", IImeModule::IsFailed(result) ? "failed" : "disabled");
+            }
         }
     }
 }
@@ -246,7 +250,11 @@ auto DrawVerticalCandidates(const CandidateUi &candidateUi) -> void
         }
         if (clicked < candidateList.size())
         {
-            ImeController::GetInstance()->CommitCandidate(static_cast<DWORD>(clicked));
+            if (const auto result = ImeController::GetInstance()->CommitCandidate(static_cast<DWORD>(clicked));
+                !IImeModule::IsSuccess(result))
+            {
+                logger::error("Candidate commit was not dispatched ({})", IImeModule::IsFailed(result) ? "failed" : "disabled");
+            }
         }
     }
 }

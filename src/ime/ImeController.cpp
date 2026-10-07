@@ -84,18 +84,20 @@ void ImeController::ActivateLangProfile(const GUID &guidProfile) const
     });
 }
 
-auto ImeController::CommitCandidate(DWORD index) const -> void
+auto ImeController::CommitCandidate(DWORD index) const -> IImeModule::Result
 {
-    if (!IsReady()) return;
+    if (!IsReady()) return IImeModule::Result::DISABLED;
 
     AddTask([this, index] -> void {
         if (!IsReady()) return; // may run after Shutdown nulls the members
         ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
-        if (IsModEnabled() && imeWnd != nullptr)
+        if (IsModEnabled() && imeWnd != nullptr && !imeWnd->CommitCandidate(index))
         {
-            imeWnd->CommitCandidate(index);
+            logger::error("CommitCandidate({}) failed on the IME thread", index);
+            ErrorNotifier::GetInstance().Warning("Failed to commit the selected candidate");
         }
     });
+    return IImeModule::Result::SUCCESS;
 }
 
 auto ImeController::SetConversionMode(DWORD conversionMode) const -> void
