@@ -16,6 +16,11 @@ fix_inconsistent_text_entry_count = true
 # 自动打开/关闭键盘
 # 在 IME 激活/关闭的同时打开/关闭键盘(切换本地语言/英文输入状态)
 auto_toggle_keyboard = false
+# 禁用 IME 时把输入法切换到英文键盘布局(旧行为，默认关闭)
+# 开启它能确定地保证游戏拿到原始按键，但语言 profile 是会话级的：任务栏会切成 ENG，
+# 而且退出游戏后系统不会还原它。关闭时保持你当前的输入法不变，只把它置为英文/关闭态
+# (等价于自己按一下 Shift 切中英文)
+switch_english_layout_on_disable = false
 # 进程级 DPI 感知 (默认开启)
 # Skyrim 本体不声明 DPI 感知，在系统缩放非 100% 的屏幕上，整个游戏画面(包括本 Mod 的设置界面)
 # 会被系统拉伸渲染，导致字体普遍发虚。开启后 SimpleIME 在游戏创建窗口前将进程声明为 Per-Monitor-V2 感知，
@@ -79,3 +84,8 @@ prisma_avoidance = true
 # IME，并将上屏中文直接注入输入框。未安装 SKSEMenuFramework.dll(或版本低于 3.7)
 # 时此选项无效果。
 skse_menu_framework_support = true
+# 运行时缓存，非用户配置：游戏内最后观察到的 中/英 输入状态(true=中文)
+# 由 Mod 在每次保存配置时自动更新，用于下次启动游戏时语言栏的初始显示。
+# 微信等输入法不通过系统接口公布中/英状态，没有这个缓存时首次进入输入框无法预判。
+# 请勿手动修改。
+last_native_conversion = true
