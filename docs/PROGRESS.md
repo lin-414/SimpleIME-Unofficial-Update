@@ -1901,3 +1901,22 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
 - 构建 EXIT 0;测试 48/48;已部署。预期日志:"Hooked ImGuiIO::SetPlatformImeDataFn
   at io+192"。
 - 版本 3.1.1-beta → **3.1.2-beta**（10-07 修复：Prisma 候选窗锚点点击钉定+逐帧跟踪；中/英模式记忆与跨会话持久化 last_native_conversion；Explorer 日志定位走物理路径）。
+
+## 第 48 轮：精简重构 L0–L4 + disable 不切语言 profile → 3.1.4-beta（2026-10-08）
+
+- **精简重构全档完成**（方案与逐档记录见 docs/CLEANUP-PLAN.md，`7ceebcd` 起约 45 提交）：
+  L0 死码删除（enumeration.h/未用访问器/FrameworkFingerprint 等，净删 241 行）；
+  L1 三档去重单源化（DetourAttach/Detach 合并、ScopeFlag、BridgeGate、HandleFocus、
+  AcquiredHimc RAII 收编全部 HIMC 配对、PostToImeThread、ShouldStripCommittedChar、
+  候选药丸 painter、SettingsComboRow/Section/Page、MeasureListText 等）；
+  L2 搬移与拆分（ImGui 输入态修复独立 TU、BridgeScript 移头 + Node 自测首次激活、
+  UpdateFieldAnchor 三模式、EnableIme 两臂、WndProc 四消息体、DrawResultCard 四段、
+  TextStore 仅缩进）；L3 配置回归网（26/26 随机覆盖 + settings 往返不动点测试；描述表
+  经逐站点核验评估为不做，见 §4.1.1）；L4 卫生（PROGRESS 归档 docs/、PNG 去跟踪、
+  ADR-0003 约定漂移、NirnLab s_state 竞态修复）。
+- **disable 不再切语言 profile**（`switch_english_layout_on_disable`，默认关）：关闭
+  输入法改走跨进程 global 隔间（open/close + conversion），会话语言区域不动——旧路径
+  把游戏内键盘布局留给桌面，任务栏残留 ENG。Imm32/TSF 通道不可用时回退旧 profile 切换。
+- 配置键 `last_native_conversion` 补进出厂模板；`simple_rc.py` 固化 configure 后的 RC 补丁。
+- 构建 EXIT 0；测试 50/50；Node 自测全绿；CI 测试双绿；全部推送 origin/main。
+- 版本 3.1.2-beta → **3.1.4-beta**。

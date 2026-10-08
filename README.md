@@ -10,7 +10,7 @@ composition), the TSF / focus / teardown paths are hardened against crashes and 
 IME input is added for the mod UI frameworks upstream does not cover — **Meridian UI** (CEF),
 **SKSE Menu Framework** (ImGui) and **Prisma UI** (Ultralight).
 
-**Current:** v3.1.2-beta · **Base:** upstream `v2.2.1` (`a2cd39f`) · **License:** GPL-3.0-or-later
+**Current:** v3.1.4-beta · **Base:** upstream `v2.2.1` (`a2cd39f`) · **License:** GPL-3.0-or-later
 
 Generic usage, configuration and build instructions are documented in the
 [upstream README](https://github.com/cyfewlp/SimpleIME#readme) and the fully commented

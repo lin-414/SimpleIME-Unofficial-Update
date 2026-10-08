@@ -64,7 +64,29 @@
 - `[input] meridian_support`(默认 true)/ `[input] prisma_avoidance`(默认 true)。
 - 两个开关置 false 均应完全关闭对应功能(日志确认)。
 
-## v3.0.0-beta + NirnLab UIPlatform 后端 + 去痕改名(2026-10-05)
+## v3.1.4-beta + 清理重构（2026-10-08，CI 构建）
+
+**改动**：精简重构 L0–L4（`docs/CLEANUP-PLAN.md`，`7ceebcd` 起约 45 提交）：死码删除、Hooks/UI/核心层去重单源化、ImGui 输入态修复独立 TU、BridgeScript 移头 + Node 自测激活、长函数拆分、仓库卫生（PROGRESS 归档 / ADR-0003）。功能侧：disable 不再切语言 profile（`switch_english_layout_on_disable`，默认关，防 ENG 泄漏桌面；`e3449b7`）；`NirnLabBridge::s_state` 竞态修复（`62e826a`）；配置回归网强化（26/26 随机覆盖 + 往返不动点测试）。
+**产物**：GitHub Release `v3.1.4-beta`（CI 构建，内嵌版本 3.1.4-beta；7z 含 GPL LICENSE 与 README）。
+
+### 离线（已通过 🧪）
+
+- ✅ 主 DLL 构建 EXIT 0（RelWithDebInfo-clangcl；Release 配置由 CI 构建）。
+- ✅ SimpleIMETest **50/50**（新增 settings 往返不动点测试）。
+- ✅ Node 直测内嵌桥脚本（`test/MeridianBridge.cjs`）全绿：Unicode、注入样例、陈旧会话/字段、只读/密码、cancel/blur/iframe、overlay ui/pick/hide。
+- ✅ 重建 TU 警告与基线逐条吻合、零新增。
+
+### 游戏内（分档验证已通过 ✅，发行版复核待做 ⬜）
+
+- ✅ L0（死码删除）：正常输入无异常（用户确认）。
+- ✅ L1 Hooks（四路输入与候选框）：控制台 / Meridian / SKSEMF / Prisma 逐项对照（用户确认）。
+- ✅ L1 UI（F2 设置窗四页签、语言栏、候选窗横/竖、悬停高亮）：截图对照（用户确认）。
+- ✅ L1 Core（组合中 Esc、Win+Shift+S 切窗、读档、Shift 中英切换）：用户确认。
+- ✅ L2（窗口过程拆分 / 候选药丸 painter / 字体构建页结果卡 / `_DEBUG` 覆盖层在）：用户确认。
+- ✅ disable 不切语言 profile：游戏内验证 ENG 不再残留任务栏（特性开发轮次）。
+- ⬜ 发行版（CI Release 配置 DLL）最终复核：以上任选若干项重跑一遍。
+
+## v3.0.0-beta + NirNLab UIPlatform 后端 + 去痕改名(2026-10-05)
 
 **改动**:Meridian 输入支持新增 NirnLabUIPlatform 主后端(SKSE 消息 2250–2253 协商 →
 AddOrGetBrowser/ReleaseBrowserHandle/SetBrowserFocused 公开槽位钩子 → AddFunctionCallback
