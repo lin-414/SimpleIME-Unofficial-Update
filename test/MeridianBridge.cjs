@@ -1,6 +1,6 @@
 //
 // Node-side regression test for the Meridian bridge script embedded in
-// src/hooks/MeridianBridge.cpp.
+// include/hooks/MeridianBridgeScript.h.
 //
 // The script is extracted from the raw-string literal in the .cpp so the test
 // always exercises exactly what ships. Run from the repository root:
@@ -13,13 +13,13 @@ const path = require('path');
 const vm = require('vm');
 const assert = require('node:assert/strict');
 
-const cpp = fs.readFileSync(path.join(__dirname, '..', 'src', 'hooks', 'MeridianBridge.cpp'), 'utf8');
+const cpp = fs.readFileSync(path.join(__dirname, '..', 'include', 'hooks', 'MeridianBridgeScript.h'), 'utf8');
 // Extract with plain indexOf — semantics identical to C++ raw-string delimiters.
 const startMarker = 'R"IMEJS(';
 const endMarker = ')IMEJS"';
 const start = cpp.indexOf(startMarker);
 const end = cpp.indexOf(endMarker, start);
-assert.ok(start >= 0 && end > start, 'BridgeScript raw string not found in MeridianBridge.cpp');
+assert.ok(start >= 0 && end > start, 'BridgeScript raw string not found in MeridianBridgeScript.h');
 const source = cpp.slice(start + startMarker.length, end);
 
 let calls = [];
