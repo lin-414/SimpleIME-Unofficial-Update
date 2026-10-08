@@ -44,3 +44,7 @@ private/
 preview_build.log
 preview_debug.txt
 tools/design-preview/shots*
+
+# Regenerable promo art (sources: docs/banner.html / docs/cover.html)
+/docs/banner.png
+/docs/cover.png
