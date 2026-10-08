@@ -714,7 +714,7 @@ void ImeWnd::HandleKeyUp(UINT uMsg, WPARAM wParam, LPARAM lParam)
     ForwardEditingKeyToPrismaHostIfOwned(m_hWndParent, uMsg, wParam, lParam);
 }
 
-auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM lParam) -> LRESULT
+auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
 {
     const auto &state = Core::State::GetInstance();
     if (!(ImeController::GetInstance()->IsModEnabled() && (state.NotHas(State::IME_DISABLED) && state.Has(State::INPUT_PROCESSOR_ACTIVATED))))
