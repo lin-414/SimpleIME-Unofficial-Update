@@ -153,102 +153,8 @@ auto ImeManager::EnableIme(bool enable) -> Result
             }
         }
 
-        bool success = false;
-        if (enable)
-        {
-            logger::info("IME enabled: clearing IME_DISABLED, focusing TSF");
-            state.Clear(State::IME_DISABLED);
-            success = m_imeWnd->FocusTextService(true);
-            // Restore the input method that was active before IME was disabled.
-            // Without this, the system TIP stays on the English keyboard after
-            // EnableIme(false) switched it away, and typing in a text field
-            // would be stuck in English mode.
-            if (m_lastActiveProfile != GUID_NULL)
-            {
-                if (FAILED(m_imeWnd->ActivateLanguageProfile(m_lastActiveProfile)))
-                {
-                    logger::warn("Failed to restore input method profile after enabling IME");
-                }
-                m_lastActiveProfile = GUID_NULL;
-            }
-            else if (m_imeWnd->GetActiveLangProfile().dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
-            {
-                // A real TIP is already active on the IME thread (e.g. the
-                // user's IME, activated by an earlier fallback this session):
-                // keep it instead of re-activating the same profile on every
-                // forced sync (WM_NCACTIVATE etc.).
-                logger::debug("No input method remembered, but a TIP is already active; keeping it");
-            }
-            else
-            {
-                // Nothing was remembered (fresh session: the boot-time
-                // WM_NCACTIVATE churn disables the IME before the user ever
-                // typed with a Chinese TIP, so the sink never captured one).
-                // The current TIP is then usually the English keyboard left by
-                // the earlier disable — silently keeping it made the first
-                // enable of a session type English only (no composition, no
-                // candidate window), e.g. right after a Meridian view gained
-                // focus. Fall back to the user's own IME from the enumeration.
-                if (FAILED(m_imeWnd->ActivatePreferredImeProfile()))
-                {
-                    logger::debug("No input method remembered and no non-English TIP available, keeping the current one");
-                }
-            }
-        }
-        else
-        {
-            logger::info("IME disabled: setting IME_DISABLED, clearing TSF focus");
-            // Explicitly abort any active composition/candidate UI BEFORE clearing
-            // TSF focus. This is the same cleanup the status bar click performs
-            // (ImeMenu::OnMouseEvent -> AbortIme): without it, EnableIme(false)
-            // relied solely on the TSF composition-end callback chain, which does
-            // not reliably fire when WeChat/Microsoft Pinyin own the composition,
-            // leaving the candidate window up and IN_COMPOSING set ("still typing"
-            // after ESC). SendNotifyMessage to our own IME window dispatches
-            // synchronously, so m_textService->AbortIme() runs inline here.
-            m_imeWnd->AbortIme();
-            state.Set(State::IME_DISABLED);
-            success = m_imeWnd->FocusTextService(false);
-            // Return the Win32 focus to the game window. EnableIme(true) always
-            // focuses the ImeWnd via TryFocusIme(); the disable path must be
-            // symmetric, otherwise the hidden 0x0 ImeWnd keeps the keyboard
-            // focus and the game never receives WM_CHAR again ("keyboard stuck").
-            Focus(m_gameHwnd);
+        const bool success = enable ? DoEnable() : DoDisable();
 
-            // The system input method (e.g. WeChat/Microsoft Pinyin) follows the
-            // Win32 focus back to the game window and intercepts WASD/keys there,
-            // popping its candidate window or swallowing input. Switch the system
-            // TIP back to the English keyboard so the game receives raw keys. The
-            // profile switch (TF_IPPMF_FORPROCESS) only affects this process; the
-            // user's global input method is untouched. InputMethodManager's
-            // OnActivated callback will clear IN_COMPOSING/IN_CAND_CHOOSING as a
-            // side effect, which also fixes a stuck typing state after closing a
-            // mod window while composing. Uses the real English keyboard profile
-            // from the TSF enumeration (with actual CLSID/GUID), not the stub
-            // DEFAULT_LANG_PROFILE which may fail to activate.
-            {
-                // Remember the IME the user was using, so EnableIme(true) can restore it.
-                // Use the last real TIP seen by the activation sink instead of the
-                // active-profile cache: after a previous disable the cache points at
-                // the English keyboard (GUID_NULL), and a second disable in the same
-                // close (count churn / WM_NCACTIVATE sync) would then save nothing,
-                // silently losing the restore (observed in the game log as an
-                // "IME enabled" with no profile restore following it).
-                const GUID lastTipGuid = m_imeWnd->GetLastTipProfileGuid();
-                if (lastTipGuid != GUID_NULL)
-                {
-                    m_lastActiveProfile = lastTipGuid;
-                }
-                if (FAILED(m_imeWnd->ActivateEnglishProfile()))
-                {
-                    logger::warn("Failed to switch back to the English keyboard after disabling IME");
-                }
-                // ActivateKeyboardLayout(KLF_SETFORPROCESS) inside ActivateEnglishProfile
-                // only affects the IME thread; ask the game window to switch its own
-                // thread's layout (its keyboard state is what the game window uses).
-                ForceEnglishKeyboardOnGameThread();
-            }
-        }
         if (m_settings.autoToggleKeyboard)
         {
             logger::debug("Toggle the keyboard state...");
@@ -264,6 +170,115 @@ auto ImeManager::EnableIme(bool enable) -> Result
         return ToResult(success);
     }
     return Result::SUCCESS;
+}
+
+/// The enable arm of EnableIme: clear IME_DISABLED, focus the TSF document
+/// and restore the input method the user was on (or pick the user's own IME
+/// when nothing was remembered — see the branch comments).
+auto ImeManager::DoEnable() -> bool
+{
+    auto &state   = State::GetInstance();
+    bool  success = false;
+    logger::info("IME enabled: clearing IME_DISABLED, focusing TSF");
+    state.Clear(State::IME_DISABLED);
+    success = m_imeWnd->FocusTextService(true);
+    // Restore the input method that was active before IME was disabled.
+    // Without this, the system TIP stays on the English keyboard after
+    // EnableIme(false) switched it away, and typing in a text field
+    // would be stuck in English mode.
+    if (m_lastActiveProfile != GUID_NULL)
+    {
+        if (FAILED(m_imeWnd->ActivateLanguageProfile(m_lastActiveProfile)))
+        {
+            logger::warn("Failed to restore input method profile after enabling IME");
+        }
+        m_lastActiveProfile = GUID_NULL;
+    }
+    else if (m_imeWnd->GetActiveLangProfile().dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    {
+        // A real TIP is already active on the IME thread (e.g. the
+        // user's IME, activated by an earlier fallback this session):
+        // keep it instead of re-activating the same profile on every
+        // forced sync (WM_NCACTIVATE etc.).
+        logger::debug("No input method remembered, but a TIP is already active; keeping it");
+    }
+    else
+    {
+        // Nothing was remembered (fresh session: the boot-time
+        // WM_NCACTIVATE churn disables the IME before the user ever
+        // typed with a Chinese TIP, so the sink never captured one).
+        // The current TIP is then usually the English keyboard left by
+        // the earlier disable — silently keeping it made the first
+        // enable of a session type English only (no composition, no
+        // candidate window), e.g. right after a Meridian view gained
+        // focus. Fall back to the user's own IME from the enumeration.
+        if (FAILED(m_imeWnd->ActivatePreferredImeProfile()))
+        {
+            logger::debug("No input method remembered and no non-English TIP available, keeping the current one");
+        }
+    }
+    return success;
+}
+
+/// The disable arm of EnableIme: abort the composition, clear TSF focus,
+/// hand the Win32 focus back to the game window and switch the system TIP
+/// to the English keyboard (WASD must reach the game raw).
+auto ImeManager::DoDisable() -> bool
+{
+    auto &state   = State::GetInstance();
+    bool  success = false;
+    logger::info("IME disabled: setting IME_DISABLED, clearing TSF focus");
+    // Explicitly abort any active composition/candidate UI BEFORE clearing
+    // TSF focus. This is the same cleanup the status bar click performs
+    // (ImeMenu::OnMouseEvent -> AbortIme): without it, EnableIme(false)
+    // relied solely on the TSF composition-end callback chain, which does
+    // not reliably fire when WeChat/Microsoft Pinyin own the composition,
+    // leaving the candidate window up and IN_COMPOSING set ("still typing"
+    // after ESC). SendNotifyMessage to our own IME window dispatches
+    // synchronously, so m_textService->AbortIme() runs inline here.
+    m_imeWnd->AbortIme();
+    state.Set(State::IME_DISABLED);
+    success = m_imeWnd->FocusTextService(false);
+    // Return the Win32 focus to the game window. EnableIme(true) always
+    // focuses the ImeWnd via TryFocusIme(); the disable path must be
+    // symmetric, otherwise the hidden 0x0 ImeWnd keeps the keyboard
+    // focus and the game never receives WM_CHAR again ("keyboard stuck").
+    Focus(m_gameHwnd);
+
+    // The system input method (e.g. WeChat/Microsoft Pinyin) follows the
+    // Win32 focus back to the game window and intercepts WASD/keys there,
+    // popping its candidate window or swallowing input. Switch the system
+    // TIP back to the English keyboard so the game receives raw keys. The
+    // profile switch (TF_IPPMF_FORPROCESS) only affects this process; the
+    // user's global input method is untouched. InputMethodManager's
+    // OnActivated callback will clear IN_COMPOSING/IN_CAND_CHOOSING as a
+    // side effect, which also fixes a stuck typing state after closing a
+    // mod window while composing. Uses the real English keyboard profile
+    // from the TSF enumeration (with actual CLSID/GUID), not the stub
+    // DEFAULT_LANG_PROFILE which may fail to activate.
+    {
+        // Remember the IME the user was using, so EnableIme(true) can restore it.
+        // Use the last real TIP seen by the activation sink instead of the
+        // active-profile cache: after a previous disable the cache points at
+        // the English keyboard (GUID_NULL), and a second disable in the same
+        // close (count churn / WM_NCACTIVATE sync) would then save nothing,
+        // silently losing the restore (observed in the game log as an
+        // "IME enabled" with no profile restore following it).
+        const GUID lastTipGuid = m_imeWnd->GetLastTipProfileGuid();
+        if (lastTipGuid != GUID_NULL)
+        {
+            m_lastActiveProfile = lastTipGuid;
+        }
+        if (FAILED(m_imeWnd->ActivateEnglishProfile()))
+        {
+            logger::warn("Failed to switch back to the English keyboard after disabling IME");
+        }
+        // ActivateKeyboardLayout(KLF_SETFORPROCESS) inside ActivateEnglishProfile
+        // only affects the IME thread; ask the game window to switch its own
+        // thread's layout (its keyboard state is what the game window uses).
+        ForceEnglishKeyboardOnGameThread();
+    }
+    return success;
 }
 
 auto ImeManager::ForceFocusIme() -> Result

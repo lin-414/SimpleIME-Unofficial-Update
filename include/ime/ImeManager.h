@@ -41,6 +41,10 @@ public:
     static auto Focus(HWND hwnd) -> bool;
 
 private:
+    /// The two arms of EnableIme, split by their seam comments.
+    auto DoEnable() -> bool;
+    auto DoDisable() -> bool;
+
     auto IsShouldEnableIme() const -> bool;
     auto ForceEnglishKeyboardOnGameThread() const -> void;
 };
