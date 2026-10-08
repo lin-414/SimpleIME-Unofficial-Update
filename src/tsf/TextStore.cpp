@@ -1063,89 +1063,89 @@ auto TextStore::DoUpdateUIElement() -> HRESULT
             return E_FAIL;
         }
 
-    // UIElement sinks fire OUTSIDE the TSF document lock (unlike the
-    // ITextStoreACP methods inside OnLockGranted), so the candidate state
-    // mutations below must take the service lock themselves — the render
-    // thread copies m_candidateUi under the very same lock in
-    // RequestUpdate. When the sink fires inside a lock grant (a TIP
-    // refreshing its candidate UI within its edit session), RequestLock
-    // already holds the mutex and m_fLocked is set: taking it again would
-    // deadlock. The COM calls above stay outside either way: they touch
-    // only IME-thread state.
-    //
-    // NOTE: the candidateUi mutations are inside the lock, but every
-    // m_currentCandidateUi COM call (GetString below, and BOTH Abort() calls)
-    // must stay OUTSIDE it: Abort() makes the TIP dismiss the element, which
-    // can synchronously re-enter UpdateUIElement → GetSinkWriteLock on this
-    // same non-recursive mutex. Hence the abortAfter deferral below.
-    bool             abortCurrentUi = false;
-    HRESULT          hresult        = S_OK;
-    {
-        auto lock         = m_pTextService->GetSinkWriteLock(m_fLocked != FALSE);
-        auto &candidateUi = m_pTextService->GetCandidateUiWrite();
-        // Selection is a global candidate index; the UI list is page-relative.
-        // Clamp instead of subtracting: a TIP reporting a selection before the
-        // page start would otherwise underflow the unsigned subtraction into a
-        // huge value that no candidate can match.
-        candidateUi.SetSelection(selection > info.pageStart ? selection - info.pageStart : 0);
-        // The empty() guard: a selection-only update must not keep a never-filled
-        // list empty — fall through to the full refill instead.
-        if (updateFlags == TF_CLUIE_SELECTION && candidateUi.FirstIndex() == info.pageStart && !candidateUi.empty())
+        // UIElement sinks fire OUTSIDE the TSF document lock (unlike the
+        // ITextStoreACP methods inside OnLockGranted), so the candidate state
+        // mutations below must take the service lock themselves — the render
+        // thread copies m_candidateUi under the very same lock in
+        // RequestUpdate. When the sink fires inside a lock grant (a TIP
+        // refreshing its candidate UI within its edit session), RequestLock
+        // already holds the mutex and m_fLocked is set: taking it again would
+        // deadlock. The COM calls above stay outside either way: they touch
+        // only IME-thread state.
+        //
+        // NOTE: the candidateUi mutations are inside the lock, but every
+        // m_currentCandidateUi COM call (GetString below, and BOTH Abort() calls)
+        // must stay OUTSIDE it: Abort() makes the TIP dismiss the element, which
+        // can synchronously re-enter UpdateUIElement → GetSinkWriteLock on this
+        // same non-recursive mutex. Hence the abortAfter deferral below.
+        bool             abortCurrentUi = false;
+        HRESULT          hresult        = S_OK;
         {
+            auto lock         = m_pTextService->GetSinkWriteLock(m_fLocked != FALSE);
+            auto &candidateUi = m_pTextService->GetCandidateUiWrite();
+            // Selection is a global candidate index; the UI list is page-relative.
+            // Clamp instead of subtracting: a TIP reporting a selection before the
+            // page start would otherwise underflow the unsigned subtraction into a
+            // huge value that no candidate can match.
+            candidateUi.SetSelection(selection > info.pageStart ? selection - info.pageStart : 0);
+            // The empty() guard: a selection-only update must not keep a never-filled
+            // list empty — fall through to the full refill instead.
+            if (updateFlags == TF_CLUIE_SELECTION && candidateUi.FirstIndex() == info.pageStart && !candidateUi.empty())
+            {
+                if (m_fLocked)
+                {
+                    // Inside a document lock a nested lock request is forbidden by
+                    // TSF: defer to the post-lock consumer (RequestLock tail /
+                    // OnEndEdit), which MarkDirty()s the pending flag.
+                    m_pendingChangeFlags |= DirtyFlag::CandidateSelection;
+                }
+                else
+                {
+                    // Outside any document lock nothing is scheduled to consume the
+                    // pending flag — the next lock could be a long time coming — so
+                    // publish the selection change now.
+                    m_pTextService->MarkDirty(DirtyFlag::CandidateSelection);
+                }
+                return S_OK; // No need to update candidate list if only selection changed.
+            }
+
+            // if only selection change but page changed, we still need to update candidate list.
             if (m_fLocked)
             {
-                // Inside a document lock a nested lock request is forbidden by
-                // TSF: defer to the post-lock consumer (RequestLock tail /
-                // OnEndEdit), which MarkDirty()s the pending flag.
-                m_pendingChangeFlags |= DirtyFlag::CandidateSelection;
+                // Inside a document lock the pending flag is consumed by the
+                // post-lock tail of RequestLock (or the next OnEndEdit).
+                m_pendingChangeFlags |= DirtyFlag::CandidateList;
             }
             else
             {
                 // Outside any document lock nothing is scheduled to consume the
-                // pending flag — the next lock could be a long time coming — so
-                // publish the selection change now.
-                m_pTextService->MarkDirty(DirtyFlag::CandidateSelection);
+                // pending flag: a single keystroke followed by an idle user (no
+                // further edit session) would leave the refreshed list invisible
+                // to the render thread indefinitely — the "composition shows, no
+                // candidates" bug with single-character input. Publish now, while
+                // still holding the mutex: the render thread's RequestUpdate
+                // blocks on it and copies the fully refilled list below.
+                m_pTextService->MarkDirty(DirtyFlag::CandidateList);
             }
-            return S_OK; // No need to update candidate list if only selection changed.
-        }
-
-        // if only selection change but page changed, we still need to update candidate list.
-        if (m_fLocked)
-        {
-            // Inside a document lock the pending flag is consumed by the
-            // post-lock tail of RequestLock (or the next OnEndEdit).
-            m_pendingChangeFlags |= DirtyFlag::CandidateList;
-        }
-        else
-        {
-            // Outside any document lock nothing is scheduled to consume the
-            // pending flag: a single keystroke followed by an idle user (no
-            // further edit session) would leave the refreshed list invisible
-            // to the render thread indefinitely — the "composition shows, no
-            // candidates" bug with single-character input. Publish now, while
-            // still holding the mutex: the render thread's RequestUpdate
-            // blocks on it and copies the fully refilled list below.
-            m_pTextService->MarkDirty(DirtyFlag::CandidateList);
-        }
-        candidateUi.Close();
-        candidateUi.SetFirstIndex(info.pageStart);
-        candidateUi.Reserve(info.pageEnd - info.pageStart);
-        for (UINT index = info.pageStart, j = 0; index < info.pageEnd; ++j, ++index)
-        {
-            CComBSTR candidateStr;
-            if (FAILED(m_currentCandidateUi->GetString(index, &candidateStr)) || candidateStr == nullptr)
+            candidateUi.Close();
+            candidateUi.SetFirstIndex(info.pageStart);
+            candidateUi.Reserve(info.pageEnd - info.pageStart);
+            for (UINT index = info.pageStart, j = 0; index < info.pageEnd; ++j, ++index)
             {
-                // Abort AFTER releasing the lock — see the NOTE above.
-                abortCurrentUi = true;
-                hresult        = E_FAIL;
-                break;
-            }
+                CComBSTR candidateStr;
+                if (FAILED(m_currentCandidateUi->GetString(index, &candidateStr)) || candidateStr == nullptr)
+                {
+                    // Abort AFTER releasing the lock — see the NOTE above.
+                    abortCurrentUi = true;
+                    hresult        = E_FAIL;
+                    break;
+                }
 
-            auto fmt = std::format(L"{}. ", j + 1);
-            fmt.append(candidateStr);
-            candidateUi.PushBack(WCharUtils::ToString(fmt));
+                auto fmt = std::format(L"{}. ", j + 1);
+                fmt.append(candidateStr);
+                candidateUi.PushBack(WCharUtils::ToString(fmt));
+            }
         }
-    }
         if (abortCurrentUi)
         {
             m_currentCandidateUi->Abort();
