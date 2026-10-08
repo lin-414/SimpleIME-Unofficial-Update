@@ -221,6 +221,74 @@ auto TextService::ToogleKeyboard(bool open) -> void
     }
 }
 
+auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
+{
+    if (m_globalOpenCloseCompartment == nullptr || m_globalConversionModeCompartment == nullptr)
+    {
+        return false;
+    }
+
+    // The game thread's TIP instance reads its OWN thread compartments, which no
+    // other thread can write; the cross-process global compartments are the only
+    // channel that reaches it. They carry the IME's open/close + 中/英 state
+    // without touching the session's language profile — which is what used to
+    // leave the taskbar showing ENG after the game exited.
+    ULONG conversionMode = static_cast<ULONG>(State::ConversionMode::Flags::ALPHANUMERIC);
+    if (enabled)
+    {
+        // Put the mode back verbatim. Recomposing "NATIVE" from the state we just
+        // flattened would leave a Japanese IME in かな入力 (NATIVE without its
+        // ROMAN bit) and drop FULLSHAPE from a Chinese one.
+        conversionMode =
+            m_hasSavedSessionConversionMode
+                ? m_savedSessionConversionMode
+                : static_cast<ULONG>(State::GetInstance().GetConversionMode().RawValue() | static_cast<ULONG>(State::ConversionMode::Flags::NATIVE));
+        m_hasSavedSessionConversionMode = false;
+    }
+    else if (!m_hasSavedSessionConversionMode)
+    {
+        // Capture the live mode BEFORE flattening it, once per disable/enable
+        // cycle: the disable path runs on every menu close (15 in one observed
+        // session), and a second pass would save the 0 we just wrote and hand
+        // back English on the next enable. GetValue fails on a compartment that
+        // was never written, so fall back through thread level to State.
+        ULONG live = 0;
+        if (m_contextConversionModeCompartment != nullptr && SUCCEEDED(m_contextConversionModeCompartment->GetValue(live)))
+        {
+            m_savedSessionConversionMode = live;
+        }
+        else if (m_conversionModeCompartment != nullptr && SUCCEEDED(m_conversionModeCompartment->GetValue(live)))
+        {
+            m_savedSessionConversionMode = live;
+        }
+        else
+        {
+            m_savedSessionConversionMode = static_cast<ULONG>(State::GetInstance().GetConversionMode().RawValue());
+        }
+        m_hasSavedSessionConversionMode = true;
+    }
+
+    const ULONG openClose = enabled ? 1U : 0U;
+
+    const HRESULT openCloseHr      = m_globalOpenCloseCompartment->SetValue(openClose);
+    const HRESULT conversionModeHr = m_globalConversionModeCompartment->SetValue(conversionMode);
+
+    // Mirror into this thread's own compartments: the language bar's 中/英 state
+    // reads them (their sinks refresh State), so the overlay must not go stale
+    // relative to what was just published.
+    ToogleKeyboard(enabled);
+    SetConversionMode(conversionMode);
+
+    logger::info(
+        "Published the IME {} state through the global compartments (open/close hr={:#x}, conversion hr={:#x}, conversion={:#x})",
+        enabled ? "on" : "off",
+        static_cast<uint32_t>(openCloseHr),
+        static_cast<uint32_t>(conversionModeHr),
+        conversionMode
+    );
+    return SUCCEEDED(openCloseHr) && SUCCEEDED(conversionModeHr);
+}
+
 auto TextService::SetConversionMode(DWORD conversionMode) -> bool
 {
     // Write both levels: the focused context's compartment is what the active

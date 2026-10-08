@@ -816,7 +816,13 @@ auto ImeApp::MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> 
             // an English WM_INPUTLANGCHANGE, which fails the check below. When the
             // mod itself is disabled we must not fight the user's own input method,
             // hence the IsModEnabled() gate.
-            if (ImeController::GetInstance()->IsModEnabled() && Core::State::GetInstance().ImeDisabled())
+            //
+            // And only in the English-profile mode: when the profile was never
+            // switched away, a Chinese layout reaching the game thread is the
+            // user's own input method coming back, not drift — re-asserting
+            // English there is precisely what published ENG to the session.
+            if (ImeController::GetInstance()->IsModEnabled() && ImeController::GetInstance()->SwitchesEnglishLayoutOnDisable() &&
+                Core::State::GetInstance().ImeDisabled())
             {
                 const auto langid = static_cast<LANGID>(reinterpret_cast<uintptr_t>(hkl) & 0xFFFF);
                 if (hkl != nullptr && PRIMARYLANGID(langid) != PRIMARYLANGID(LANGID_ENG))

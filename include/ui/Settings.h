@@ -109,6 +109,11 @@ struct Settings
     /// The TOML value wins on load, so this default only applies when the config
     /// is missing or unreadable — it must not disagree with them.
     bool          autoToggleKeyboard            = false;
+    /// Mirrors Configuration::switchEnglishLayoutOnDisable. False keeps the
+    /// user's input method selected when the IME is disabled (only its 中/英
+    /// state moves), so the session input locale — and the taskbar's ENG
+    /// indicator — is never touched.
+    bool          switchEnglishLayoutOnDisable  = false;
 
     struct Logging
     {
@@ -161,6 +166,7 @@ inline auto GetDefaultSettings() -> Settings
         .fixInconsistentTextEntryCount = true,
         .forceDpiAwareness             = true,
         .autoToggleKeyboard            = false,
+        .switchEnglishLayoutOnDisable  = false,
         .logging                       = {.level = spdlog::level::info, .flushLevel = spdlog::level::info},
         .resources                     = {.translationDir = "Data/interface/SimpleIME", .fontPathList = {}},
         .appearance =

@@ -42,6 +42,16 @@ public:
 
     auto IsModEnabled() const -> bool { return m_fEnabledMod.load(); }
 
+    /// Whether disabling the IME must move the session to the English keyboard
+    /// profile (see Settings::switchEnglishLayoutOnDisable). The game-thread
+    /// WndProc watchdog reads it to tell "drifted away from the English layout
+    /// we deliberately set" apart from "the user's own input method, which we
+    /// never switched away and must not fight".
+    [[nodiscard]] auto SwitchesEnglishLayoutOnDisable() const -> bool
+    {
+        return m_settings != nullptr && m_settings->switchEnglishLayoutOnDisable;
+    }
+
     /// No-op unless the controller is ready — the shared shape of every
     /// bridge's "re-evaluate the IME decision" hop.
     auto SyncImeStateIfReady() -> void

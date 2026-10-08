@@ -79,6 +79,20 @@ public:
         }
     }
 
+    /**
+     * Must call from IME thread. Put the user's active input method into its
+     * English state (or back into its native state) without changing the
+     * session's language profile.
+     *
+     * @return false when there is no such channel (Imm32 backend, or the global
+     * compartments were unavailable at TSF init) — the caller must then fall
+     * back to activating the English keyboard profile.
+     */
+    [[nodiscard]] auto SetSessionImeEnabled(const bool enabled) const -> bool
+    {
+        return m_textService != nullptr && m_textService->SetSessionImeEnabled(enabled);
+    }
+
     //! Must call from IME thread.
     //! @see ImeController::ActivateLangProfile
     auto ActivateLanguageProfile(const GUID &guidProfile) const -> HRESULT;

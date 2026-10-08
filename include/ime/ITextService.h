@@ -76,6 +76,23 @@ public:
 
     virtual auto ToogleKeyboard(bool open) -> void = 0;
 
+    /**
+     * @brief Put the ACTIVE input method into its English state (or back into its
+     * native state) without changing the session's language profile.
+     *
+     * The disable path needs the TIP to stop eating the game's keystrokes. The
+     * way that used to do it was activating the English keyboard profile, which
+     * is a change to the session-wide input locale: the taskbar indicator went
+     * to ENG and stayed there after the game exited, because nothing restores
+     * another process's input locale. These cross-process global compartments
+     * only move the IME's own open/close + conversion state, which the user's
+     * own toggle (Shift) restores.
+     *
+     * @return false when the backend has no such channel, so the caller can fall
+     * back to the profile switch.
+     */
+    virtual auto SetSessionImeEnabled([[maybe_unused]] bool enabled) -> bool { return false; }
+
     virtual auto ProcessImeMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) -> bool = 0;
 
     /**

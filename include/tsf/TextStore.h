@@ -311,6 +311,11 @@ public:
 
     auto ToogleKeyboard(bool open) -> void override;
 
+    /// See ITextService::SetSessionImeEnabled. Writes the cross-process global
+    /// open/close + conversion compartments so the game thread's TIP stops
+    /// intercepting keys without a language-profile change.
+    auto SetSessionImeEnabled(bool enabled) -> bool override;
+
     auto CommitCandidate(DWORD index) -> bool override { return m_textStore->CommitCandidate(index); }
 
     auto SetConversionMode(DWORD conversionMode) -> bool override;
@@ -401,6 +406,11 @@ private:
     /// activity cannot flip the in-game mode display.
     CComPtr<TsfCompartment>   m_globalConversionModeCompartment  = nullptr;
     CComPtr<TsfCompartment>   m_globalOpenCloseCompartment       = nullptr;
+    /// Conversion mode captured on the first disable of a cycle and restored
+    /// verbatim on the next enable, so a Japanese IME comes back with its ROMAN
+    /// bit (NATIVE alone is かな入力) and a Chinese one with FULLSHAPE.
+    ULONG                     m_savedSessionConversionMode       = 0;
+    bool                      m_hasSavedSessionConversionMode    = false;
     CComPtr<TextStore>        m_textStore                        = nullptr;
     mutable std::shared_mutex m_mutex;
     TfClientId                m_clientId;

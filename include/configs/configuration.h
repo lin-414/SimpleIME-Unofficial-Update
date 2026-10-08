@@ -68,6 +68,13 @@ struct Configuration
     bool        enableTsf;
     bool        fixInconsistentTextEntryCount;
     bool        autoToggleKeyboard;
+    /// Disable the IME by activating the English keyboard profile (the old
+    /// behavior) instead of leaving the user's input method selected and putting
+    /// it in its English state. Guaranteed to hand the game raw keys, but the
+    /// profile switch lands on the session-wide input locale: the taskbar shows
+    /// ENG and keeps showing it after the game exits, because no process
+    /// restores another process's input locale.
+    bool        switchEnglishLayoutOnDisable;
     /// Declare per-monitor-v2 DPI awareness for the whole game process at load
     /// time. Skyrim ships DPI-unaware, so Windows bitmap-stretches the frame on
     /// scaled desktops and every in-game UI (SimpleIME's included) blurs.
@@ -88,6 +95,7 @@ constexpr auto GetDefaultConfiguration() -> Configuration
         .enableTsf                     = true,
         .fixInconsistentTextEntryCount = true,
         .autoToggleKeyboard            = false,
+        .switchEnglishLayoutOnDisable  = false,
         .forceDpiAwareness             = true,
         .logging                       = {.level = "", .flushLevel = ""},
         .resources                     = {.translationDir = "", .fontPathList = {}},

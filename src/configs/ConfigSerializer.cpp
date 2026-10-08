@@ -37,6 +37,7 @@ constexpr auto KEY_ENABLE_TSF                        = "enable_tsf";
 constexpr auto KEY_ENABLE_MOD                        = "enable_mod";
 constexpr auto KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT = "fix_inconsistent_text_entry_count";
 constexpr auto KEY_AUTO_TOGGLE_KEYBOARD              = "auto_toggle_keyboard";
+constexpr auto KEY_SWITCH_ENGLISH_LAYOUT_ON_DISABLE  = "switch_english_layout_on_disable";
 constexpr auto KEY_FORCE_DPI_AWARENESS               = "force_dpi_awareness";
 
 // Logging keys
@@ -95,6 +96,12 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         " 自动打开/关闭键盘",
         " 在 IME 激活/关闭的同时打开/关闭键盘(切换本地语言/英文输入状态)",
     };
+    const Comments switchEnglishLayoutOnDisableComment = {
+        " 禁用 IME 时把输入法切换到英文键盘布局(旧行为，默认关闭)",
+        " 开启它能确定地保证游戏拿到原始按键，但语言 profile 是会话级的：任务栏会切成 ENG，",
+        " 而且退出游戏后系统不会还原它。关闭时保持你当前的输入法不变，只把它置为英文/关闭态",
+        " (等价于自己按一下 Shift 切中英文)",
+    };
     const Comments forceDpiAwarenessComment = {
         " 进程级 DPI 感知 (默认开启)",
         " Skyrim 本体不声明 DPI 感知，在系统缩放非 100% 的屏幕上，整个游戏画面(包括本 Mod 的设置界面)",
@@ -142,6 +149,7 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
          {KEY_ENABLE_MOD, {configuration.enableMod, enableModComment}},
          {KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT, {configuration.fixInconsistentTextEntryCount, fixInconsistentTextEntryCountComment}},
          {KEY_AUTO_TOGGLE_KEYBOARD, {configuration.autoToggleKeyboard, autoToggleKeyboardComment}},
+         {KEY_SWITCH_ENGLISH_LAYOUT_ON_DISABLE, {configuration.switchEnglishLayoutOnDisable, switchEnglishLayoutOnDisableComment}},
          {KEY_FORCE_DPI_AWARENESS, {configuration.forceDpiAwareness, forceDpiAwarenessComment}},
          {KEY_SECTION_LOGGING, logging}}
     };
@@ -261,6 +269,7 @@ auto ParseConfigurationFromToml(toml::value &rawToml, std::vector<std::string> *
         apply(coreToml, KEY_ENABLE_MOD, config.enableMod);
         apply(coreToml, KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT, config.fixInconsistentTextEntryCount);
         apply(coreToml, KEY_AUTO_TOGGLE_KEYBOARD, config.autoToggleKeyboard);
+        apply(coreToml, KEY_SWITCH_ENGLISH_LAYOUT_ON_DISABLE, config.switchEnglishLayoutOnDisable);
         apply(coreToml, KEY_FORCE_DPI_AWARENESS, config.forceDpiAwareness);
         if (coreToml.contains(KEY_SECTION_LOGGING))
         {

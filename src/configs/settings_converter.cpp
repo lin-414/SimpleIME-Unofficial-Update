@@ -260,6 +260,7 @@ auto ConvertConfigurationToSettings(const Configuration &config) -> Settings
     settings.enableTsf                     = config.enableTsf;
     settings.fixInconsistentTextEntryCount = config.fixInconsistentTextEntryCount;
     settings.autoToggleKeyboard            = config.autoToggleKeyboard;
+    settings.switchEnglishLayoutOnDisable  = config.switchEnglishLayoutOnDisable;
     settings.forceDpiAwareness             = config.forceDpiAwareness;
 
     if (const auto shortCut = Converter<ImGuiKeyChord>::fromString(config.shortcut); shortCut.has_value())
@@ -367,6 +368,7 @@ auto ConvertSettingsToConfiguration(const Settings &settings) -> Configuration
     configuration.enableTsf                     = settings.enableTsf;
     configuration.fixInconsistentTextEntryCount = settings.fixInconsistentTextEntryCount;
     configuration.autoToggleKeyboard            = settings.autoToggleKeyboard;
+    configuration.switchEnglishLayoutOnDisable  = settings.switchEnglishLayoutOnDisable;
     configuration.forceDpiAwareness             = settings.forceDpiAwareness;
 
     // Reference, NOT a copy: the singleton copy below silently swallowed every
