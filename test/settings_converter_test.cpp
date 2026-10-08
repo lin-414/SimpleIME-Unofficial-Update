@@ -154,6 +154,7 @@ TEST(ConfigurationToSettingsTest, should_set_base_type_member_value_from_configu
     EXPECT_EQ(settings.enableTsf, configuration.enableTsf);
     EXPECT_EQ(settings.fixInconsistentTextEntryCount, configuration.fixInconsistentTextEntryCount);
     EXPECT_EQ(settings.autoToggleKeyboard, configuration.autoToggleKeyboard);
+    EXPECT_EQ(settings.switchEnglishLayoutOnDisable, configuration.switchEnglishLayoutOnDisable);
     EXPECT_EQ(settings.forceDpiAwareness, configuration.forceDpiAwareness);
 
     EXPECT_EQ(settings.resources.translationDir, configuration.resources.translationDir);
@@ -175,7 +176,62 @@ TEST(ConfigurationToSettingsTest, should_set_base_type_member_value_from_configu
     EXPECT_EQ(settings.input.keepImeOpen, configuration.input.keepImeOpen);
     EXPECT_EQ(settings.input.meridianSupport, configuration.input.meridianSupport);
     EXPECT_EQ(settings.input.prismaAvoidance, configuration.input.prismaAvoidance);
+    EXPECT_EQ(settings.input.skseMenuFrameworkSupport, configuration.input.skseMenuFrameworkSupport);
     EXPECT_EQ(settings.input.lastNativeConversion, configuration.input.lastNativeConversion);
+}
+
+// The first conversion normalizes (clamps, parses enums, pins the default
+// theme's accent); everything after that must be a fixed point. This is the
+// settings→config→settings direction the targeted tests above never covered.
+TEST(SettingsRoundTripTest, settings_config_settings_is_a_fixed_point)
+{
+    const auto expectSameSettings = [](const Ime::Settings &actual, const Ime::Settings &expected) {
+        EXPECT_EQ(actual.shortcut, expected.shortcut);
+        EXPECT_EQ(actual.enableMod, expected.enableMod);
+        EXPECT_EQ(actual.enableTsf, expected.enableTsf);
+        EXPECT_EQ(actual.fixInconsistentTextEntryCount, expected.fixInconsistentTextEntryCount);
+        EXPECT_EQ(actual.autoToggleKeyboard, expected.autoToggleKeyboard);
+        EXPECT_EQ(actual.switchEnglishLayoutOnDisable, expected.switchEnglishLayoutOnDisable);
+        EXPECT_EQ(actual.forceDpiAwareness, expected.forceDpiAwareness);
+
+        EXPECT_EQ(actual.logging.level, expected.logging.level);
+        EXPECT_EQ(actual.logging.flushLevel, expected.logging.flushLevel);
+
+        EXPECT_EQ(actual.resources.translationDir, expected.resources.translationDir);
+        EXPECT_EQ(actual.resources.fontPathList, expected.resources.fontPathList);
+
+        EXPECT_EQ(actual.appearance.schemeConfig.variant, expected.appearance.schemeConfig.variant);
+        EXPECT_EQ(actual.appearance.schemeConfig.sourceColor, expected.appearance.schemeConfig.sourceColor);
+        EXPECT_EQ(actual.appearance.schemeConfig.contrastLevel, expected.appearance.schemeConfig.contrastLevel);
+        EXPECT_EQ(actual.appearance.schemeConfig.darkMode, expected.appearance.schemeConfig.darkMode);
+        EXPECT_EQ(actual.appearance.language, expected.appearance.language);
+        EXPECT_EQ(actual.appearance.zoom, expected.appearance.zoom);
+        EXPECT_EQ(actual.appearance.errorDisplayDuration, expected.appearance.errorDisplayDuration);
+        EXPECT_EQ(actual.appearance.verticalCandidateList, expected.appearance.verticalCandidateList);
+        EXPECT_EQ(actual.appearance.autoToggleLanguageBar, expected.appearance.autoToggleLanguageBar);
+
+        EXPECT_EQ(actual.input.posUpdatePolicy, expected.input.posUpdatePolicy);
+        EXPECT_EQ(actual.input.enableUnicodePaste, expected.input.enableUnicodePaste);
+        EXPECT_EQ(actual.input.keepImeOpen, expected.input.keepImeOpen);
+        EXPECT_EQ(actual.input.meridianSupport, expected.input.meridianSupport);
+        EXPECT_EQ(actual.input.prismaAvoidance, expected.input.prismaAvoidance);
+        EXPECT_EQ(actual.input.skseMenuFrameworkSupport, expected.input.skseMenuFrameworkSupport);
+        EXPECT_EQ(actual.input.lastNativeConversion, expected.input.lastNativeConversion);
+    };
+
+    // Randomized configuration: the wide input space (random strings, out-of-
+    // range numbers) exercises every normalization arm before the fixed point.
+    std::uint32_t seed = 0;
+    const auto    randomConfig = ImeTest::GetRandomConfiguation(&seed);
+    SCOPED_TRACE(std::format("RandomUtils seed: {}", seed));
+    const Ime::Settings s1 = Ime::ConvertConfigurationToSettings(randomConfig);
+    const Ime::Settings s2 = Ime::ConvertConfigurationToSettings(Ime::ConvertSettingsToConfiguration(s1));
+    expectSameSettings(s2, s1);
+
+    // The compiled-in defaults must also be a fixed point (shortcut F2, zoom -1,
+    // theme default): a save/load cycle on a fresh install changes nothing.
+    const Ime::Settings defaults = Ime::GetDefaultSettings();
+    expectSameSettings(Ime::ConvertConfigurationToSettings(Ime::ConvertSettingsToConfiguration(defaults)), defaults);
 }
 
 TEST(ConfigurationToSettingsTest, should_convert_default_configuration_to_default_settings)
@@ -189,6 +245,11 @@ TEST(ConfigurationToSettingsTest, should_convert_default_configuration_to_defaul
     EXPECT_EQ(settings.enableTsf, defaultSettings.enableTsf);
     EXPECT_EQ(settings.fixInconsistentTextEntryCount, defaultSettings.fixInconsistentTextEntryCount);
     EXPECT_EQ(settings.autoToggleKeyboard, defaultSettings.autoToggleKeyboard);
+    // Disabling the IME must not move the session's language profile by default:
+    // the English-profile route is what leaked ENG onto the desktop after the
+    // game exited.
+    EXPECT_EQ(settings.switchEnglishLayoutOnDisable, defaultSettings.switchEnglishLayoutOnDisable);
+    EXPECT_EQ(settings.switchEnglishLayoutOnDisable, false);
     // The DPI-awareness fix must ship enabled: DPI-unaware rendering is what
     // blurred the settings UI on scaled desktops.
     EXPECT_EQ(settings.forceDpiAwareness, defaultSettings.forceDpiAwareness);
@@ -325,6 +386,7 @@ TEST(ShippedConfigurationTest, shipped_toml_converts_to_default_settings)
     EXPECT_EQ(shipped.enableTsf, expected.enableTsf);
     EXPECT_EQ(shipped.fixInconsistentTextEntryCount, expected.fixInconsistentTextEntryCount);
     EXPECT_EQ(shipped.autoToggleKeyboard, expected.autoToggleKeyboard);
+    EXPECT_EQ(shipped.switchEnglishLayoutOnDisable, expected.switchEnglishLayoutOnDisable);
     EXPECT_EQ(shipped.forceDpiAwareness, expected.forceDpiAwareness);
 
     EXPECT_EQ(shipped.logging.level, expected.logging.level);

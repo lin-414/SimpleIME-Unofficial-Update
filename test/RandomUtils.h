@@ -55,6 +55,7 @@ inline auto GetRandomConfiguation(std::uint32_t *seedOut = nullptr) -> Ime::Conf
     configuration.enableTsf                     = random.NextBool();
     configuration.fixInconsistentTextEntryCount = random.NextBool();
     configuration.autoToggleKeyboard            = random.NextBool();
+    configuration.switchEnglishLayoutOnDisable  = random.NextBool();
     configuration.forceDpiAwareness             = random.NextBool();
 
     configuration.logging.level      = random.NextString(10);
@@ -64,6 +65,7 @@ inline auto GetRandomConfiguation(std::uint32_t *seedOut = nullptr) -> Ime::Conf
     configuration.resources.fontPathList   = std::vector{random.NextString(10), random.NextString(10)};
 
     configuration.appearance.zoom                  = std::round(random.NextFloat(1.f, 9999.f) * 100.f) / 100.f;
+    configuration.appearance.themeStyle            = random.NextBool() ? "default" : "material";
     configuration.appearance.themeSourceColor      = random.NextInt(0, 0xffffff);
     configuration.appearance.themeDarkMode         = random.NextBool();
     configuration.appearance.themeContrastLevel    = 0.5;
@@ -72,10 +74,13 @@ inline auto GetRandomConfiguation(std::uint32_t *seedOut = nullptr) -> Ime::Conf
     configuration.appearance.verticalCandidateList = random.NextBool();
     configuration.appearance.autoToggleLanguageBar = random.NextBool();
 
-    configuration.input.enableUnicodePaste = random.NextBool();
-    configuration.input.keepImeOpen        = random.NextBool();
-    configuration.input.posUpdatePolicy    = random.NextString(10);
-    configuration.input.lastNativeConversion = random.NextBool();
+    configuration.input.enableUnicodePaste       = random.NextBool();
+    configuration.input.keepImeOpen              = random.NextBool();
+    configuration.input.posUpdatePolicy          = random.NextString(10);
+    configuration.input.meridianSupport          = random.NextBool();
+    configuration.input.prismaAvoidance          = random.NextBool();
+    configuration.input.skseMenuFrameworkSupport = random.NextBool();
+    configuration.input.lastNativeConversion     = random.NextBool();
     return configuration;
 }
 
