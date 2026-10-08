@@ -16,7 +16,7 @@ Generic usage, configuration and build instructions are documented in the
 [upstream README](https://github.com/cyfewlp/SimpleIME#readme) and the fully commented
 [contrib/config/SimpleIME.toml](contrib/config/SimpleIME.toml). This document describes only
 what this fork changes relative to upstream; per-version details live in
-[PROGRESS.md](PROGRESS.md) (upstream's own history is in [CHANGELOG.md](CHANGELOG.md)).
+[PROGRESS.md](docs/PROGRESS.md) (upstream's own history is in [CHANGELOG.md](CHANGELOG.md)).
 
 ## New: IME input for mod UI frameworks
 
@@ -129,6 +129,26 @@ On top of that:
   (`node test/MeridianBridge.cjs`).
 
 ## Upgrades
+
+### No more ENG left on the desktop
+
+Handing the keyboard back to the game used to mean activating the English
+keyboard profile — that is what stopped a Chinese IME from eating WASD. A language
+profile is however *session* state, not process state, and Windows has no
+"restore it when the process dies": after quitting the game the desktop stayed on
+**ENG**, and the in-game watchdog re-asserted English every time the input method
+drifted back.
+
+Disabling the IME now leaves the selected input method alone and only moves it to
+its English (closed) state through TSF's cross-process global compartments — the
+equivalent of pressing the IME's own Shift toggle. Nothing is written to the
+session's input locale, so there is nothing to restore on exit. Set
+`core.switch_english_layout_on_disable = true` to get the profile switch back; it
+is also what runs when the backend has no global-compartment channel (for example
+`enable_tsf = false`).
+
+Windows' *"Let me set a different input method for each app window"* setting was
+the usual workaround for the old behavior and is no longer needed.
 
 ### Rendering & DPI
 
