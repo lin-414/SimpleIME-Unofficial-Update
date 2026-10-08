@@ -1,6 +1,6 @@
 [center][size=5][color=#00B176][b]SimpleIME-Unofficial-Update[/b][/color][/size]
 [size=3]Native IME support for Skyrim SE/AE · 为上古卷轴5 SE/AE 提供完整输入法支持[/size]
-[size=2]v3.1.2-beta · based on upstream v2.2.1 by cyfewlp · GPL-3.0-or-later[/size][/center]
+[size=2]v3.1.4-beta · based on upstream v2.2.1 by cyfewlp · GPL-3.0-or-later[/size][/center]
 
 [line]
 
@@ -54,6 +54,8 @@ SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入�
 [list]
 [*][color=#CDC2DB]Stuck IME around mod menus[/color] — the root cause (a leaked text-entry counter that kept the IME, language bar and paused tool window on after leaving a mod window) is healed by event repair plus an every-frame poll; every disable path now also hides the language bar and returns Win32 focus to the game.
 [color=#CDC2DB]模组菜单导致的输入法卡死[/color] —— 根因是文本输入计数泄漏（离开模组窗口后输入法、语言栏与暂停的工具窗口常开），现通过事件修复 + 逐帧轮询治愈；所有停用路径都会收起语言栏并把 Win32 焦点还给游戏。
+[*][color=#CDC2DB]Disabling the IME no longer touches the system language layout[/color] — the old path switched the session to the English keyboard layout and Windows kept it as the desktop input method (taskbar stuck on ENG after the game closed). Disabling now only closes your input method; the old behavior is an opt-in ([i]switch_english_layout_on_disable[/i]).
+[color=#CDC2DB]禁用输入法不再改动系统语言布局[/color] —— 旧实现会把系统切到英文键盘布局并被 Windows 留作桌面输入法（退出游戏后任务栏残留 ENG）。现在禁用只关闭当前输入法；旧行为保留为可选项（[i]switch_english_layout_on_disable[/i]）。
 [*][color=#CDC2DB]Upstream's window-switch crash[/color] — switching windows via [b]Win+Shift+S[/b] (or Alt-Tab with a key held) during CJK composition no longer crashes or leaves phantom keys stuck in ImGui; focus steal, teardown and cross-thread COM paths are hardened throughout.
 [color=#CDC2DB]上游切窗崩溃[/color] —— CJK 组字期间用 [b]Win+Shift+S[/b]（或按住按键 Alt-Tab）切窗不再崩溃、不再残留幽灵按键；焦点抢占、析构与跨线程 COM 路径全面加固。
 [*][color=#CDC2DB]Sharp UI on scaled displays[/color] — the process is made per-monitor-v2 DPI aware (opt-out in config), so the settings UI and language bar are no longer stretched blurry at 125%+ system scaling.

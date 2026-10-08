@@ -1,0 +1,32 @@
+[center][size=4][color=#FFD700][b]🎉 v3.1.4-beta[/b][/color][/size][/center]
+
+[size=3][b]重点：禁用输入法不再改动系统语言布局[/b][/size]
+
+[list]
+[*][color=#CDC2DB]Disabling the IME no longer switches the session's language profile[/color] — the old path activated the English keyboard layout, which Windows keeps as the desktop input method: the taskbar stayed on ENG after the game exited. Disabling now only closes your input method (its 中/英 state moves, the profile does not), so the taskbar and the desktop are never touched. The old behavior remains available as an opt-in ([i]switch_english_layout_on_disable[/i] in the config), and is the automatic fallback when the new channel is unavailable.
+[color=#CDC2DB]禁用输入法不再改动系统语言布局[/color] —— 旧实现会把系统切换到英文键盘布局，而 Windows 会把它留作桌面输入法：退出游戏后任务栏一直显示 ENG。现在禁用只关闭你当前的输入法（中/英状态归位，语言布局不动），任务栏与桌面不受影响。旧行为保留为可选项（配置项 [i]switch_english_layout_on_disable[/i]），并在新通道不可用时自动回退。
+[/list]
+
+[size=3][b]修复[/b][/size]
+
+[list]
+[*]游戏正常退出时，IME 线程现在会被正确收尾；初始化失败后可安全重试（此前可能留下半初始化的状态）。
+[*]Meridian / SKSE Menu Framework / Prisma 桥接：虚表补丁写入前校验、失败如实上报；UIPlatform 最后一个外部引用释放时正确结束会话；某个后端失败不再被另一个后端的“正常”掩盖。
+[*]候选提交失败会明确提示，不再静默丢弃；候选列表改为拷贝进读取缓冲（消除组词期间的列表竞态）。
+[*]配置：键类型写错时会被明确告知（不再静默回落默认值）；保存失败不再无感；字体路径按 UTF-8 解码；出厂配置补齐 last_native_conversion。
+[*]Prisma 提示文案在四个语言中修正；TextStore 焦点清理增加未初始化防护；中/英状态记忆更稳。
+[/list]
+
+[size=3][b]内部[/b][/size]
+
+[list]
+[*]一次覆盖全代码库的清理重构（死码删除、重复逻辑单源化、巨型函数拆分），无行为变化；新增配置往返测试与 26/26 随机覆盖；内嵌桥脚本接入 Node 自测。
+[/list]
+
+[size=1]完整提交清单：[url=https://github.com/lin-414/SimpleIME-Unofficial-Update/compare/v3.1.2-beta...v3.1.4-beta]v3.1.2-beta...v3.1.4-beta[/url][/size]
+
+[size=1][url=https://github.com/lin-414/SimpleIME-Unofficial-Update/releases][b]➡ 前往 GitHub 下载 / Download on GitHub[/b][/url][/size]
+
+[line]
+遇到问题请优先提交 [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136?tab=bugs][b]BUG[/b][/url]，以便追踪和修复。
+Please [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136?tab=bugs][b]open a BUG[/b][/url] for any bugs or problems — it helps me track and fix them properly.
