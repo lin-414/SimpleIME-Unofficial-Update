@@ -69,6 +69,39 @@ private:
     void DrawSpecimen();
     void UpdateDisplayFontInfos(const std::vector<FontInfo> &sourceList);
 
+    /// Measured geometry of the result card, committed before any block draws:
+    /// the fixed blocks are measured first so the specimen takes exactly the
+    /// height the rest leaves over. Shared by the card's four segment painters.
+    struct ResultCardLayout
+    {
+        ImVec2 cardMin{};
+        float  cardRight    = 0.0F;
+        float  padX         = 0.0F;
+        float  padY         = 0.0F;
+        float  gap          = 0.0F;
+        float  contentW     = 0.0F;
+        float  statusLineH  = 0.0F;
+        float  queueTitleH  = 0.0F;
+        float  listLineH    = 0.0F;
+        float  queueEmptyH  = 0.0F;
+        float  iconBtnH     = 0.0F;
+        float  iconBtnW     = 0.0F;
+        float  queueHeaderH = 0.0F;
+        float  queueTitleGap = 0.0F;
+        float  queueTopGap  = 0.0F;
+        float  rowH         = 0.0F;
+        int    rowCount     = 0;
+        float  queueContentH = 0.0F;
+        float  specimenH    = 0.0F;
+        float  cardH        = 0.0F;
+        float  actionBtnH   = 0.0F;
+    };
+
+    void DrawResultCardStatus(const ResultCardLayout &layout, ImGuiEx::M3::M3Styles &m3Styles);
+    void DrawResultCardSpecimen(const ResultCardLayout &layout, ImGuiEx::M3::M3Styles &m3Styles);
+    void DrawResultCardQueue(const ResultCardLayout &layout, FontBuilder &fontBuilder, ImGuiEx::M3::M3Styles &m3Styles);
+    void DrawResultCardActions(const ResultCardLayout &layout, FontBuilder &fontBuilder, Settings &settings);
+
 public:
     [[nodiscard]] auto IsPreviewing() const -> bool { return m_state == State::PREVIEWING; }
 

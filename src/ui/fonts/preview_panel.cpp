@@ -263,6 +263,39 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
     const ImVec2 cardMin  = ImGui::GetCursorScreenPos();
     const float  cardRight = cardMin.x + size.x;
 
+    ResultCardLayout layout;
+    layout.cardMin       = cardMin;
+    layout.cardRight     = cardRight;
+    layout.padX          = padX;
+    layout.padY          = padY;
+    layout.gap           = gap;
+    layout.contentW      = contentW;
+    layout.statusLineH   = statusLineH;
+    layout.queueTitleH   = queueTitleH;
+    layout.listLineH     = listLineH;
+    layout.queueEmptyH   = queueEmptyH;
+    layout.iconBtnH      = iconBtnH;
+    layout.iconBtnW      = iconBtnW;
+    layout.queueHeaderH  = queueHeaderH;
+    layout.queueTitleGap = queueTitleGap;
+    layout.queueTopGap   = queueTopGap;
+    layout.rowH          = rowH;
+    layout.rowCount      = rowCount;
+    layout.queueContentH = queueContentH;
+    layout.specimenH     = specimenH;
+    layout.cardH         = cardH;
+    layout.actionBtnH    = actionBtnH;
+
+    DrawResultCardStatus(layout, m3Styles);
+    DrawResultCardSpecimen(layout, m3Styles);
+    DrawResultCardQueue(layout, fontBuilder, m3Styles);
+    DrawResultCardActions(layout, fontBuilder, settings);
+
+    ImGui::EndChild();
+}
+
+void FontPreviewPanel::DrawResultCardStatus(const ResultCardLayout &layout, ImGuiEx::M3::M3Styles &m3Styles)
+{
     // Status strip: one quiet line explaining what the specimen shows.
     {
         const auto statusBar = [&]() -> StatusBar {
@@ -283,22 +316,22 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
             }
         }();
 
-        ImGui::SetCursorScreenPos({cardMin.x + padX, cardMin.y + padY});
+        ImGui::SetCursorScreenPos({layout.cardMin.x + layout.padX, layout.cardMin.y + layout.padY});
         // Icon drawn directly on the line: the facade's Icon items submit a
         // 48dp hit box that would blow the strip's measured height and push
         // every block below it out of the card.
         const float statusIconSize = m3Styles.GetPixels(M3Spec::dp<16>());
         {
             const auto fontScope = m3Styles.UseTextRole<ImGuiEx::M3::Spec::TextRole::BodySmall>();
-            const ImVec2 iconPos(cardMin.x + padX, cardMin.y + padY + (statusLineH - statusIconSize) * 0.5F);
+            const ImVec2 iconPos(layout.cardMin.x + layout.padX, layout.cardMin.y + layout.padY + (layout.statusLineH - statusIconSize) * 0.5F);
             ImGui::GetWindowDrawList()->AddText(
                 m3Styles.IconFont(), statusIconSize, iconPos, ImGui::ColorConvertFloat4ToU32(m3Styles.Colors()[statusBar.role]),
                 statusBar.icon.data(), statusBar.icon.data() + statusBar.icon.size()
             );
-            ImGui::Dummy({statusIconSize * 1.5F, statusLineH});
-            ImGui::SameLine(0.0F, gap);
+            ImGui::Dummy({statusIconSize * 1.5F, layout.statusLineH});
+            ImGui::SameLine(0.0F, layout.gap);
             // Long font paths elide to the strip; the tooltip discloses the full one.
-            const float maxTextW = std::max(contentW - statusIconSize * 1.5F - gap, ImGui::GetTextLineHeight() * 4.0F);
+            const float maxTextW = std::max(layout.contentW - statusIconSize * 1.5F - layout.gap, ImGui::GetTextLineHeight() * 4.0F);
             const auto  elided   = Panels::ElideText(statusBar.text, maxTextW);
             const std::string_view shownText = elided.empty() ? std::string_view{statusBar.text} : std::string_view{elided};
             ImGuiEx::M3::TextUnformatted<ImGuiEx::M3::Spec::TextRole::BodySmall>(shownText, statusBar.role);
@@ -307,13 +340,16 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
                 ImGuiEx::M3::SetItemToolTip(statusBar.text);
             }
         }
-        ImGui::Dummy({0.0F, padY});
+        ImGui::Dummy({0.0F, layout.padY});
     }
-    ImGui::SetCursorScreenPos({cardMin.x, ImGui::GetCursorScreenPos().y});
+    ImGui::SetCursorScreenPos({layout.cardMin.x, ImGui::GetCursorScreenPos().y});
     ImGuiEx::M3::Divider();
+}
 
+void FontPreviewPanel::DrawResultCardSpecimen(const ResultCardLayout &layout, ImGuiEx::M3::M3Styles &m3Styles)
+{
     // Specimen: the preview text in the selected font, scrolling on its own.
-    if (ImGui::BeginChild("##FontSpecimen", {0.0F, specimenH}, ImGuiEx::ChildFlags()))
+    if (ImGui::BeginChild("##FontSpecimen", {0.0F, layout.specimenH}, ImGuiEx::ChildFlags()))
     {
         const float textPadX = m3Styles.GetPixels(M3Spec::TextParagraph::PaddingX);
         ImGui::Indent(textPadX);
@@ -324,7 +360,7 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
             const std::string_view message = Translate("Settings.FontBuilder.PreviewPanel.NotSupportedFont");
             const float  msgW = ImGui::CalcTextSize(ImGuiEx::TextStart(message), ImGuiEx::TextEnd(message)).x;
             const ImVec2 zoneMin = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos({zoneMin.x + std::max((ImGui::GetContentRegionAvail().x - msgW) * 0.5F, 0.0F), zoneMin.y + std::max((specimenH - ImGui::GetTextLineHeight()) * 0.5F, 0.0F)});
+            ImGui::SetCursorScreenPos({zoneMin.x + std::max((ImGui::GetContentRegionAvail().x - msgW) * 0.5F, 0.0F), zoneMin.y + std::max((layout.specimenH - ImGui::GetTextLineHeight()) * 0.5F, 0.0F)});
             ImGuiEx::M3::TextUnformatted<ImGuiEx::M3::Spec::TextRole::BodyMedium>(message, M3Spec::ColorRole::onSurfaceVariant);
         }
         else
@@ -335,19 +371,25 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
     }
     ImGui::EndChild();
 
-    ImGui::SetCursorScreenPos({cardMin.x, ImGui::GetCursorScreenPos().y});
+    ImGui::SetCursorScreenPos({layout.cardMin.x, ImGui::GetCursorScreenPos().y});
     ImGuiEx::M3::Divider();
+}
 
+void FontPreviewPanel::DrawResultCardQueue(const ResultCardLayout &layout, FontBuilder &fontBuilder, ImGuiEx::M3::M3Styles &m3Styles)
+{
     // Build queue: the ordered fallback chain, with the preview and add
     // actions anchored to its header — the two things you do from here.
-    ImGui::Dummy({0.0F, queueTopGap});
+    // The names were measured once in the caller (rowCount); the rows re-read
+    // the same const accessor for their labels.
+    const auto &builtNames = fontBuilder.GetBaseFont().GetFontNames();
+    ImGui::Dummy({0.0F, layout.queueTopGap});
     const float headerY = ImGui::GetCursorScreenPos().y;
     {
-        ImGui::SetCursorScreenPos({cardMin.x + padX, headerY + (queueHeaderH - queueTitleH) * 0.5F});
+        ImGui::SetCursorScreenPos({layout.cardMin.x + layout.padX, headerY + (layout.queueHeaderH - layout.queueTitleH) * 0.5F});
         ImGuiEx::M3::TextUnformatted<ImGuiEx::M3::Spec::TextRole::TitleSmall>(Translate("Settings.FontBuilder.BuildQueue"), M3Spec::ColorRole::onSurface);
 
-        const float btnsW = iconBtnW * 2.0F + gap;
-        ImGui::SetCursorScreenPos({cardRight - padX - btnsW, headerY + (queueHeaderH - iconBtnH) * 0.5F});
+        const float btnsW = layout.iconBtnW * 2.0F + layout.gap;
+        ImGui::SetCursorScreenPos({layout.cardRight - layout.padX - btnsW, headerY + (layout.queueHeaderH - layout.iconBtnH) * 0.5F});
         ImGui::BeginDisabled(!fontBuilder.IsBuilding());
         if (ImGuiEx::M3::XSmallIconButton(ICON_EYE, ImGuiEx::M3::Spec::IconButtonColors::Standard))
         {
@@ -356,7 +398,7 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
         ImGui::EndDisabled();
         ImGuiEx::M3::SetItemToolTip(Translate("Settings.FontBuilder.PreviewBuild"));
 
-        ImGui::SameLine(0.0F, gap);
+        ImGui::SameLine(0.0F, layout.gap);
         ImGui::BeginDisabled(!m_imFont.IsCommittable());
         if (ImGuiEx::M3::XSmallIconButton(ICON_PLUS, ImGuiEx::M3::Spec::IconButtonColors::Tonal))
         {
@@ -369,11 +411,11 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
         ImGuiEx::M3::SetItemToolTip(Translate("Settings.FontBuilder.Add"));
     }
 
-    const float rowsY = headerY + queueHeaderH + queueTitleGap;
-    if (rowCount > 0)
+    const float rowsY = headerY + layout.queueHeaderH + layout.queueTitleGap;
+    if (layout.rowCount > 0)
     {
-        ImGui::SetCursorScreenPos({cardMin.x + padX, rowsY});
-        if (ImGui::BeginChild("##BuildQueueRows", {contentW, queueContentH}, ImGuiEx::ChildFlags()))
+        ImGui::SetCursorScreenPos({layout.cardMin.x + layout.padX, rowsY});
+        if (ImGui::BeginChild("##BuildQueueRows", {layout.contentW, layout.queueContentH}, ImGuiEx::ChildFlags()))
         {
             const auto fontScope = m3Styles.UseTextRole<ImGuiEx::M3::Spec::List::textRole>();
             auto      *drawList  = ImGui::GetWindowDrawList();
@@ -381,11 +423,11 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
             const float numGap     = m3Styles.GetPixels(M3Spec::dp<8>());
             const float rowsMinX   = ImGui::GetCursorScreenPos().x;
             const float rowsTop    = ImGui::GetCursorScreenPos().y;
-            for (int i = 0; i < rowCount; ++i)
+            for (int i = 0; i < layout.rowCount; ++i)
             {
-                const ImVec2 rowMin(rowsMinX, rowsTop + static_cast<float>(i) * rowH);
+                const ImVec2 rowMin(rowsMinX, rowsTop + static_cast<float>(i) * layout.rowH);
                 ImGui::SetCursorScreenPos(rowMin);
-                ImGui::Dummy({contentW, rowH});
+                ImGui::Dummy({layout.contentW, layout.rowH});
                 if (i < static_cast<int>(builtPaths.size()))
                 {
                     ImGuiEx::M3::SetItemToolTip(builtPaths[static_cast<size_t>(i)]);
@@ -393,11 +435,11 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
 
                 const std::string number = std::format("{}.", i + 1);
                 const float       numW   = ImGui::CalcTextSize(number.c_str()).x;
-                const float       textY  = rowMin.y + ImGuiEx::M3::CenteredTextOffsetY(rowH);
+                const float       textY  = rowMin.y + ImGuiEx::M3::CenteredTextOffsetY(layout.rowH);
                 drawList->AddText(
                     {rowMin.x, textY}, ImGui::ColorConvertFloat4ToU32(m3Styles.Colors()[M3Spec::ColorRole::onSurfaceVariant]), number.c_str()
                 );
-                const auto name = Panels::ElideText(builtNames[static_cast<size_t>(i)], contentW - numW - numGap);
+                const auto name = Panels::ElideText(builtNames[static_cast<size_t>(i)], layout.contentW - numW - numGap);
                 drawList->AddText(
                     {rowMin.x + numW + numGap, textY},
                     ImGui::ColorConvertFloat4ToU32(m3Styles.Colors()[M3Spec::ColorRole::onSurface]),
@@ -409,14 +451,17 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
     }
     else
     {
-        ImGui::SetCursorScreenPos({cardMin.x + padX, rowsY});
+        ImGui::SetCursorScreenPos({layout.cardMin.x + layout.padX, rowsY});
         ImGuiEx::M3::TextUnformatted<ImGuiEx::M3::Spec::TextRole::BodySmall>(
-            Translate("Settings.FontBuilder.BuildQueueEmpty"), M3Spec::ColorRole::onSurfaceVariant, contentW
+            Translate("Settings.FontBuilder.BuildQueueEmpty"), M3Spec::ColorRole::onSurfaceVariant, layout.contentW
         );
     }
+}
 
+void FontPreviewPanel::DrawResultCardActions(const ResultCardLayout &layout, FontBuilder &fontBuilder, Settings &settings)
+{
     // Actions anchored to the card's bottom edge.
-    ImGui::SetCursorScreenPos({cardMin.x + padX, cardMin.y + cardH - padY - actionBtnH});
+    ImGui::SetCursorScreenPos({layout.cardMin.x + layout.padX, layout.cardMin.y + layout.cardH - layout.padY - layout.actionBtnH});
     ImGui::BeginDisabled(!fontBuilder.IsBuilding());
     {
         ImGuiEx::M3::ButtonConfiguration config;
@@ -427,7 +472,7 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
             (void)fontBuilder.ApplyFont(settings);
         }
     }
-    ImGui::SameLine(0.0F, gap);
+    ImGui::SameLine(0.0F, layout.gap);
     {
         ImGuiEx::M3::ButtonConfiguration config;
         config.Text().Icon(ICON_ROTATE_CCW);
@@ -442,8 +487,6 @@ void FontPreviewPanel::DrawResultCard(FontBuilder &fontBuilder, Settings &settin
         }
     }
     ImGui::EndDisabled();
-
-    ImGui::EndChild();
 }
 
 void FontPreviewPanel::UpdateDisplayFontInfos(const std::vector<FontInfo> &sourceList)
