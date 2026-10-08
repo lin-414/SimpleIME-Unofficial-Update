@@ -96,12 +96,14 @@ void             HookedSetBrowserFocused(Browser *, bool);
 
 // All hook/negotiation contexts are the game thread (SKSE messaging, and
 // consumer mods calling the API from their menu/game code); the bridge Tick
-// reads only s_focusedBrowser inside MeridianBridge, so plain fields here
-// need no atomics. The mutex guards the registry against the theoretical
+// reads only s_focusedBrowser inside MeridianBridge, so the other plain
+// fields here need no atomics. s_state is the exception: MeridianBridge's
+// State() (and through it the settings UI and diagnostics) reads it from
+// other threads. The mutex guards the registry against the theoretical
 // non-game-thread API caller.
 IUIPlatformAPI *s_api = nullptr;            ///< the process-wide UIPlatform singleton, once negotiated
 std::uint32_t   s_apiVersion = 0;           ///< from ResponseVersion; gates the slot-3 hook
-SupportState    s_state      = SupportState::Pending;
+std::atomic<SupportState> s_state{SupportState::Pending}; ///< read cross-thread via State()
 std::string     s_libVersionString = "-";
 std::string     s_apiVersionString = "-";
 
@@ -519,7 +521,7 @@ void RequestApi()
 
 SupportState State()
 {
-    return s_state;
+    return s_state.load(std::memory_order_acquire);
 }
 
 std::string VersionDescription()
