@@ -125,6 +125,22 @@ private:
     void InitializeTextService();
     void DrawImeStates();
 
+    /// The SimpleIME.ReclaimImeFocus.v2 registered message id (0 when the
+    /// registration failed); shared by the WndProc dispatch and the
+    /// WM_KILLFOCUS re-post.
+    static auto ReclaimImeFocusMessage() -> UINT;
+    /// Reclaim-message body: pull Win32 focus back from the game window when a
+    /// web-bridge session still owns input. Every guard re-checks here — the
+    /// post is deferred one hop out of the focus transition.
+    auto ReclaimImeFocus(HWND hWnd) -> void;
+    /// WM_KEYDOWN body: Shift-tap arming and the Prisma edit-key forward.
+    auto HandleKeyDown(UINT uMsg, WPARAM wParam, LPARAM lParam) -> void;
+    /// WM_KEYUP body: the bare-Shift-tap 中/英 prediction and the forward.
+    auto HandleKeyUp(UINT uMsg, WPARAM wParam, LPARAM lParam) -> void;
+    /// WM_CHAR body: the IME gate, the composition/commit echo suppressions and
+    /// the Scaleform forwarding. Always consumes the message.
+    auto HandleCharMessage(WPARAM wParam, LPARAM lParam) -> LRESULT;
+
     DebounceTimer                   m_translatorLoadDebounceTimer{std::chrono::seconds(TRANSLATOR_DEBOUNCE_DELAY_SECONDS)};
     std::unique_ptr<ImeWindow>      m_imeWindow             = nullptr;
     std::unique_ptr<UI::ImeOverlay> m_imeOverlay            = nullptr;

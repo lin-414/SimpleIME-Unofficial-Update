@@ -530,15 +530,11 @@ auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRES
     // deferred one hop out of the focus transition, re-checked at handling
     // time, and skipped when the focus went somewhere legitimate (alt-tab /
     // Steam overlay take the foreground with them).
-    static const UINT kReclaimImeFocusMsg = RegisterWindowMessageW(L"SimpleIME.ReclaimImeFocus.v2");
-    if (kReclaimImeFocusMsg != 0 && uMsg == kReclaimImeFocusMsg)
+    if (const UINT reclaimMsg = ReclaimImeFocusMessage(); reclaimMsg != 0 && uMsg == reclaimMsg)
     {
-        ImeWnd *reclaim = GetThis(hWnd);
-        if (reclaim != nullptr && Hooks::MeridianBridge::HasFocus() && !Core::State::GetInstance().ImeDisabled() &&
-            !Hooks::PrismaBridge::OwnsInput() && GetForegroundWindow() == reclaim->m_hWndParent)
+        if (ImeWnd *reclaim = GetThis(hWnd); reclaim != nullptr)
         {
-            logger::info("Reclaiming IME focus stolen by a click during a Meridian session");
-            SetFocus(hWnd);
+            reclaim->ReclaimImeFocus(hWnd);
         }
         return 0;
     }
@@ -566,53 +562,13 @@ auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRES
             logger::debug("ImeWnd WM_KEYDOWN vk={:#x}", wParam);
             if (pThis != nullptr)
             {
-                if (wParam == VK_SHIFT)
-                {
-                    pThis->m_shiftTapArmed      = true;
-                    pThis->m_shiftTapDownTickMs = GetTickCount64();
-                }
-                else
-                {
-                    pThis->m_shiftTapArmed = false; // Shift+key combo is not a mode toggle
-                }
-                ForwardEditingKeyToPrismaHostIfOwned(pThis->m_hWndParent, uMsg, wParam, lParam);
+                pThis->HandleKeyDown(uMsg, wParam, lParam);
             }
             break;
         case WM_KEYUP:
             if (pThis != nullptr)
             {
-                if (wParam == VK_SHIFT && pThis->m_shiftTapArmed)
-                {
-                    pThis->m_shiftTapArmed = false;
-                    // Bare Shift tap (no other key down/up in between): for
-                    // Chinese IMEs this is the 中/英 toggle. Only predict while
-                    // the IME actually owns the keyboard and no composition is
-                    // active (Shift during a composition commits raw text in
-                    // most IMEs instead of toggling). Behavioral inference
-                    // corrects the display on the next keystroke if the active
-                    // IME does not use Shift as its toggle.
-                    auto       &state      = State::GetInstance();
-                    const bool  imeOwnsKeys = ImeController::GetInstance()->IsModEnabled() && state.NotHas(State::IME_DISABLED) &&
-                                              state.Has(State::INPUT_PROCESSOR_ACTIVATED) && state.TsfFocus() &&
-                                              state.NotHas(State::IN_COMPOSING, State::IN_CAND_CHOOSING);
-                    if (imeOwnsKeys && GetTickCount64() - pThis->m_shiftTapDownTickMs <= SHIFT_TAP_WINDOW_MS)
-                    {
-                        logger::info("Bare Shift tap while the IME owns input: toggling the displayed 中/英 state");
-                        if (state.GetConversionMode().IsNative())
-                        {
-                            state.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
-                        }
-                        else
-                        {
-                            state.AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
-                        }
-                    }
-                }
-                else if (wParam != VK_SHIFT)
-                {
-                    pThis->m_shiftTapArmed = false;
-                }
-                ForwardEditingKeyToPrismaHostIfOwned(pThis->m_hWndParent, uMsg, wParam, lParam);
+                pThis->HandleKeyUp(uMsg, wParam, lParam);
             }
             break;
         case WM_DESTROY: {
@@ -677,89 +633,160 @@ auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRES
             if (Hooks::MeridianBridge::HasFocus() && !Core::State::GetInstance().ImeDisabled() &&
                 !Hooks::PrismaBridge::OwnsInput() && GetForegroundWindow() == pThis->m_hWndParent)
             {
-                PostMessageW(hWnd, kReclaimImeFocusMsg, 0, 0);
+                PostMessageW(hWnd, ReclaimImeFocusMessage(), 0, 0);
             }
             return 0;
         }
         case WM_CHAR: {
             if (pThis == nullptr) break;
-            const auto &state = Core::State::GetInstance();
-            if (!(ImeController::GetInstance()->IsModEnabled() && (state.NotHas(State::IME_DISABLED) && state.Has(State::INPUT_PROCESSOR_ACTIVATED))))
-            {
-                logger::debug(
-                    "ImeWnd WM_CHAR {:#x} dropped by gate (modEnabled={}, imeDisabled={}, tipActive={})",
-                    static_cast<std::uint32_t>(wParam),
-                    ImeController::GetInstance()->IsModEnabled(),
-                    state.ImeDisabled(),
-                    state.Has(State::INPUT_PROCESSOR_ACTIVATED));
-                return 0;
-            }
-            const auto wcharCode = static_cast<std::uint32_t>(wParam);
-
-            // Composition echo suppression: the plain PeekMessage loop runs
-            // TranslateMessage BEFORE the IME consumes the key in
-            // DefWindowProc, so while a composition is active every pinyin key
-            // — and the commit space — still produces a WM_CHAR here. Scaleform
-            // menus mask those echoes behind ImeMenu::OnCharEvent's
-            // interception, but a Meridian session routes them straight into
-            // the DOM field: the raw pinyin (plus a stray space) landed next to
-            // the committed text. Characters emitted during an active
-            // composition belong to the IME; drop them, the composition's own
-            // OnEndComposition callback delivers the committed string.
-            if (State::GetInstance().HasAny(State::IN_COMPOSING, State::IN_CAND_CHOOSING))
-            {
-                // The IME consumed the key at the message level (these echoes
-                // never even carry the composition's keys — the TIP eats them
-                // upstream of this WndProc), but if one ever slips through,
-                // forwarding it would double-type it into Meridian's DOM
-                // field. The host's own leak of the composition keystrokes is
-                // compensated in the DOM by the bridge's strip pass.
-                logger::debug("ImeWnd WM_CHAR {:#x} dropped (composition active)", wParam);
-                return 0;
-            }
-
-            // Commit-keystroke echo (see InitializeTextService): the echo is
-            // deterministically the first WM_CHAR on this thread after the
-            // commit callback ran. Drop it once, then disarm — a later
-            // keystroke inside the window belongs to the user, not the echo.
-            if (pThis->m_lastCommitTickMs != 0)
-            {
-                const auto nowTick = GetTickCount64();
-                if (nowTick - pThis->m_lastCommitTickMs <= COMMIT_ECHO_DROP_WINDOW_MS)
-                {
-                    pThis->m_lastCommitTickMs = 0;
-                    logger::debug("ImeWnd WM_CHAR {:#x} dropped (commit keystroke echo)", wParam);
-                    return 0;
-                }
-                pThis->m_lastCommitTickMs = 0; // window expired: nothing left to suppress
-            }
-
-            // Behavioral mode inference: an ASCII letter reaching this point was
-            // passed through by the TIP with no composition involved. In native
-            // (Chinese/Japanese) mode the IME consumes letters upstream — they
-            // never produce a WM_CHAR here. IMEs that publish no mode
-            // compartment (WeChat IME) are still tracked this way.
-            if ((wcharCode >= L'a' && wcharCode <= L'z') || (wcharCode >= L'A' && wcharCode <= L'Z'))
-            {
-                logger::debug("ImeWnd WM_CHAR {:c} passed through raw — clearing NATIVE conversion mode", wParam);
-                State::GetInstance().ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
-            }
-
-            // The direct keys(arrow keys, etc.) are not sent via WM_CHAR messages
-            static const auto ignoredKeys = {VK_TAB, VK_RETURN, VK_BACK, VK_ESCAPE /*, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT*/};
-            if (std::ranges::find(ignoredKeys, wcharCode) == std::end(ignoredKeys))
-            {
-                logger::debug("ImeWnd WM_CHAR {:#x} accepted, forwarding to Skyrim", wcharCode);
-                const std::wstring wstring(1, LOWORD(wParam));
-                Skyrim::SendUiString(wstring);
-            }
-            return 0;
+            return pThis->HandleCharMessage(wParam, lParam);
         }
         default:
             // ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
             break;
     }
     return DefWindowProcW(hWnd, uMsg, wParam, lParam);
+}
+
+auto ImeWnd::ReclaimImeFocusMessage() -> UINT
+{
+    static const UINT id = RegisterWindowMessageW(L"SimpleIME.ReclaimImeFocus.v2");
+    return id;
+}
+
+void ImeWnd::ReclaimImeFocus(HWND hWnd)
+{
+    if (Hooks::MeridianBridge::HasFocus() && !Core::State::GetInstance().ImeDisabled() &&
+        !Hooks::PrismaBridge::OwnsInput() && GetForegroundWindow() == m_hWndParent)
+    {
+        logger::info("Reclaiming IME focus stolen by a click during a Meridian session");
+        SetFocus(hWnd);
+    }
+}
+
+void ImeWnd::HandleKeyDown(UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    if (wParam == VK_SHIFT)
+    {
+        m_shiftTapArmed      = true;
+        m_shiftTapDownTickMs = GetTickCount64();
+    }
+    else
+    {
+        m_shiftTapArmed = false; // Shift+key combo is not a mode toggle
+    }
+    ForwardEditingKeyToPrismaHostIfOwned(m_hWndParent, uMsg, wParam, lParam);
+}
+
+void ImeWnd::HandleKeyUp(UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    if (wParam == VK_SHIFT && m_shiftTapArmed)
+    {
+        m_shiftTapArmed = false;
+        // Bare Shift tap (no other key down/up in between): for
+        // Chinese IMEs this is the 中/英 toggle. Only predict while
+        // the IME actually owns the keyboard and no composition is
+        // active (Shift during a composition commits raw text in
+        // most IMEs instead of toggling). Behavioral inference
+        // corrects the display on the next keystroke if the active
+        // IME does not use Shift as its toggle.
+        auto       &state      = State::GetInstance();
+        const bool  imeOwnsKeys = ImeController::GetInstance()->IsModEnabled() && state.NotHas(State::IME_DISABLED) &&
+                                  state.Has(State::INPUT_PROCESSOR_ACTIVATED) && state.TsfFocus() &&
+                                  state.NotHas(State::IN_COMPOSING, State::IN_CAND_CHOOSING);
+        if (imeOwnsKeys && GetTickCount64() - m_shiftTapDownTickMs <= SHIFT_TAP_WINDOW_MS)
+        {
+            logger::info("Bare Shift tap while the IME owns input: toggling the displayed 中/英 state");
+            if (state.GetConversionMode().IsNative())
+            {
+                state.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+            }
+            else
+            {
+                state.AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+            }
+        }
+    }
+    else if (wParam != VK_SHIFT)
+    {
+        m_shiftTapArmed = false;
+    }
+    ForwardEditingKeyToPrismaHostIfOwned(m_hWndParent, uMsg, wParam, lParam);
+}
+
+auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM lParam) -> LRESULT
+{
+    const auto &state = Core::State::GetInstance();
+    if (!(ImeController::GetInstance()->IsModEnabled() && (state.NotHas(State::IME_DISABLED) && state.Has(State::INPUT_PROCESSOR_ACTIVATED))))
+    {
+        logger::debug(
+            "ImeWnd WM_CHAR {:#x} dropped by gate (modEnabled={}, imeDisabled={}, tipActive={})",
+            static_cast<std::uint32_t>(wParam),
+            ImeController::GetInstance()->IsModEnabled(),
+            state.ImeDisabled(),
+            state.Has(State::INPUT_PROCESSOR_ACTIVATED));
+        return 0;
+    }
+    const auto wcharCode = static_cast<std::uint32_t>(wParam);
+
+    // Composition echo suppression: the plain PeekMessage loop runs
+    // TranslateMessage BEFORE the IME consumes the key in
+    // DefWindowProc, so while a composition is active every pinyin key
+    // — and the commit space — still produces a WM_CHAR here. Scaleform
+    // menus mask those echoes behind ImeMenu::OnCharEvent's
+    // interception, but a Meridian session routes them straight into
+    // the DOM field: the raw pinyin (plus a stray space) landed next to
+    // the committed text. Characters emitted during an active
+    // composition belong to the IME; drop them, the composition's own
+    // OnEndComposition callback delivers the committed string.
+    if (State::GetInstance().HasAny(State::IN_COMPOSING, State::IN_CAND_CHOOSING))
+    {
+        // The IME consumed the key at the message level (these echoes
+        // never even carry the composition's keys — the TIP eats them
+        // upstream of this WndProc), but if one ever slips through,
+        // forwarding it would double-type it into Meridian's DOM
+        // field. The host's own leak of the composition keystrokes is
+        // compensated in the DOM by the bridge's strip pass.
+        logger::debug("ImeWnd WM_CHAR {:#x} dropped (composition active)", wParam);
+        return 0;
+    }
+
+    // Commit-keystroke echo (see InitializeTextService): the echo is
+    // deterministically the first WM_CHAR on this thread after the
+    // commit callback ran. Drop it once, then disarm — a later
+    // keystroke inside the window belongs to the user, not the echo.
+    if (m_lastCommitTickMs != 0)
+    {
+        const auto nowTick = GetTickCount64();
+        if (nowTick - m_lastCommitTickMs <= COMMIT_ECHO_DROP_WINDOW_MS)
+        {
+            m_lastCommitTickMs = 0;
+            logger::debug("ImeWnd WM_CHAR {:#x} dropped (commit keystroke echo)", wParam);
+            return 0;
+        }
+        m_lastCommitTickMs = 0; // window expired: nothing left to suppress
+    }
+
+    // Behavioral mode inference: an ASCII letter reaching this point was
+    // passed through by the TIP with no composition involved. In native
+    // (Chinese/Japanese) mode the IME consumes letters upstream — they
+    // never produce a WM_CHAR here. IMEs that publish no mode
+    // compartment (WeChat IME) are still tracked this way.
+    if ((wcharCode >= L'a' && wcharCode <= L'z') || (wcharCode >= L'A' && wcharCode <= L'Z'))
+    {
+        logger::debug("ImeWnd WM_CHAR {:c} passed through raw — clearing NATIVE conversion mode", wParam);
+        State::GetInstance().ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+    }
+
+    // The direct keys(arrow keys, etc.) are not sent via WM_CHAR messages
+    static const auto ignoredKeys = {VK_TAB, VK_RETURN, VK_BACK, VK_ESCAPE /*, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT*/};
+    if (std::ranges::find(ignoredKeys, wcharCode) == std::end(ignoredKeys))
+    {
+        logger::debug("ImeWnd WM_CHAR {:#x} accepted, forwarding to Skyrim", wcharCode);
+        const std::wstring wstring(1, LOWORD(wParam));
+        Skyrim::SendUiString(wstring);
+    }
+    return 0;
 }
 
 auto ImeWnd::OnNccCreate(HWND hWnd, LPCREATESTRUCT lpCreateStruct) -> LRESULT
