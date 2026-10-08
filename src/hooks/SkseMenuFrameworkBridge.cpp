@@ -495,115 +495,104 @@ bool ImeDataPatternPlausible(const ImGuiPlatformImeDataMirror *ime)
            ime->inputPosY <= 8000.0F;
 }
 
-void UpdateFieldAnchor()
+/// Keep only the candidates the predicate still accepts, in place; returns
+/// the kept count (calibration converges by pruning).
+template <typename Pred>
+auto PruneCandidates(Pred &&keep) -> std::size_t
 {
-    if (s_platformImeHookInstalled.load(std::memory_order_acquire))
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < s_calCandidateCount; ++i)
     {
-        // The SetPlatformImeDataFn hook owns the anchor lifecycle (activation,
-        // caret move, deactivation all arrive as events). No polling needed.
-        return;
-    }
-    if (s_api.getCurrentContext == nullptr || s_api.getIo == nullptr)
-    {
-        return;
-    }
-    auto *ctx = s_api.getCurrentContext();
-    auto *io = s_api.getIo();
-    if (ctx == nullptr || io == nullptr || s_imeDataPathBroken.load(std::memory_order_relaxed))
-    {
-        return;
-    }
-    const bool wantsText = *reinterpret_cast<const volatile bool *>(
-        reinterpret_cast<const std::uint8_t *>(io) + IMGUI_IO_WANT_TEXT_INPUT_OFFSET);
-
-    if (!s_imeDataOffsetReady.load(std::memory_order_acquire))
-    {
-        const auto *base = reinterpret_cast<const std::uint8_t *>(ctx);
-        if (!wantsText)
+        if (keep(s_calCandidates[i]))
         {
-            if (s_calActive && s_calCandidateCount > 0)
-            {
-                // Field deactivated: WantVisible must have reset to 0. Keep
-                // only candidates that did — persistent flags die here.
-                std::size_t kept = 0;
-                for (std::size_t i = 0; i < s_calCandidateCount; ++i)
-                {
-                    if (*reinterpret_cast<const std::uint8_t *>(base + s_calCandidates[i]) == 0)
-                    {
-                        s_calCandidates[kept++] = s_calCandidates[i];
-                    }
-                }
-                s_calCandidateCount = kept;
-                if (kept == 1)
-                {
-                    FinishCalibration(s_calCandidates[0]);
-                }
-                else if (kept == 0)
-                {
-                    s_calActive = false;
-                    if (++s_calFailedRounds >= IMGUI_CAL_MAX_EMPTY_ROUNDS)
-                    {
-                        s_imeDataPathBroken.store(true, std::memory_order_release);
-                        logger::warn("PlatformImeData calibration found no candidate; field anchors fall back to click-time cursor");
-                    }
-                }
-            }
-            s_fieldAnchorValid.store(false, std::memory_order_release);
-            return;
+            s_calCandidates[kept++] = s_calCandidates[i];
         }
+    }
+    s_calCandidateCount = kept;
+    return kept;
+}
 
-        // Field active: initial scan or prune candidates that stopped matching.
-        if (!s_calActive)
+/// The one warning both no-candidate give-up paths log (deactivated prune and
+/// the initial scan): the anchor path is dead for this process.
+void MarkAnchorPathBroken()
+{
+    s_imeDataPathBroken.store(true, std::memory_order_release);
+    logger::warn("PlatformImeData calibration found no candidate; field anchors fall back to click-time cursor");
+}
+
+/// Uncalibrated mode, field deactivated: WantVisible must have reset to 0 on
+/// every candidate — keep only the ones that did; persistent flags die here.
+void UpdateFieldAnchorFieldGone(const std::uint8_t *base)
+{
+    if (s_calActive && s_calCandidateCount > 0)
+    {
+        const auto kept = PruneCandidates([base](const std::size_t offset) {
+            return *reinterpret_cast<const std::uint8_t *>(base + offset) == 0;
+        });
+        if (kept == 1)
         {
-            s_calCandidateCount = 0;
-            for (std::size_t o = IMGUI_CTX_SCAN_MIN;
-                 o + sizeof(ImGuiPlatformImeDataMirror) <= IMGUI_CTX_SCAN_MAX && s_calCandidateCount < IMGUI_CAL_MAX_CANDIDATES;
-                 o += 4)
+            FinishCalibration(s_calCandidates[0]);
+        }
+        else if (kept == 0)
+        {
+            s_calActive = false;
+            if (++s_calFailedRounds >= IMGUI_CAL_MAX_EMPTY_ROUNDS)
             {
-                const auto *ime = reinterpret_cast<const ImGuiPlatformImeDataMirror *>(base + o);
-                if (ImeDataPatternPlausible(ime))
-                {
-                    s_calCandidates[s_calCandidateCount++] = o;
-                }
-            }
-            s_calActive = s_calCandidateCount > 0;
-            if (!s_calActive && ++s_calFailedRounds >= IMGUI_CAL_MAX_EMPTY_ROUNDS)
-            {
-                s_imeDataPathBroken.store(true, std::memory_order_release);
-                logger::warn("PlatformImeData calibration found no candidate; field anchors fall back to click-time cursor");
+                MarkAnchorPathBroken();
             }
         }
-        else
+    }
+    s_fieldAnchorValid.store(false, std::memory_order_release);
+}
+
+/// Uncalibrated mode, field active: initial scan, or prune candidates that
+/// stopped matching. One survivor wins; zero ends the scan.
+void UpdateFieldAnchorScanning(const std::uint8_t *base)
+{
+    if (!s_calActive)
+    {
+        s_calCandidateCount = 0;
+        for (std::size_t o = IMGUI_CTX_SCAN_MIN;
+             o + sizeof(ImGuiPlatformImeDataMirror) <= IMGUI_CTX_SCAN_MAX && s_calCandidateCount < IMGUI_CAL_MAX_CANDIDATES;
+             o += 4)
         {
-            std::size_t kept = 0;
-            for (std::size_t i = 0; i < s_calCandidateCount; ++i)
+            const auto *ime = reinterpret_cast<const ImGuiPlatformImeDataMirror *>(base + o);
+            if (ImeDataPatternPlausible(ime))
             {
-                const auto *ime = reinterpret_cast<const ImGuiPlatformImeDataMirror *>(base + s_calCandidates[i]);
-                if (ImeDataPatternPlausible(ime))
-                {
-                    s_calCandidates[kept++] = s_calCandidates[i];
-                }
-            }
-            s_calCandidateCount = kept;
-            if (kept == 1)
-            {
-                FinishCalibration(s_calCandidates[0]);
-            }
-            else if (kept == 0)
-            {
-                s_calActive = false;
+                s_calCandidates[s_calCandidateCount++] = o;
             }
         }
-        s_fieldAnchorValid.store(false, std::memory_order_release);
-        return;
+        s_calActive = s_calCandidateCount > 0;
+        if (!s_calActive && ++s_calFailedRounds >= IMGUI_CAL_MAX_EMPTY_ROUNDS)
+        {
+            MarkAnchorPathBroken();
+        }
     }
+    else
+    {
+        const auto kept = PruneCandidates([base](const std::size_t offset) {
+            return ImeDataPatternPlausible(reinterpret_cast<const ImGuiPlatformImeDataMirror *>(base + offset));
+        });
+        if (kept == 1)
+        {
+            FinishCalibration(s_calCandidates[0]);
+        }
+        else if (kept == 0)
+        {
+            s_calActive = false;
+        }
+    }
+    s_fieldAnchorValid.store(false, std::memory_order_release);
+}
 
-    // Calibrated read path. A stale cache (framework rebuilt without its
-    // fingerprint changing is impossible, but a fingerprint collision or an
-    // imgui change within the same file identity would read zeros) self-heals:
-    // a field is active yet WantVisible stays 0 for ~3s → recalibrate.
+/// Calibrated read path. A stale cache (framework rebuilt without its
+/// fingerprint changing is impossible, but a fingerprint collision or an
+/// imgui change within the same file identity would read zeros) self-heals:
+/// a field is active yet WantVisible stays 0 for ~3s → recalibrate.
+void UpdateFieldAnchorCalibrated(const std::uint8_t *ctx, const bool wantsText)
+{
     const auto *ime = reinterpret_cast<const ImGuiPlatformImeDataMirror *>(
-        reinterpret_cast<const std::uint8_t *>(ctx) + s_imeDataOffset.load(std::memory_order_relaxed));
+        ctx + s_imeDataOffset.load(std::memory_order_relaxed));
     if (ime->wantVisible > 1)
     {
         s_imeDataPathBroken.store(true, std::memory_order_release);
@@ -644,6 +633,41 @@ void UpdateFieldAnchor()
     // No active InputText (or implausible data): the anchor must not outlive
     // its field.
     s_fieldAnchorValid.store(false, std::memory_order_release);
+}
+
+void UpdateFieldAnchor()
+{
+    if (s_platformImeHookInstalled.load(std::memory_order_acquire))
+    {
+        // The SetPlatformImeDataFn hook owns the anchor lifecycle (activation,
+        // caret move, deactivation all arrive as events). No polling needed.
+        return;
+    }
+    if (s_api.getCurrentContext == nullptr || s_api.getIo == nullptr)
+    {
+        return;
+    }
+    auto *ctx = s_api.getCurrentContext();
+    auto *io = s_api.getIo();
+    if (ctx == nullptr || io == nullptr || s_imeDataPathBroken.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    const bool wantsText = *reinterpret_cast<const volatile bool *>(
+        reinterpret_cast<const std::uint8_t *>(io) + IMGUI_IO_WANT_TEXT_INPUT_OFFSET);
+
+    if (!s_imeDataOffsetReady.load(std::memory_order_acquire))
+    {
+        const auto *base = reinterpret_cast<const std::uint8_t *>(ctx);
+        if (!wantsText)
+        {
+            UpdateFieldAnchorFieldGone(base);
+            return;
+        }
+        UpdateFieldAnchorScanning(base);
+        return;
+    }
+    UpdateFieldAnchorCalibrated(reinterpret_cast<const std::uint8_t *>(ctx), wantsText);
 }
 
 void BeginTextInput()
