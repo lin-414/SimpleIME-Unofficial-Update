@@ -55,6 +55,19 @@ struct Configuration
         bool        prismaAvoidance;
         /// IME input support for SKSE Menu Framework (ImGui) text fields.
         bool        skseMenuFrameworkSupport;
+        /// Deliver committed text through the engine's own input queue when the
+        /// text target is an ImGui menu that is NOT ours to feed AND does not
+        /// consume Scaleform char events (Tailor 3.x reads RE::InputEvents,
+        /// ModExplorerMenu forwards GFx char events into its own ImGui). Those
+        /// surfaces have no Scaleform field, so the Scaleform route would
+        /// silently drop the text. Which of the two a surface is gets probed.
+        bool        imguiSurfaceInput;
+        /// Pause the game while the settings (tool) window is open. Off by default:
+        /// RE::UI::numPausesGame is what host-side "is my menu still alive?"
+        /// watchdogs read, so turning this on can close mod menus that treat a
+        /// paused game as focus loss. Applied when the menu is off the stack, so it
+        /// takes effect on the next time the settings window opens.
+        bool        pauseGameWhileSettingsOpen;
         /// Runtime cache, NOT a preference: the last 中/英 (native) state observed
         /// in-game, stamped by the mod on every config save. Seeds the next
         /// session's first text-field entry — IMEs like WeChat publish no
@@ -109,7 +122,7 @@ constexpr auto GetDefaultConfiguration() -> Configuration
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .lastNativeConversion = true}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true}
     };
 }
 

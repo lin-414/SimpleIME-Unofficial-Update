@@ -385,6 +385,32 @@ auto SupportingMeasure() -> float
     return ImGuiEx::M3::Context::GetM3Styles().GetPixels(M3Spec::dp<500>());
 }
 
+//! spdlog's own level spellings, shared by the two logging dropdowns. Left in
+//! ASCII because they mirror the values the TOML keys accept.
+struct LogLevelName
+{
+    spdlog::level::level_enum level;
+    std::string_view          name;
+};
+constexpr std::array<LogLevelName, 7> kLogLevels{{
+    {spdlog::level::trace,    "Trace"   },
+    {spdlog::level::debug,    "Debug"   },
+    {spdlog::level::info,     "Info"    },
+    {spdlog::level::warn,     "Warn"    },
+    {spdlog::level::err,      "Error"   },
+    {spdlog::level::critical, "Critical"},
+    {spdlog::level::off,      "Off"     },
+}};
+
+//! Dropdown preview for a stored level. A hand-edited TOML value outside the
+//! presets still shows its closest valid reading as Info, the library default.
+auto LogLevelPreview(spdlog::level::level_enum level) -> std::string_view
+{
+    const auto current = std::find_if(kLogLevels.begin(), kLogLevels.end(),
+                                      [&](const LogLevelName &entry) { return entry.level == level; });
+    return current != kLogLevels.end() ? current->name : std::string_view{"Info"};
+}
+
 //! The SKSE log directory (cached: fixed once the plugin DLL path is known).
 //! Empty when SKSE cannot resolve its log directory.
 auto ResolveLogDir() -> std::filesystem::path
@@ -882,6 +908,25 @@ void ToolWindow::DrawMenuInputStatus(Settings &settings)
                 Translate("Settings.Behaviour.SkseMenuFrameworkSupportToolTip"),
                 Hooks::SkseMenuFrameworkBridge::State()
             );
+            Panels::RowDivider();
+            // Not a bridge: there is nothing to detect at install time (the surface is
+            // recognised while the player types), so this is a plain toggle rather
+            // than a compatibility row — a SupportState here would only misreport.
+            (void)Panels::SettingsToggleRow(
+                "##ImguiSurfaceInput",
+                Translate("Settings.Behaviour.ImguiSurfaceInput"),
+                Translate("Settings.Behaviour.ImguiSurfaceInputToolTip"),
+                settings.input.imguiSurfaceInput,
+                SupportingMeasure()
+            );
+            Panels::RowDivider();
+            (void)Panels::SettingsToggleRow(
+                "##PauseForSettings",
+                Translate("Settings.Behaviour.PauseGameWhileSettingsOpen"),
+                Translate("Settings.Behaviour.PauseGameWhileSettingsOpenToolTip"),
+                settings.input.pauseGameWhileSettingsOpen,
+                SupportingMeasure()
+            );
         }
         Panels::EndSettingsCard();
     }
@@ -914,6 +959,8 @@ void ToolWindow::DrawMenuAdvanced(Settings &settings)
 
         Panels::SettingsSection(Translate("Settings.Advanced.Logging"), "##LoggingCard", [&] {
             DrawLogLevelRow(settings);
+            ImGuiEx::M3::Divider();
+            DrawLogFlushRow(settings);
             ImGuiEx::M3::Divider();
             DrawErrorDurationRow(settings);
         });
@@ -1145,35 +1192,41 @@ std::string ToolWindow::BuildDiagnosticsText(const Settings &settings) const
 //! starts producing lines without a restart.
 void ToolWindow::DrawLogLevelRow(Settings &settings)
 {
-    struct LevelName
-    {
-        spdlog::level::level_enum level;
-        std::string_view          name;
-    };
-    static constexpr std::array<LevelName, 7> kLevels{{
-        {spdlog::level::trace,    "Trace"   },
-        {spdlog::level::debug,    "Debug"   },
-        {spdlog::level::info,     "Info"    },
-        {spdlog::level::warn,     "Warn"    },
-        {spdlog::level::err,      "Error"   },
-        {spdlog::level::critical, "Critical"},
-        {spdlog::level::off,      "Off"     },
-    }};
-    const auto current = std::find_if(kLevels.begin(), kLevels.end(), [&](const LevelName &entry) { return entry.level == settings.logging.level; });
-    const std::string preview = current != kLevels.end() ? std::string(current->name) : std::string("Info");
-
     Panels::SettingsComboRow(
         "##LogLevelCombo",
         Translate("Settings.Advanced.LogLevel"),
         Translate("Settings.Advanced.LogLevelSupport"),
-        preview,
+        std::string(LogLevelPreview(settings.logging.level)),
         [&] {
-            for (const auto &[level, name] : kLevels)
+            for (const auto &[level, name] : kLogLevels)
             {
                 if (Panels::ComboOption(name, level == settings.logging.level))
                 {
                     settings.logging.level = level;
                     spdlog::set_level(level);
+                }
+            }
+        },
+        SupportingMeasure());
+}
+
+//! "日志刷新级别" row: how many written lines can be lost if the process dies
+//! with a dirty buffer, so it belongs next to the level it flushes on. Also
+//! hot-applied — spdlog::flush_on retargets the same default logger.
+void ToolWindow::DrawLogFlushRow(Settings &settings)
+{
+    Panels::SettingsComboRow(
+        "##LogFlushCombo",
+        Translate("Settings.Advanced.LogFlushLevel"),
+        Translate("Settings.Advanced.LogFlushLevelSupport"),
+        std::string(LogLevelPreview(settings.logging.flushLevel)),
+        [&] {
+            for (const auto &[level, name] : kLogLevels)
+            {
+                if (Panels::ComboOption(name, level == settings.logging.flushLevel))
+                {
+                    settings.logging.flushLevel = level;
+                    spdlog::flush_on(level);
                 }
             }
         },

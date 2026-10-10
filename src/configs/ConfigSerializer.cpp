@@ -66,6 +66,8 @@ constexpr auto KEY_POS_UPDATE_POLICY      = "pos_update_policy";
 constexpr auto KEY_MERIDIAN_SUPPORT       = "meridian_support";
 constexpr auto KEY_PRISMA_AVOIDANCE       = "prisma_avoidance";
 constexpr auto KEY_SKSEMF_SUPPORT         = "skse_menu_framework_support";
+constexpr auto KEY_IMGUI_SURFACE_INPUT    = "imgui_surface_input";
+constexpr auto KEY_PAUSE_FOR_SETTINGS     = "pause_game_while_settings_open";
 constexpr auto KEY_LAST_NATIVE_CONVERSION = "last_native_conversion";
 
 //! @brief Format the configuration to a TOML string with comments for better readability.
@@ -126,11 +128,30 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         " 启用后，SKSEMF 界面(ImGui 实现，如使用该框架的设置菜单)的文本框聚焦时自动激活 IME，",
         " 并将上屏中文直接注入输入框。未安装 SKSEMenuFramework.dll(或版本低于 3.7)时此选项无效果。",
     };
+    const Comments imguiSurfaceInputComment = {
+        " 原生 ImGui 界面输入支持",
+        " 部分模组界面(如 Tailor 3.x、ModExplorerMenu)用自己的 Dear ImGui 直接画在画面里，",
+        " 不走 Scaleform，因此没有可供我们写入的输入框。这类界面收字有两条互不相通的通道：",
+        " 一类把 Scaleform 字符事件转进自己的 ImGui(Modex)，另一类只读引擎输入事件(Tailor)。",
+        " 认出这类界面后 SimpleIME 会先问它收哪条，再按对应通道投递上屏文字；走引擎通道的",
+        " 投递前先退格抹掉组字期间被引擎原样读进字面的拼音字母。普通游戏菜单不受影响。",
+    };
+    const Comments pauseForSettingsComment = {
+        " 设置窗口打开时暂停游戏",
+        " 默认关闭。开启后打开 SimpleIME 设置窗会让游戏暂停，但 RE::UI 的暂停计数会被一些",
+        " 模组界面当作\"自己已失效\"的信号（如 Tailor 3.x 的原生 ImGui 界面），设置窗一开",
+        " 它们就会被关闭。修改后下一次打开设置窗即生效，无需重启。",
+    };
     const Comments lastNativeConversionComment = {
         " 运行时缓存，非用户配置：游戏内最后观察到的 中/英 输入状态(true=中文)",
         " 由 Mod 在每次保存配置时自动更新，用于下次启动游戏时语言栏的初始显示。",
         " 微信等输入法不通过系统接口公布中/英状态，没有这个缓存时首次进入输入框无法预判。",
         " 请勿手动修改。",
+    };
+    const Comments logFlushLevelComment = {
+        " 达到此级别及以上的日志立即写入磁盘，低于它的先留在缓冲区；可选值与 level 相同",
+        " 排查崩溃或冻结时临时改为 trace 可让日志实时落盘，日常保持 info",
+        " 设置界面的高级页也能改，改完立即生效",
     };
     const Comments fontPathListComment = {
         " [可选] 用于 SimpleIME 的字体文件路径列表，支持 ttf 和 otf 格式，Mod 会按照列表顺序加载字体并合并到一起",
@@ -139,8 +160,8 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
     };
 
     const toml::table logging{
-        {KEY_LOG_LEVEL,       {configuration.logging.level, logLevelComment}},
-        {KEY_LOG_FLUSH_LEVEL, configuration.logging.flushLevel              },
+        {KEY_LOG_LEVEL,       {configuration.logging.level, logLevelComment}     },
+        {KEY_LOG_FLUSH_LEVEL, {configuration.logging.flushLevel, logFlushLevelComment}},
     };
 
     const toml::table core{
@@ -178,6 +199,8 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         {KEY_MERIDIAN_SUPPORT,     {configuration.input.meridianSupport, meridianSupportComment}},
         {KEY_PRISMA_AVOIDANCE,     {configuration.input.prismaAvoidance, prismaAvoidanceComment}},
         {KEY_SKSEMF_SUPPORT,       {configuration.input.skseMenuFrameworkSupport, skseMenuFrameworkSupportComment}},
+        {KEY_IMGUI_SURFACE_INPUT,  {configuration.input.imguiSurfaceInput, imguiSurfaceInputComment}},
+        {KEY_PAUSE_FOR_SETTINGS,   {configuration.input.pauseGameWhileSettingsOpen, pauseForSettingsComment}},
         {KEY_LAST_NATIVE_CONVERSION, {configuration.input.lastNativeConversion, lastNativeConversionComment}},
     };
     const toml::value tomlTable = {
@@ -309,6 +332,8 @@ auto ParseConfigurationFromToml(toml::value &rawToml, std::vector<std::string> *
         apply(input, KEY_MERIDIAN_SUPPORT, config.input.meridianSupport);
         apply(input, KEY_PRISMA_AVOIDANCE, config.input.prismaAvoidance);
         apply(input, KEY_SKSEMF_SUPPORT, config.input.skseMenuFrameworkSupport);
+        apply(input, KEY_IMGUI_SURFACE_INPUT, config.input.imguiSurfaceInput);
+        apply(input, KEY_PAUSE_FOR_SETTINGS, config.input.pauseGameWhileSettingsOpen);
         apply(input, KEY_LAST_NATIVE_CONVERSION, config.input.lastNativeConversion);
     }
     if (ignoredKeysOut != nullptr)

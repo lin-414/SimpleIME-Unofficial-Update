@@ -59,14 +59,21 @@ void DrawInputMethodsCombo(const LangProfile &activeLangProfile, const std::vect
 
 namespace UI::LanguageBar
 {
-auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles) -> void
+auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles, bool interactive) -> void
 {
     // NOTE: deliberately NOT NoInputs while pinned. ImGui only ever receives
     // mouse input while a menu context is active (ImeMenu forwards Scaleform
     // events), so the pinned bar cannot steal game clicks — but NoInputs made
     // the pin/unpin and settings buttons permanently unclickable, and the
     // "unpin from the button" escape hatch below never worked.
-    auto flags = ImGuiEx::WindowFlags().AlwaysAutoResize().NoNav().NoDecoration();
+    // The builder's flag methods are consteval, so the whole chain has to be one
+    // constant expression — pick the variant instead of OR-ing afterwards.
+    const auto flags = interactive
+                           ? ImGuiEx::WindowFlags().AlwaysAutoResize().NoNav().NoDecoration()
+                           // Just appeared under the cursor: the click belongs to
+                           // whatever is beneath us, not to the pin/settings buttons
+                           // (see ImeOverlay::Draw).
+                           : ImGuiEx::WindowFlags().AlwaysAutoResize().NoNav().NoDecoration().NoMouseInputs();
     if (ImGuiEx::M3::BeginFloatingToolbar(LANGUAGE_BAR, nullptr, M3Spec::ToolBarColors::Standard, flags))
     {
         auto       &m3Styles = ImGuiEx::M3::Context::GetM3Styles();

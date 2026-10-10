@@ -177,6 +177,8 @@ TEST(ConfigurationToSettingsTest, should_set_base_type_member_value_from_configu
     EXPECT_EQ(settings.input.meridianSupport, configuration.input.meridianSupport);
     EXPECT_EQ(settings.input.prismaAvoidance, configuration.input.prismaAvoidance);
     EXPECT_EQ(settings.input.skseMenuFrameworkSupport, configuration.input.skseMenuFrameworkSupport);
+    EXPECT_EQ(settings.input.imguiSurfaceInput, configuration.input.imguiSurfaceInput);
+    EXPECT_EQ(settings.input.pauseGameWhileSettingsOpen, configuration.input.pauseGameWhileSettingsOpen);
     EXPECT_EQ(settings.input.lastNativeConversion, configuration.input.lastNativeConversion);
 }
 
@@ -216,6 +218,8 @@ TEST(SettingsRoundTripTest, settings_config_settings_is_a_fixed_point)
         EXPECT_EQ(actual.input.meridianSupport, expected.input.meridianSupport);
         EXPECT_EQ(actual.input.prismaAvoidance, expected.input.prismaAvoidance);
         EXPECT_EQ(actual.input.skseMenuFrameworkSupport, expected.input.skseMenuFrameworkSupport);
+        EXPECT_EQ(actual.input.imguiSurfaceInput, expected.input.imguiSurfaceInput);
+        EXPECT_EQ(actual.input.pauseGameWhileSettingsOpen, expected.input.pauseGameWhileSettingsOpen);
         EXPECT_EQ(actual.input.lastNativeConversion, expected.input.lastNativeConversion);
     };
 
@@ -411,5 +415,7 @@ TEST(ShippedConfigurationTest, shipped_toml_converts_to_default_settings)
     EXPECT_EQ(shipped.input.meridianSupport, expected.input.meridianSupport);
     EXPECT_EQ(shipped.input.prismaAvoidance, expected.input.prismaAvoidance);
     EXPECT_EQ(shipped.input.skseMenuFrameworkSupport, expected.input.skseMenuFrameworkSupport);
+    EXPECT_EQ(shipped.input.imguiSurfaceInput, expected.input.imguiSurfaceInput);
+    EXPECT_EQ(shipped.input.pauseGameWhileSettingsOpen, expected.input.pauseGameWhileSettingsOpen);
     EXPECT_EQ(shipped.input.lastNativeConversion, expected.input.lastNativeConversion);
 }

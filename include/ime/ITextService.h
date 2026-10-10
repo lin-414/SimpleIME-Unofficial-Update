@@ -157,6 +157,10 @@ public:
 
     virtual void RegisterCallback(OnEndCompositionCallback *callback) { m_OnEndCompositionCallback = callback; }
 
+    /// 本次组字期间引擎同时读到的原始字符数（TSF 后端从组字内容取；Imm32 后端不
+    /// 维护该量，返回 0 即"不退格"）。见 TextStore::GetComposingLength。
+    [[nodiscard]] virtual auto GetComposingLength() const -> std::size_t { return 0; }
+
 private:
     CompositionInfo        m_compositionInfo{};
     CandidateUi            m_candidateUi;

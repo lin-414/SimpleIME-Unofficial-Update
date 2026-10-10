@@ -52,7 +52,7 @@ struct StrEntry
     std::string_view key;
     std::string_view zh;
 };
-constexpr std::array<StrEntry, 114> STRINGS{{
+constexpr std::array<StrEntry, 120> STRINGS{{
     {"Settings", "设置"},
     {"Close", "关闭"},
     {"Cancel", "取消"},
@@ -127,6 +127,8 @@ constexpr std::array<StrEntry, 114> STRINGS{{
     {"Advanced.Logging", "日志与错误提示"},
     {"Advanced.LogLevel", "日志级别"},
     {"Advanced.LogLevelSupport", "更详细的日志便于排查问题，修改立即生效。"},
+    {"Advanced.LogFlushLevel", "日志刷新级别"},
+    {"Advanced.LogFlushLevelSupport", "达到该级别及以上的记录会立即写入日志文件，不再等待缓冲区。级别越低文件越实时，但写盘开销越大。"},
     {"Advanced.ErrorDuration", "错误提示时长"},
     {"Advanced.ErrorDurationSupport", "错误信息显示的持续时间，超过后自动关闭。"},
     {"Advanced.ErrorDurationNever", "不自动关闭"},
@@ -144,6 +146,10 @@ constexpr std::array<StrEntry, 114> STRINGS{{
     {"Behaviour.PrismaAvoidanceToolTip", "Prisma 界面（如 Outfit Wheeler）自带原生输入法处理，开启后 SimpleIME 会在其持有键盘焦点期间自动让位，避免两套输入法互相抢占。修改后需重启游戏生效。"},
     {"Behaviour.SkseMenuFrameworkSupport", "SKSE Menu Framework 输入支持"},
     {"Behaviour.SkseMenuFrameworkSupportToolTip", "SKSEMF 界面（ImGui 实现，如使用该框架的设置菜单）的文本框聚焦时自动激活 IME，并将上屏中文直接注入输入框。需要 SKSEMenuFramework.dll 3.7 及以上版本。修改后需重启游戏生效。"},
+    {"Behaviour.ImguiSurfaceInput", "原生 ImGui 界面输入支持"},
+    {"Behaviour.ImguiSurfaceInputToolTip", "部分模组界面（如 Tailor 3.x）用自己的 Dear ImGui 绘制，不走 Scaleform，没有可供我们写入的输入框。开启后，上屏中文改由引擎自己的输入队列投递；若界面声明它自己处理组字（SimpleIME.ImeAware），我们就不再退格补偿。仅在当前文本目标不是 Scaleform 字段时生效。"},
+    {"Behaviour.PauseGameWhileSettingsOpen", "设置窗口打开时暂停游戏"},
+    {"Behaviour.PauseGameWhileSettingsOpenToolTip", "默认关闭。开启后，打开 SimpleIME 设置窗会暂停游戏；但 RE::UI 的暂停计数会被一些模组界面当作「自己已失效」的信号（例如 Tailor 3.x 的原生 ImGui 界面），设置窗一开它们就会被关闭。修改后下一次打开设置窗即生效，无需重启。"},
     {"Compat.Active", "已生效"},
     {"Compat.Off", "已停用"},
     {"Compat.Pending", "等待初始化"},
@@ -274,11 +280,14 @@ struct MiniSettings
     bool          meridianSupport          = true;
     bool          prismaAvoidance          = true;
     bool          skseMenuFrameworkSupport = true;
+    bool          imguiSurfaceInput        = true;
+    bool          pauseForSettings         = false;
     bool          forceDpiAwareness        = true;
     bool          enableTsf                = true;
     int           posUpdatePolicy          = 2; ///< 0 none / 1 cursor / 2 caret
     ImGuiKeyChord shortcut                = ImGuiKey_F2;
     int           logLevel                 = 2; ///< 0 trace .. 6 off (spdlog order)
+    int           flushLevel               = 2; ///< same order as logLevel
     int           errorDuration            = 10; ///< seconds; -1 = never auto-close
 };
 
@@ -1261,6 +1270,11 @@ void MockToolWindow::DrawInputStatus(MiniSettings &settings, const MiniState &st
             compatRow("##PrismaAvoidance", settings.prismaAvoidance, T("Behaviour.PrismaAvoidance"), T("Behaviour.PrismaAvoidanceToolTip"), state.prismaBridge);
             UI::Panels::RowDivider();
             compatRow("##SkseMenuFrameworkSupport", settings.skseMenuFrameworkSupport, T("Behaviour.SkseMenuFrameworkSupport"), T("Behaviour.SkseMenuFrameworkSupportToolTip"), state.sksemfBridge);
+            UI::Panels::RowDivider();
+            // Neither is a bridge, so there is no install-time state to caption.
+            (void)UI::Panels::SettingsToggleRow("##ImguiSurfaceInput", T("Behaviour.ImguiSurfaceInput"), T("Behaviour.ImguiSurfaceInputToolTip"), settings.imguiSurfaceInput, SupportingMeasure());
+            UI::Panels::RowDivider();
+            (void)UI::Panels::SettingsToggleRow("##PauseForSettings", T("Behaviour.PauseGameWhileSettingsOpen"), T("Behaviour.PauseGameWhileSettingsOpenToolTip"), settings.pauseForSettings, SupportingMeasure());
         }
         UI::Panels::EndSettingsCard();
     }
@@ -1346,6 +1360,25 @@ void MockToolWindow::DrawAdvanced(MiniSettings &settings)
                             if (UI::Panels::ComboOption(kLevelNames[level], level == settings.logLevel))
                             {
                                 settings.logLevel = level;
+                            }
+                        }
+                    },
+                    SupportingMeasure());
+            }
+            ImGuiEx::M3::Divider();
+            {
+                const std::string preview = kLevelNames[settings.flushLevel];
+                UI::Panels::SettingsComboRow(
+                    "##LogFlushCombo",
+                    T("Advanced.LogFlushLevel"),
+                    T("Advanced.LogFlushLevelSupport"),
+                    preview,
+                    [&] {
+                        for (int level = 0; level < static_cast<int>(kLevelNames.size()); ++level)
+                        {
+                            if (UI::Panels::ComboOption(kLevelNames[level], level == settings.flushLevel))
+                            {
+                                settings.flushLevel = level;
                             }
                         }
                     },

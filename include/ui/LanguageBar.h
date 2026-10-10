@@ -16,7 +16,7 @@ class ToolWindow;
 
 namespace LanguageBar
 {
-auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles) -> void;
+auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles, bool interactive) -> void;
 }; // namespace LanguageBar
 } // namespace UI
 

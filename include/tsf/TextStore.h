@@ -235,6 +235,16 @@ private:
     void               UnlockDocument();
     [[nodiscard]] auto IsLocked(DWORD dwLockType) const -> bool;
 
+    /// Longest composition content seen during the current composition — i.e.
+    /// how many raw keystrokes the engine also turned into characters in the
+    /// host field. The commit erases that many before delivering the real text
+    /// (see Skyrim::SendUiString's eraseLetters).
+    [[nodiscard]] auto GetComposingLength() const -> std::size_t { return m_composingLength; }
+
+    std::size_t m_composingLength = 0;
+
+    friend class TextService;
+
     std::deque<DWORD>                          m_lockQueue;
     AdviseSinkCache                            m_adviseSinkCache{};
     HWND                                       m_hWnd{nullptr};
@@ -302,6 +312,11 @@ public:
     }
 
     void RegisterCallback(Ime::OnEndCompositionCallback *callback) override { m_textStore->SetOnEndCompositionCallback(callback); }
+
+    [[nodiscard]] auto GetComposingLength() const -> std::size_t override
+    {
+        return m_textStore != nullptr ? m_textStore->GetComposingLength() : 0;
+    }
 
     void OnStart(HWND hWnd) override { m_textStore->SetHWND(hWnd); }
 

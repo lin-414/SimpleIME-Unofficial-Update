@@ -47,6 +47,10 @@ namespace
 /// message after its own echo already passed the still-armed composing gate.
 constexpr auto COMMIT_ECHO_DROP_WINDOW_MS = 100U;
 
+/// 提交前最多退格多少个字符。正常拼音串远到不了这个数，它只是防止计数跑飞时
+/// 把玩家已经写在字面里的内容整行删掉。
+constexpr std::size_t kMaxLeakedLetterErase = 32;
+
 /// A bare Shift tap (keydown→keyup with no other key in between) within this
 /// window counts as the IME's 中/英 toggle hotkey press. WeChat IME publishes
 /// its mode through no TSF compartment at all (all six watchpoints stay
@@ -164,11 +168,18 @@ void ImeWnd::InitializeTextService()
     // branch drops the echo as the first WM_CHAR inside the window.
     s_commitEchoSink = this;
     m_textService->RegisterCallback([](std::wstring_view compositionString) static -> void {
+        std::size_t eraseLetters = 0;
         if (s_commitEchoSink != nullptr)
         {
             s_commitEchoSink->m_lastCommitTickMs = GetTickCount64();
+            if (s_commitEchoSink->m_textService != nullptr)
+            {
+                // 组字串有多长，引擎就往字面里塞了多少个原始字母（它自己读键盘，我们
+                // 无从拦截），提交前按这个数退格。
+                eraseLetters = std::min(s_commitEchoSink->m_textService->GetComposingLength(), kMaxLeakedLetterErase);
+            }
         }
-        Skyrim::SendUiString(compositionString);
+        Skyrim::SendUiString(compositionString, eraseLetters);
     });
 }
 

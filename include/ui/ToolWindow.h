@@ -86,6 +86,7 @@ private:
     void        DrawConfigStatusRow();
     void        DrawDiagnosticsRow(const Settings &settings);
     void        DrawLogLevelRow(Settings &settings);
+    void        DrawLogFlushRow(Settings &settings);
     void        DrawErrorDurationRow(Settings &settings);
     void        DrawEnvironmentRows(const Settings &settings);
     std::string BuildDiagnosticsText(const Settings &settings) const;

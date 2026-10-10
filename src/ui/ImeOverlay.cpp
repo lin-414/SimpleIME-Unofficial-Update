@@ -30,6 +30,9 @@ void TogglePinned(bool &pinned, bool &showing)
     }
 }
 
+/// 语言条刚出现后仍不接收鼠标的时间窗。见 ImeOverlay::Draw 里的说明。
+constexpr unsigned long long kLanguageBarClickGraceMs = 300;
+
 void HandleRequestAndSyncOverlayState(Settings::RuntimeData &runtimeData)
 {
     if (!runtimeData.overlayShowing)
@@ -98,6 +101,16 @@ auto ImeOverlay::Draw(const LangProfile &activeLangProfile, const std::vector<La
     // Handle before overlay render: avoid override the user request.
     HandleRequestAndSyncOverlayState(runtimeData);
 
+    // The bar pops up right under the cursor (or the caret). A mod menu drawn with
+    // its own Dear ImGui context cannot arbitrate that click with us — both contexts
+    // see the same physical button — so for a moment after it appears the bar ignores
+    // the mouse. UX only: the fatal pause came from the ToolWindow's own menu flags.
+    if (runtimeData.overlayShowing && !m_overlayShowingLastFrame)
+    {
+        runtimeData.overlayShownAtMs = GetTickCount64();
+    }
+    m_overlayShowingLastFrame = runtimeData.overlayShowing;
+
     const auto notPinnedOverlay = !runtimeData.overlayPinned && runtimeData.overlayShowing;
     if (notPinnedOverlay)
     {
@@ -132,8 +145,9 @@ auto ImeOverlay::Draw(const LangProfile &activeLangProfile, const std::vector<La
     // Drawing after ToolWindow to avoid override the user `close top window` request: May reopen tool window.
     if (runtimeData.overlayShowing)
     {
+        const bool interactive = GetTickCount64() - runtimeData.overlayShownAtMs >= kLanguageBarClickGraceMs;
         // May change runtimeData.toolWindowShowing, but apply it will be deferred to next frame.
-        LanguageBar::Draw(runtimeData.overlayPinned, runtimeData.toolWindowShowing, activeLangProfile, langProfiles);
+        LanguageBar::Draw(runtimeData.overlayPinned, runtimeData.toolWindowShowing, activeLangProfile, langProfiles, interactive);
     }
 }
 } // namespace Ime::UI

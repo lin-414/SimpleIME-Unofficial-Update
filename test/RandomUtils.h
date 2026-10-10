@@ -80,6 +80,8 @@ inline auto GetRandomConfiguation(std::uint32_t *seedOut = nullptr) -> Ime::Conf
     configuration.input.meridianSupport          = random.NextBool();
     configuration.input.prismaAvoidance          = random.NextBool();
     configuration.input.skseMenuFrameworkSupport = random.NextBool();
+    configuration.input.imguiSurfaceInput        = random.NextBool();
+    configuration.input.pauseGameWhileSettingsOpen = random.NextBool();
     configuration.input.lastNativeConversion     = random.NextBool();
     return configuration;
 }

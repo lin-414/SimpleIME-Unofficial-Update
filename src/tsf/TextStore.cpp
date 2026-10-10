@@ -5,6 +5,7 @@
 #include "imgui_internal.h"
 #include "log.h"
 #include "tsf/TsfSupport.h"
+#include "utils/Utils.h"
 
 #include <InputScope.h>
 #include "atlcomcli_shim.h"
@@ -585,6 +586,12 @@ auto TextStore::InsertTextAtSelection(
         return E_FAIL;
     }
 
+    // 取最大值而不是当前值：提交那一刻 TIP 会用最终文字替换组字串，届时长度已经不是
+    // 原始拼音的长度；而漏进宿主字面的恰恰是那些原始按键。
+    m_composingLength = std::max(m_composingLength, m_pTextService->GetTextEditorWrite().GetText().size());
+    // 组字内容的每次变化都算"仍在组字"，覆盖 OnStartComposition 之前就开始的会话。
+    Ime::Skyrim::MarkCompositionActive();
+
     auto acpNewEnd = acpStart + static_cast<LONG>(textBufferSize);
     tracer.log("Insert Success: new end {}", acpNewEnd);
 
@@ -812,6 +819,10 @@ auto TextStore::OnStartComposition(ITfCompositionView *pComposition, BOOL *pfOk)
     // leaked one reference (and transitively its context/document refs) on
     // every composition session.
     State::GetInstance().Set(State::IN_COMPOSING);
+    m_composingLength = 0;
+    // 立刻通知宿主界面"开始组字"：等游戏线程下一帧再发布，第一个字母已经作为
+    // CharEvent 被它收进字面了。
+    Ime::Skyrim::MarkCompositionActive();
     // Behavioral mode inference: a TIP only starts composing in native
     // (Chinese/Japanese) mode — raw letters never begin a composition. IMEs
     // that publish no mode compartment (WeChat IME) are still tracked this
