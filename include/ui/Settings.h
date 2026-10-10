@@ -62,6 +62,12 @@ struct Settings
         bool overlayPinned     = false; ///< Render thread only: overlay was pinned by the user and should not auto-hide.
         bool overlayShowing    = false; ///< Render thread only: overlay is currently visible/rendered in this frame.
         bool toolWindowShowing = false; ///< Render thread only: auxiliary tool/settings window is currently visible.
+        /// Render thread only: GetTickCount64() at the frame the overlay became visible. The bar
+        /// pops up right under the cursor (or the caret), and a mod menu drawn with its own ImGui
+        /// context cannot arbitrate that click with us, so the bar ignores mouse input until the
+        /// grace window expires — otherwise the click meant for the host's text field opens our
+        /// settings window instead.
+        unsigned long long overlayShownAtMs = 0;
 
         RuntimeData() = default;
         // The atomics are not copyable, but Settings is copied when it is loaded
@@ -75,7 +81,8 @@ struct Settings
             requestHideOverlay(other.requestHideOverlay.load()),
             overlayPinned(other.overlayPinned),
             overlayShowing(other.overlayShowing),
-            toolWindowShowing(other.toolWindowShowing)
+            toolWindowShowing(other.toolWindowShowing),
+            overlayShownAtMs(other.overlayShownAtMs)
         {
         }
         auto operator=(const RuntimeData &other) -> RuntimeData &
@@ -90,6 +97,7 @@ struct Settings
                 overlayPinned     = other.overlayPinned;
                 overlayShowing    = other.overlayShowing;
                 toolWindowShowing = other.toolWindowShowing;
+                overlayShownAtMs  = other.overlayShownAtMs;
             }
             return *this;
         }
@@ -147,6 +155,14 @@ struct Settings
         bool                  meridianSupport;
         bool                  prismaAvoidance;
         bool                  skseMenuFrameworkSupport;
+        /// Read by the commit routing on the IME thread; written only at config
+        /// load. Gates the engine-input-queue delivery used for mod menus that
+        /// draw with a private Dear ImGui context (no Scaleform field to feed).
+        bool                  imguiSurfaceInput;
+        /// Applied by ImeMenu::PostDisplay (game thread) whenever the settings menu
+        /// is off the menu stack, so a flip in the panel takes effect the next time
+        /// the window opens — no restart. Creator() reads it for the very first push.
+        bool                  pauseGameWhileSettingsOpen;
         /// Runtime cache: the last in-game observed native (中) conversion
         /// state. Stamped from State on every config save (game/render thread,
         /// aligned bool — same no-tear tolerance doctrine as above) and seeded
@@ -176,7 +192,7 @@ inline auto GetDefaultSettings() -> Settings
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .lastNativeConversion = true}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true}
     };
 }
 

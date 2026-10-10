@@ -29,6 +29,7 @@ class ImeOverlay
 {
     ::i18n::Translator          m_translator{};
     std::unique_ptr<ToolWindow> m_toolWindow{nullptr};
+    bool                        m_overlayShowingLastFrame = false; ///< Render thread only: edge-detects the overlay appearing.
 
 public:
     explicit ImeOverlay(std::string_view language);

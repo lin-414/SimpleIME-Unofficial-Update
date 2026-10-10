@@ -8,8 +8,8 @@ cd /d "%~dp0..\.."
 
 if not exist tools\design-preview\build mkdir tools\design-preview\build
 
-set FT_INC=build\vcpkg_installed\x64-windows-static-md\include
-set FT_LIBS=build\vcpkg_installed\x64-windows-static-md\lib\freetype.lib build\vcpkg_installed\x64-windows-static-md\lib\libpng16.lib build\vcpkg_installed\x64-windows-static-md\lib\zlib.lib build\vcpkg_installed\x64-windows-static-md\lib\brotlidec.lib build\vcpkg_installed\x64-windows-static-md\lib\brotlicommon.lib build\vcpkg_installed\x64-windows-static-md\lib\bz2.lib
+set FT_INC=build\vcpkg_modules\x64-windows-static-md\include
+set FT_LIBS=build\vcpkg_modules\x64-windows-static-md\lib\freetype.lib build\vcpkg_modules\x64-windows-static-md\lib\libpng16.lib build\vcpkg_modules\x64-windows-static-md\lib\zlib.lib build\vcpkg_modules\x64-windows-static-md\lib\brotlidec.lib build\vcpkg_modules\x64-windows-static-md\lib\brotlicommon.lib build\vcpkg_modules\x64-windows-static-md\lib\bz2.lib
 
 clang-cl /nologo /std:c++latest /EHsc /utf-8 /O2 /MD /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /D_USE_MATH_DEFINES ^
   /FItools\design-preview\preview_pch.h /DSIMPLEIME_PREVIEW /DIMGUI_ENABLE_FREETYPE /DIMGUI_USER_CONFIG=\"imconfig.h\" /I . ^

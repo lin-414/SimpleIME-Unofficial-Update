@@ -251,6 +251,37 @@ void ImeMenu::PostDisplay()
     m_imeCharEvents.clear();
     auto &imeApp = ImeApp::GetInstance();
 
+    // Game thread, every frame: is the text target a mod menu with no Scaleform
+    // field (private Dear ImGui)? The answer decides where the next commit goes,
+    // and the probe itself invokes into Scaleform, so it must not run elsewhere.
+    Skyrim::PollExternalImGuiSurface();
+    // Game thread, every frame: publish/refresh the composition handshake the host
+    // UI reads, and pick up its "I handle external composition myself" flag.
+    Skyrim::PublishCompositionState();
+    // Game thread, every frame: deliver queued commits as engine input events
+    // (the ring buffers they land in are per-frame, hence the batching).
+    Skyrim::DrainPendingCommittedText();
+
+    // Game thread, every frame: keep the settings menu's pause flag in step with the
+    // configuration. RE::UI counts numPausesGame when a menu is PUSHED, so the bit is
+    // only safe to change while the menu is off the stack — flipping it mid-show would
+    // leak the counter. That makes the switch live from the next time the settings
+    // window opens, with no restart.
+    if (auto *ui = RE::UI::GetSingleton(); ui != nullptr)
+    {
+        if (auto *toolWindowMenu = ui->GetMenu(ToolWindowMenuName).get(); toolWindowMenu != nullptr && !toolWindowMenu->OnStack())
+        {
+            if (imeApp.GetSettings().input.pauseGameWhileSettingsOpen)
+            {
+                toolWindowMenu->menuFlags.set(RE::IMenu::Flag::kPausesGame);
+            }
+            else
+            {
+                toolWindowMenu->menuFlags.reset(RE::IMenu::Flag::kPausesGame);
+            }
+        }
+    }
+
     // Game thread, every frame: repair a leaked text-entry counter even when no
     // menu event fires after the leak (see Events::PollTextEntryCountConsistency).
     Events::PollTextEntryCountConsistency();

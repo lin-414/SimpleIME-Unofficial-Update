@@ -77,7 +77,19 @@ auto ToolWindowMenu::ProcessMessage(RE::UIMessage &a_message) -> RE::UI_MESSAGE_
 auto ToolWindowMenu::Creator() -> IMenu *
 {
     auto *pMenu = new ToolWindowMenu();
-    pMenu->menuFlags.set(Flag::kPausesGame, Flag::kUsesCursor, Flag::kAllowSaving);
+    // Input routing does not need the pause: the MenuMode context ImeMenu pushes
+    // while toolWindowShowing is what delivers keys, and the pause was itself the
+    // documented cause of swallowed key-up events (see HealStuckShortcutKeys).
+    pMenu->menuFlags.set(Flag::kUsesCursor, Flag::kAllowSaving);
+    // Opt-in only. RE::UI::numPausesGame is what host-side liveness watchdogs read,
+    // so a paused game closes mod menus that treat it as focus loss (Tailor 3.x's
+    // native ImGui UI among them). ImeMenu::PostDisplay keeps this bit in step with
+    // the setting while the menu is off the stack, so the panel switch is live from
+    // the next open; this initial value only covers the very first push.
+    if (ImeApp::GetInstance().GetSettings().input.pauseGameWhileSettingsOpen)
+    {
+        pMenu->menuFlags.set(Flag::kPausesGame);
+    }
     pMenu->depthPriority = 11;
 
     return pMenu;
