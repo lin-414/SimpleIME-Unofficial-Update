@@ -1920,3 +1920,42 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
 - 配置键 `last_native_conversion` 补进出厂模板；`simple_rc.py` 固化 configure 后的 RC 补丁。
 - 构建 EXIT 0；测试 50/50；Node 自测全绿；CI 测试双绿；全部推送 origin/main。
 - 版本 3.1.2-beta → **3.1.4-beta**。
+
+## 第 49 轮：SKSEMF 会话死亡收尾 + 原生 ImGui 宿主输入 → 3.1.5-beta（2026-10-12）
+
+- **逐界面投递路由**（`2f34a38`）：自绘 ImGui 的模组菜单没有 Scaleform 字段，且读字方式互斥
+  （ModExplorerMenu 转发引擎字符事件；Tailor 3.x 读 InputEvent，对字符事件回 kHandled 后
+  不看一眼）——单一布尔通道必有一家不可用。现在"无 Scaleform 字段"的目标按栈上菜单自上而下
+  问一个零码位字符事件（ImGui 与 GFx 都不渲染），回 kHandled 的那家拿到提交；已知会闷声
+  吞掉字符事件的宿主按模块名声明通道（返回值只能证明菜单收下事件，证明不了它转发字符）。
+- **设置窗暂停改计数器**（`8332be4`）：暂停位原先挂在随语言栏入栈的 ToolWindowMenu 上——
+  语言栏恰在宿主输入框获得焦点时出现，于是"打开设置"会在打字中途暂停游戏并逼关宿主界面
+  （SKSEMF 字段两帧失活；Tailor 3.x 读 RE::UI 暂停计数当作"我的菜单没了"自关）。现在暂停位
+  自持于 `RE::UI::numPausesGame`、每帧按设置窗是否在屏同步，宿主持键盘时让位，插件卸载归还。
+- **present 路径 backbuffer 钉定**（`6e7079f`）：顶层重绘原先只在 bound==nullptr 时才钉
+  backbuffer，游戏留下的外来渲染目标会静默吞掉重绘——SKSEMF 菜单上的候选窗"画了但看不见"。
+  `EnsureSwapChainBackBufferRtv` 改为无条件绑定 + 交换链重建后重新派生 + D3DInit 强制
+  （用户实测确认"候选栏出来了"）。
+- **SKSEMF 宿主鼠标位置直写**（`4506718`）：框架的 ImGui 只在游戏窗口持 Win32 焦点时刷新
+  鼠标位置，而启用 IME 必须把焦点移给 ImeWnd；其 WndProc 钩子又在 WM_KILLFOCUS 清空全部
+  输入态。于是点击被判成"点在输入框外"，刚打开的会话立即关闭（"候选栏闪一下就死"）。
+  ImGui 的 trickle 规则使排队注入必输（按钮事件总先于我们能反应而入队），改为把光标位置
+  直接写进 io.MousePos（偏移 0xF8 由发布 DLL 的 ImGuiIO_ClearInputKeys 反汇编导出；运行时
+  两帧连续匹配才启用；写完的帧在非焦点态复位为无效，防宿主画软件光标）。会话遥测常驻：
+  回车/Esc 计数、字段 activeId、会话结束时字段是否仍是活动项、hostMousePosValid、
+  WM_KILLFOCUS/WM_SETFOCUS 时间线。
+- **声明宿主 + 提交键回显**（`acda9ea`）：自绘 ImGui 且从不注册菜单的宿主持有文本输入计数时
+  与泄漏同形——通道探测被栈上无关菜单骗成 GFx（中文进了我们自己的 ImeMenu），泄漏治愈器又
+  会把它的计数清零（清零后不重认领 = 字段永久失联）。修复=AllowTextInput detour 以
+  `_ReturnAddress` 记录认领者模块 + 声明表（该宿主 → 引擎输入队列）优先于菜单栈探测 +
+  治愈器/menu-close 修复对声明主豁免 + present 门控纳入。提交键（空格/数字选词）自身也被
+  引擎读成一个 CharEvent 漏进字面，而它不在组字串里——退格补偿少算一个（"mei" + 空格提交
+  "没" → 字段 "m没"）；IME 线程把提交回调后本线程第一个 WM_CHAR 认作该条提交的回显、按队列
+  序号计入退格一次，仅可打印字符参与（回车/退格/Tab/Esc 不被 ImGui InputText 插入，补了会
+  删到玩家的字）。Esc 取消组字后对 ImGui 族界面补一条只退格的提交，清掉引擎已读进字面的
+  拼音（此前取消后字段里留着 "mei"）。
+- 构建 EXIT 0（RelWithDebInfo，内嵌 3.1.5-beta，POST_BUILD 同步至 E:\Skyrim AE\mods\SimpleIME）；
+  测试 50/50；Node 桥自测全绿。
+- 实机：io+248 校验通过 + 会话中点击存活（19:23 日志）已实证；声明宿主/回显/取消清理为
+  19:34 后新构建，待实机。
+- 版本 3.1.4-beta → **3.1.5-beta**。
