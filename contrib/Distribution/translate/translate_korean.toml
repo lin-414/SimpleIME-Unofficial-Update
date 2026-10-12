@@ -75,7 +75,7 @@ SkseMenuFrameworkSupportToolTip = "SKSE Menu Framework(ImGui 기반 메뉴)의 �
 ImguiSurfaceInput = "네이티브 ImGui 화면 입력 지원"
 ImguiSurfaceInputToolTip = "일부 모드 메뉴(Tailor 3.x 등)는 Scaleform 대신 자체 Dear ImGui로 그려 우리가 쓸 수 있는 입력란이 없습니다. 켜면 확정된 텍스트를 엔진 자체 입력 큐로 전달하며, 메뉴가 외부 조합을 스스로 처리한다고 선언하면(SimpleIME.ImeAware) 백스페이스 보정을 하지 않습니다. 대상이 Scaleform 입력란이 아닐 때만 적용됩니다."
 PauseGameWhileSettingsOpen = "설정 창이 열려 있는 동안 게임 일시 정지"
-PauseGameWhileSettingsOpenToolTip = "기본값은 꺼짐입니다. 켜면 SimpleIME 설정 창을 열 때 게임이 일시 정지되지만, RE::UI의 일시 정지 계수를 “내 메뉴가 끝난 것”으로 해석하는 일부 모드 메뉴(Tailor 3.x의 네이티브 ImGui UI 등)는 설정 창을 여는 순간 닫힙니다. 다음에 설정 창을 열 때부터 적용됩니다. 재시작이 필요 없습니다."
+PauseGameWhileSettingsOpenToolTip = "기본값은 꺼짐입니다. 켜면 SimpleIME 설정 창이 화면에 있는 동안에만 게임이 일시 정지되고, 닫으면 바로 재개됩니다(변경 즉시 적용). RE::UI의 일시 정지 계수를 “내 메뉴가 끝난 것”으로 해석하는 모드 메뉴(Tailor 3.x의 네이티브 ImGui UI 등)도 있으므로, 그런 화면이 텍스트 입력을 가지고 있는 동안(SKSE Menu Framework 입력란 등)에는 일시 정지를 양보해 상대 UI가 닫히지 않게 합니다."
 
 [Settings.Compat]
 Active = "활성"

@@ -138,9 +138,10 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
     };
     const Comments pauseForSettingsComment = {
         " 设置窗口打开时暂停游戏",
-        " 默认关闭。开启后打开 SimpleIME 设置窗会让游戏暂停，但 RE::UI 的暂停计数会被一些",
-        " 模组界面当作\"自己已失效\"的信号（如 Tailor 3.x 的原生 ImGui 界面），设置窗一开",
-        " 它们就会被关闭。修改后下一次打开设置窗即生效，无需重启。",
+        " 默认关闭。开启后只有\"设置窗在屏幕上\"期间游戏才暂停，关掉即恢复，改动立即生效。",
+        " 注意 RE::UI 的暂停计数会被一些模组界面当作\"自己已失效\"的信号（如 Tailor 3.x 的原生",
+        " ImGui 界面），设置窗开着时它们会被关闭；若此时正由某个模组界面持有文本输入",
+        " （SKSE Menu Framework 文本框、原生 ImGui 输入框等），本 Mod 会先让出暂停。",
     };
     const Comments lastNativeConversionComment = {
         " 运行时缓存，非用户配置：游戏内最后观察到的 中/英 输入状态(true=中文)",

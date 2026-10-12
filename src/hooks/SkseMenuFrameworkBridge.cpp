@@ -28,8 +28,10 @@
 #include "hooks/SkseMenuFrameworkBridge.h"
 
 #include "ImeApp.h"
+#include "RE/B/ButtonEvent.h"
 #include "RE/C/CursorMenu.h"
 #include "RE/ControlMap.h"
+#include "RE/I/InputDevices.h"
 #include "RE/M/MenuCursor.h"
 #include "core/State.h"
 #include "hook.h"
@@ -351,6 +353,21 @@ constexpr std::uint64_t TRANSITION_GRACE_MS = 250;
 
 std::atomic<std::uint64_t> s_sessionBeginMs{0};
 std::atomic<bool>          s_imeDisabledAtBegin{false};
+/// PROBE(2026-10-12 pause/freeze session death): mouse presses the engine
+/// delivered while the session owned the keyboard. A field that dies in the
+/// same frame as a press is the framework's "release focus when we click
+/// outside" rule (its ImGui has no mouse position while our ImeWnd holds the
+/// Win32 focus, so any click reads as a click on nothing) — a different fix
+/// from a state clear, and the two look identical in a session-end log.
+std::atomic<std::uint32_t> s_sessionMousePresses{0};
+
+/// The engine's pause counter, for the session-end probe: whether the game was
+/// paused at the moment the host's field deactivated.
+auto GamePauseCounter() -> std::uint32_t
+{
+    auto *ui = RE::UI::GetSingleton();
+    return ui != nullptr ? ui->numPausesGame : 0;
+}
 
 /// Per framework frame, at kAfterRender: refresh the field anchor from
 /// ImGui's own OS-IME caret report (PlatformImeData — what positions the
@@ -675,6 +692,7 @@ void BeginTextInput()
     AcquireTextEntryLease();
     s_sessionBeginMs.store(GetTickCount64(), std::memory_order_release);
     s_imeDisabledAtBegin.store(Ime::Core::State::GetInstance().ImeDisabled(), std::memory_order_release);
+    s_sessionMousePresses.store(0, std::memory_order_relaxed);
     // Fallback anchor when no live source exists (SetPlatformImeDataFn hook
     // failed to install and no calibrated offset): the engine cursor is on
     // the field the user just clicked. Trust MenuCursor under the same
@@ -701,7 +719,12 @@ void BeginTextInput()
 void EndTextInput()
 {
     ReleaseTextEntryLease();
-    logger::info("SKSE Menu Framework text session end (lease released)");
+    logger::info(
+        "SKSE Menu Framework text session end (lease released, held {} ms, {} mouse press(es) during the session, numPausesGame={})",
+        GetTickCount64() - s_sessionBeginMs.load(std::memory_order_relaxed),
+        s_sessionMousePresses.load(std::memory_order_relaxed),
+        GamePauseCounter()
+    );
 }
 
 void UpdateTextInputState()
@@ -1107,7 +1130,12 @@ void ForceEndSession()
     const bool wasActive = s_sessionActive.exchange(false, std::memory_order_acq_rel);
     if (wasActive)
     {
-        logger::info("SKSE Menu Framework text session force-ended");
+        logger::info(
+            "SKSE Menu Framework text session force-ended (held {} ms, {} mouse press(es) during the session, numPausesGame={})",
+            GetTickCount64() - s_sessionBeginMs.load(std::memory_order_relaxed),
+            s_sessionMousePresses.load(std::memory_order_relaxed),
+            GamePauseCounter()
+        );
     }
     ReleaseTextEntryLease();
     const std::scoped_lock lock(s_pendingMutex);
@@ -1124,6 +1152,18 @@ void NeutralizeRawAscii(RE::InputEvent *const *events)
         *events == nullptr)
     {
         return;
+    }
+
+    // PROBE(2026-10-12 pause/freeze session death): every input batch during a
+    // session passes through here, so this is where a press that kills the host's
+    // field can be counted (see s_sessionMousePresses).
+    for (auto *event = *events; event != nullptr; event = event->next)
+    {
+        const auto *button = event->AsButtonEvent();
+        if (button != nullptr && button->GetDevice() == RE::INPUT_DEVICE::kMouse && button->IsPressed())
+        {
+            s_sessionMousePresses.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     const auto &state = Ime::Core::State::GetInstance();

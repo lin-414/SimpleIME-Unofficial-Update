@@ -62,11 +62,12 @@ struct Configuration
         /// surfaces have no Scaleform field, so the Scaleform route would
         /// silently drop the text. Which of the two a surface is gets probed.
         bool        imguiSurfaceInput;
-        /// Pause the game while the settings (tool) window is open. Off by default:
-        /// RE::UI::numPausesGame is what host-side "is my menu still alive?"
-        /// watchdogs read, so turning this on can close mod menus that treat a
-        /// paused game as focus loss. Applied when the menu is off the stack, so it
-        /// takes effect on the next time the settings window opens.
+        /// Pause the game while the settings (tool) window is on screen. Off by
+        /// default: RE::UI::numPausesGame is what host-side "is my menu still
+        /// alive?" watchdogs read, so turning this on can close mod menus that
+        /// treat a paused game as focus loss. Applied live, only while that window
+        /// is up, and yielded while a mod surface owns the keyboard (see
+        /// ToolWindowMenu::SyncSettingsWindowPause).
         bool        pauseGameWhileSettingsOpen;
         /// Runtime cache, NOT a preference: the last 中/英 (native) state observed
         /// in-game, stamped by the mod on every config save. Seeds the next

@@ -13,6 +13,8 @@ namespace Ime
 {
 namespace
 {
+/// True while this process holds the engine pause for the settings window.
+bool s_settingsWindowPauseHeld = false;
 
 auto OnUserEvent(RE::BSUIMessageData *uiMessageData) -> RE::UI_MESSAGE_RESULTS
 {
@@ -77,22 +79,66 @@ auto ToolWindowMenu::ProcessMessage(RE::UIMessage &a_message) -> RE::UI_MESSAGE_
 auto ToolWindowMenu::Creator() -> IMenu *
 {
     auto *pMenu = new ToolWindowMenu();
-    // Input routing does not need the pause: the MenuMode context ImeMenu pushes
-    // while toolWindowShowing is what delivers keys, and the pause was itself the
-    // documented cause of swallowed key-up events (see HealStuckShortcutKeys).
+    // Input routing does not need a pause: the MenuMode context ImeMenu pushes
+    // while toolWindowShowing is what delivers keys.
     pMenu->menuFlags.set(Flag::kUsesCursor, Flag::kAllowSaving);
-    // Opt-in only. RE::UI::numPausesGame is what host-side liveness watchdogs read,
-    // so a paused game closes mod menus that treat it as focus loss (Tailor 3.x's
-    // native ImGui UI among them). ImeMenu::PostDisplay keeps this bit in step with
-    // the setting while the menu is off the stack, so the panel switch is live from
-    // the next open; this initial value only covers the very first push.
-    if (ImeApp::GetInstance().GetSettings().input.pauseGameWhileSettingsOpen)
-    {
-        pMenu->menuFlags.set(Flag::kPausesGame);
-    }
+    // And this menu must NEVER carry kPausesGame. It is pushed with the LANGUAGE
+    // BAR (kUsesCursor is what gives the bar the game cursor), not with the
+    // settings window, so the engine — which counts the bit once, at push time —
+    // would pause the game every time the bar appears. The bar appears exactly
+    // when a mod's text field gains focus (the bridges acquire their lease then),
+    // and a pause at that moment tears the host's field down: observed
+    // 2026-10-12 with SKSE Menu Framework + its freeze-time option — the field
+    // deactivated two frames in and the bar flashed off. The settings-window
+    // pause is held on RE::UI::numPausesGame instead, exactly while the window is
+    // on screen (SyncSettingsWindowPause).
     pMenu->depthPriority = 11;
 
     return pMenu;
+}
+
+void ToolWindowMenu::SyncSettingsWindowPause(const bool pauseWanted)
+{
+    auto *ui = RE::UI::GetSingleton();
+    if (ui == nullptr)
+    {
+        return;
+    }
+    if (pauseWanted)
+    {
+        if (!s_settingsWindowPauseHeld)
+        {
+            ++ui->numPausesGame;
+            s_settingsWindowPauseHeld = true;
+            logger::debug("Settings window pause held (numPausesGame={})", ui->numPausesGame);
+        }
+        else if (ui->numPausesGame == 0)
+        {
+            // The engine recounts the counter when the menu stack is rebuilt
+            // (save load, game reset), which drops our increment: re-apply it
+            // while the window is still up, or the game silently unpauses.
+            ++ui->numPausesGame;
+        }
+        return;
+    }
+    if (!s_settingsWindowPauseHeld)
+    {
+        return;
+    }
+    // Only ever give back what we took: the engine's own menus share this
+    // counter, and a decrement past its floor would wrap to ~4 billion and
+    // pause the game for good.
+    if (ui->numPausesGame > 0)
+    {
+        --ui->numPausesGame;
+    }
+    s_settingsWindowPauseHeld = false;
+    logger::debug("Settings window pause released (numPausesGame={})", ui->numPausesGame);
+}
+
+void ToolWindowMenu::ReleaseSettingsWindowPause()
+{
+    SyncSettingsWindowPause(false);
 }
 
 } // namespace Ime

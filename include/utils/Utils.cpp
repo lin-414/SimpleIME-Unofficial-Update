@@ -511,6 +511,11 @@ void PollExternalImGuiSurface()
     }
 }
 
+auto IsExternalImGuiSurface() -> bool
+{
+    return g_externalImGuiSurface.load(std::memory_order_acquire);
+}
+
 void MarkCompositionActive()
 {
     const HWND hwnd = ImeApp::GetInstance().GetGameHWND();

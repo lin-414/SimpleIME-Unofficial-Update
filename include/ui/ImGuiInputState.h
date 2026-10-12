@@ -24,14 +24,14 @@ void UpdateMouseCursorVisual();
  * ## Why this heal exists
  *
  * Scaleform key-up events can get lost when the menu stack changes while a key
- * is held: pressing the overlay shortcut pauses the game (ToolWindowMenu has
- * kPausesGame) mid-press, so the Ctrl/L releases that follow can be swallowed by
- * the transition and never reach ImeMenu's GFx→ImGui forwarding. ImGui then
- * believes a key is still down — io.KeyMods is rebuilt from that state every
- * frame and IsKeyChordPressed requires an exact mods match plus a press edge on
- * the main key, so a stuck Ctrl makes the plain key match the chord (L alone
- * opens the overlay) and a stuck main key eats the press edge so the chord stops
- * responding entirely.
+ * is held: closing the settings window drops its engine pause
+ * (ToolWindowMenu::SyncSettingsWindowPause) mid-press, so the Ctrl/L releases
+ * that follow can be swallowed by the transition and never reach ImeMenu's
+ * GFx→ImGui forwarding. ImGui then believes a key is still down — io.KeyMods is
+ * rebuilt from that state every frame and IsKeyChordPressed requires an exact
+ * mods match plus a press edge on the main key, so a stuck Ctrl makes the plain
+ * key match the chord (L alone opens the overlay) and a stuck main key eats the
+ * press edge so the chord stops responding entirely.
  *
  * Ground the check in the physical keyboard: when every key of the bound chord
  * reads up via GetAsyncKeyState but ImGui still holds one down, clear ImGui's
@@ -42,13 +42,13 @@ void UpdateMouseCursorVisual();
 void HealStuckShortcutKeys(ImGuiKeyChord chord);
 
 //! Mouse counterpart of HealStuckShortcutKeys: a GFx mouse-up swallowed by a
-//! menu-stack transition (opening the pausing ToolWindowMenu mid-click, the
-//! console grabbing input, a stall eating the tail of a click) leaves the
-//! button stuck down in ImGui — io.MouseDown stays true, so no later press has
-//! a press edge and nothing becomes clickable (the wheel still scrolls). Ground
-//! it in the physical buttons, exactly like the keyboard heal. The 300ms dwell
-//! is not cosmetic: on a quick click the physical release precedes the GFx
-//! mouse-up by a frame or two, and healing inside that window would cut a
-//! legitimate press short (sliders!).
+//! menu-stack transition (closing the settings window and dropping its engine
+//! pause mid-click, the console grabbing input, a stall eating the tail of a
+//! click) leaves the button stuck down in ImGui — io.MouseDown stays true, so no
+//! later press has a press edge and nothing becomes clickable (the wheel still
+//! scrolls). Ground it in the physical buttons, exactly like the keyboard heal.
+//! The 300ms dwell is not cosmetic: on a quick click the physical release
+//! precedes the GFx mouse-up by a frame or two, and healing inside that window
+//! would cut a legitimate press short (sliders!).
 void HealStuckMouseButtons();
 } // namespace Ime

@@ -75,7 +75,7 @@ SkseMenuFrameworkSupportToolTip = "SKSE Menu Framework（ImGui ベースのメ�
 ImguiSurfaceInput = "ネイティブ ImGui 画面の入力サポート"
 ImguiSurfaceInputToolTip = "一部の MOD メニュー（Tailor 3.x など）は Scaleform ではなく独自の Dear ImGui で描画するため、書き込める入力欄が存在しません。有効にすると確定テキストはエンジン自身の入力キュー経由で届けられます。メニュー側が外部変換を自分で処理すると宣言した場合（SimpleIME.ImeAware）、バックスペースによる補正は行われません。対象のテキスト欄が Scaleform でないときのみ有効です。"
 PauseGameWhileSettingsOpen = "設定ウィンドウの表示中にゲームを一時停止"
-PauseGameWhileSettingsOpenToolTip = "既定はオフ。有効にすると SimpleIME の設定ウィンドウを開いた時にゲームが一時停止しますが、RE::UI の一時停止カウントを「自分のメニューが無効になった」と受け取る MOD メニュー（Tailor 3.x のネイティブ ImGui UI など）は設定ウィンドウを開いた時点で閉じられます。変更は設定ウィンドウを次に開く時点で反映されます（再起動不要）。"
+PauseGameWhileSettingsOpenToolTip = "既定はオフ。有効にすると SimpleIME の設定ウィンドウが画面に出ている間だけゲームが一時停止し、閉じると再開します（変更は即時反映）。RE::UI の一時停止カウントを「自分のメニューが無効になった」と受け取る MOD メニュー（Tailor 3.x のネイティブ ImGui UI など）もあるため、そうした画面がテキスト入力を持っている間（SKSE Menu Framework の入力欄など）は一時停止を手放し、相手の UI を閉じさせないようにします。"
 
 [Settings.Compat]
 Active = "有効"

@@ -50,6 +50,11 @@ void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters = 0);
 /// 游戏线程每帧调用：判定当前文本目标是否为"无 Scaleform 字段"的界面。
 void PollExternalImGuiSurface();
 
+/// 当前文本目标是否由模组自己的 ImGui 界面持有（`PollExternalImGuiSurface` 的结论）。
+/// 设置窗暂停（ToolWindowMenu::SyncSettingsWindowPause）在它成立期间让位：这类界面
+/// 把游戏暂停当作"自己已失效"，一暂停就会被宿主关掉。
+[[nodiscard]] auto IsExternalImGuiSurface() -> bool;
+
 /// 游戏线程每帧调用：与宿主界面握手（窗口属性，同进程）。
 /// - `SimpleIME.Composing`：组字期间存在，值是最后一次刷新的 GetTickCount64()。
 ///   界面方应在它"新鲜"（<500ms）期间丢弃 ASCII 字符事件——那些字母是输入法的

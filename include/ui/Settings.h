@@ -159,9 +159,10 @@ struct Settings
         /// load. Gates the engine-input-queue delivery used for mod menus that
         /// draw with a private Dear ImGui context (no Scaleform field to feed).
         bool                  imguiSurfaceInput;
-        /// Applied by ImeMenu::PostDisplay (game thread) whenever the settings menu
-        /// is off the menu stack, so a flip in the panel takes effect the next time
-        /// the window opens — no restart. Creator() reads it for the very first push.
+        /// Applied by ImeMenu::PostDisplay (game thread) every frame: the pause is
+        /// held only while the settings window is on screen, so a flip in the panel
+        /// is live. Yields while a mod surface owns the keyboard — see
+        /// ToolWindowMenu::SyncSettingsWindowPause.
         bool                  pauseGameWhileSettingsOpen;
         /// Runtime cache: the last in-game observed native (中) conversion
         /// state. Stamped from State on every config save (game/render thread,

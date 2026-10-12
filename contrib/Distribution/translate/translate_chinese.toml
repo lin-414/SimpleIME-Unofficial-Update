@@ -136,7 +136,7 @@ SkseMenuFrameworkSupportToolTip = "SKSEMF 界面（ImGui 实现，如使用该�
 ImguiSurfaceInput = "原生 ImGui 界面输入支持"
 ImguiSurfaceInputToolTip = "部分模组界面（如 Tailor 3.x）用自己的 Dear ImGui 绘制，不走 Scaleform，没有可供我们写入的输入框。开启后，上屏中文改由引擎自己的输入队列投递；若界面声明它自己处理组字（SimpleIME.ImeAware），我们就不再退格补偿。仅在当前文本目标不是 Scaleform 字段时生效。"
 PauseGameWhileSettingsOpen = "设置窗口打开时暂停游戏"
-PauseGameWhileSettingsOpenToolTip = "默认关闭。开启后，打开 SimpleIME 设置窗会暂停游戏；但 RE::UI 的暂停计数会被一些模组界面当作「自己已失效」的信号（例如 Tailor 3.x 的原生 ImGui 界面），设置窗一开它们就会被关闭。修改后下一次打开设置窗即生效，无需重启。"
+PauseGameWhileSettingsOpenToolTip = "默认关闭。开启后，只有设置窗在屏幕上期间游戏才暂停，关掉立即恢复（改动立即生效）。注意 RE::UI 的暂停计数会被一些模组界面当作「自己已失效」的信号（例如 Tailor 3.x 的原生 ImGui 界面）；若此时某个模组界面正持有文本输入（如 SKSE Menu Framework 的输入框），本 Mod 会先让出暂停，避免把对方界面按死。"
 
 [Settings.Compat]
 Active = "已生效"

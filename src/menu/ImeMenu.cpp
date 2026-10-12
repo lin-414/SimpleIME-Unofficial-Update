@@ -262,26 +262,6 @@ void ImeMenu::PostDisplay()
     // (the ring buffers they land in are per-frame, hence the batching).
     Skyrim::DrainPendingCommittedText();
 
-    // Game thread, every frame: keep the settings menu's pause flag in step with the
-    // configuration. RE::UI counts numPausesGame when a menu is PUSHED, so the bit is
-    // only safe to change while the menu is off the stack — flipping it mid-show would
-    // leak the counter. That makes the switch live from the next time the settings
-    // window opens, with no restart.
-    if (auto *ui = RE::UI::GetSingleton(); ui != nullptr)
-    {
-        if (auto *toolWindowMenu = ui->GetMenu(ToolWindowMenuName).get(); toolWindowMenu != nullptr && !toolWindowMenu->OnStack())
-        {
-            if (imeApp.GetSettings().input.pauseGameWhileSettingsOpen)
-            {
-                toolWindowMenu->menuFlags.set(RE::IMenu::Flag::kPausesGame);
-            }
-            else
-            {
-                toolWindowMenu->menuFlags.reset(RE::IMenu::Flag::kPausesGame);
-            }
-        }
-    }
-
     // Game thread, every frame: repair a leaked text-entry counter even when no
     // menu event fires after the leak (see Events::PollTextEntryCountConsistency).
     Events::PollTextEntryCountConsistency();
@@ -308,11 +288,24 @@ void ImeMenu::PostDisplay()
     // Push MenuMode input context if ToolWindow showing.
     // This can make language bar open at the top of other menus but allow pass all user events to
     // the underlying menu. Only block user events when ToolWindow showing.
-    // But open LanguageBar still pause the game. See ToolWindowMenu
+    // (The settings window's own pause is a held counter, applied further down —
+    // the bar alone never pauses the game.)
     if (oldToolWindowShowing != imeApp.GetSettings().runtimeData.toolWindowShowing)
     {
         ToggleMenuModeContextIfNeed(imeApp.GetSettings().runtimeData.toolWindowShowing);
     }
+
+    // Game thread, every frame, evaluated AFTER the frame that may have toggled the
+    // settings window: hold the engine pause exactly while that window is on screen
+    // (see ToolWindowMenu::SyncSettingsWindowPause for why the pause is a counter
+    // hold and not a menu flag). The host check keeps a mod surface that owns the
+    // keyboard out of it: pausing then is pointless — the settings window cannot be
+    // what the player is typing into — and it is what closes such UIs (Tailor 3.x
+    // reads the pause as focus loss; SKSE Menu Framework fields deactivate).
+    const auto &settings           = imeApp.GetSettings();
+    const bool  hostOwnsText       = Hooks::SkseMenuFrameworkBridge::SessionActive() || Skyrim::IsExternalImGuiSurface();
+    const bool  settingsWindowOpen = settings.runtimeData.overlayShowing && settings.runtimeData.toolWindowShowing;
+    ToolWindowMenu::SyncSettingsWindowPause(settings.input.pauseGameWhileSettingsOpen && settingsWindowOpen && !hostOwnsText);
 }
 
 auto ImeMenu::ProcessMessage(RE::UIMessage &a_message) -> RE::UI_MESSAGE_RESULTS
