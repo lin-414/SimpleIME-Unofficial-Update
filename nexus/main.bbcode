@@ -8,11 +8,11 @@
 
 SimpleIME is a SKSE plugin that brings full IME (Input Method Editor) support to Skyrim SE/AE. It intercepts the OS input pipeline, activates your system input method automatically whenever a text field takes focus, and renders the composition string and candidate list natively inside the game with ImGui — so you can type Chinese, Japanese, Korean and other multi-byte languages in the console, in SkyUI search fields, and in every text box your mods expose.
 
-[b]This is the community-maintained continuation[/b] of [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136]cyfewlp's SimpleIME[/url], developed from upstream v2.2.1. On top of the original feature set it adds IME input for modern mod UI frameworks ([b]Meridian UI[/b], [b]SKSE Menu Framework[/b] and [b]Prisma UI[/b]), fixes the stuck-IME and window-switching crash bugs, makes the UI sharp on high-DPI displays, and ships a redesigned settings window, language bar and default themes.
+[b]This is the community-maintained continuation[/b] of [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136]cyfewlp's SimpleIME[/url], developed from upstream v2.2.1. On top of the original feature set it adds IME input for modern mod UI frameworks ([b]Meridian UI[/b], [b]SKSE Menu Framework[/b] and [b]Prisma UI[/b]) and for mod menus that draw with their own Dear ImGui, fixes the stuck-IME and window-switching crash bugs, makes the UI sharp on high-DPI displays, and ships a redesigned settings window, language bar and default themes.
 
 SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入法（IME）支持。它接管系统输入管道，在文本框获得焦点时自动激活系统输入法，并用 ImGui 在游戏内原生渲染组字串与候选词窗口——让你能在控制台、SkyUI 搜索框以及一切模组文本框中输入中文、日文、韩文等多字节语言。
 
-[b]本页面是社区维护的非官方续更版[/b]，基于上游作者 cyfewlp 的 SimpleIME v2.2.1 继续开发：新增 Meridian UI、SKSE Menu Framework、Prisma UI 三大模组 UI 框架的输入法支持，修复了输入法卡死与切窗崩溃等顽疾，解决了高缩放屏 UI 发虚问题，并重做了设置界面、语言栏与默认主题。
+[b]本页面是社区维护的非官方续更版[/b]，基于上游作者 cyfewlp 的 SimpleIME v2.2.1 继续开发：新增 Meridian UI、SKSE Menu Framework、Prisma UI 三大模组 UI 框架以及自绘 ImGui 模组界面的输入法支持，修复了输入法卡死与切窗崩溃等顽疾，解决了高缩放屏 UI 发虚问题，并重做了设置界面、语言栏与默认主题。
 
 [line]
 
@@ -46,14 +46,22 @@ SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入�
 [color=#CDC2DB]SKSE Menu Framework 输入（ImGui）[/color] —— SKSEMF 界面的文本框使用框架自带 ImGui 绘制，从不触发游戏的文本输入计数。SimpleIME 解析其公开导出，在字段需要输入时经原生 [i]AllowTextInput[/i] 取得文本输入租约（语言栏照常出现），并在框架渲染回调中注入上屏文字。纯英文输入完全不受影响。需要 [b]SKSEMenuFramework.dll 3.7+[/b]。
 [*][color=#CDC2DB]Prisma UI input (Ultralight)[/color] — Prisma-based UIs (e.g. [b]PMCM[/b], [b]HeroAvatarHUD[/b], [b]Outfit Wheeler[/b]) render their text fields through Ultralight, which neither stock activation nor Prisma's own helper alone can drive for a full IME session. SimpleIME polls Prisma's public [i]IVPrismaUI1[/i] focus state, engages the IME when a Prisma view gains focus, and commits typed text through the game window's message stream into the focused field; editing keys are forwarded while typing, and the candidate window is kept on top of Prisma's rendering, anchored to the clicked text field. If PrismaUI.dll is present but its API is unavailable, SimpleIME fails safe and leaves IME handling entirely to PrismaUI.
 [color=#CDC2DB]Prisma UI 输入（Ultralight）[/color] —— Prisma 界面（如 [b]PMCM[/b]、[b]HeroAvatarHUD[/b]、[b]Outfit Wheeler[/b]）的文本框由 Ultralight 渲染，仅靠系统激活或 Prisma 自带的输入助手都无法完成完整的输入法会话。SimpleIME 只读查询 Prisma 公开的 [i]IVPrismaUI1[/i] 焦点状态，在 Prisma 视图获得焦点时自动激活输入法，并将上屏文字经游戏窗口消息流写入当前字段；输入期间转发编辑按键，候选窗始终绘制在 Prisma 画面之上并锚定到所点击的文本框。若 PrismaUI.dll 存在但 API 不可用，SimpleIME 会完全退避，把输入处理交还给 PrismaUI 以保证安全。
-[*]All three integrations negotiate [b]public extension interfaces only[/b] and are inert when the host DLL is absent — install them whenever you like.
-[*]三种集成仅协商[b]公开扩展接口[/b]，宿主 DLL 不存在时自动失效——随时可选装。
+[*][color=#CDC2DB]Mod menus with their own ImGui (no framework needed)[/color] — menus that draw with their own Dear ImGui context and never register a game menu (e.g. [b]ModExplorerMenu[/b]) read text from places the game's char events do not reach. SimpleIME routes committed text per surface: the mod menu that answers the engine's own char events takes the commit, and a host known to swallow them blind is fed through its declared channel instead of a guess.
+[color=#CDC2DB]自绘 ImGui 的模组界面（无需框架）[/color] —— 用自家 Dear ImGui 画菜单、从不注册游戏菜单的模组（如 [b]ModExplorerMenu[/b]）读字的位置与游戏字符事件无关。SimpleIME 按界面路由上屏文字：能收引擎字符事件的那家菜单拿到提交，已知会闷声吞掉字符事件的宿主按其声明通道投递，不再靠猜测。
+[*]All integrations negotiate [b]public extension interfaces only[/b] and are inert when the host DLL is absent — install them whenever you like.
+[*]所有集成仅协商[b]公开扩展接口[/b]，宿主 DLL 不存在时自动失效——随时可选装。
 [/list]
 
 [size=3][b]What this fork fixes · 本续更版修复[/b][/size]
 [list]
 [*][color=#CDC2DB]Stuck IME around mod menus[/color] — the root cause (a leaked text-entry counter that kept the IME, language bar and paused tool window on after leaving a mod window) is healed by event repair plus an every-frame poll; every disable path now also hides the language bar and returns Win32 focus to the game.
 [color=#CDC2DB]模组菜单导致的输入法卡死[/color] —— 根因是文本输入计数泄漏（离开模组窗口后输入法、语言栏与暂停的工具窗口常开），现通过事件修复 + 逐帧轮询治愈；所有停用路径都会收起语言栏并把 Win32 焦点还给游戏。
+[*][color=#CDC2DB]SKSE Menu Framework fields no longer close on the next click[/color] — the framework's ImGui only tracks the mouse while the game window holds the Win32 focus, and enabling the IME must move that focus; a click then read as "outside the field" and tore down the session that had just opened (the "candidate bar flashes off / needs several clicks" reports). The click frame now gets the cursor position written into the framework's own input state.
+[color=#CDC2DB]SKSEMF 输入框不再被下一次点击关掉[/color] —— 框架的 ImGui 只在游戏窗口持有焦点时跟踪鼠标，而启用输入法必须移走该焦点；点击因此被判成"点在输入框外"，刚打开的中文会话当场关闭（即"候选栏闪一下就死、要多点几下"）。现在点击帧会把光标位置直接写进框架自己的输入状态。
+[*][color=#CDC2DB]Typing in ImGui-family menus leaves no stray characters[/color] — the commit keystroke itself used to leak one extra character into the field ("mei" + space committing 没 left "m没"), and cancelling a composition with Esc left the pinyin behind; both are cleaned up now.
+[color=#CDC2DB]ImGui 族界面输入不再留残字[/color] —— 提交键自身此前会在字段里多留一个字符（打 "mei" 按空格提交"没" → 字段 "m没"），Esc 取消组字也会把拼音留在字段里；两者均已清理。
+[*][color=#CDC2DB]The settings window no longer pauses the game[/color] — the pause bit rode on the language bar, which appears exactly when a mod text field gains focus, so opening the settings paused the game mid-typing and could make the host UI close itself; the pause now follows the settings window itself and yields while a mod surface owns the keyboard.
+[color=#CDC2DB]设置窗口不再让游戏暂停[/color] —— 暂停位此前挂在语言栏上，而语言栏恰在模组文本框获得焦点时出现：打开设置会让游戏在打字中途暂停，甚至逼关正在输入的界面；现在暂停只跟随设置窗口本身，模组界面持有键盘时自动让位。
 [*][color=#CDC2DB]Disabling the IME no longer touches the system language layout[/color] — the old path switched the session to the English keyboard layout and Windows kept it as the desktop input method (taskbar stuck on ENG after the game closed). Disabling now only closes your input method; the old behavior is an opt-in ([i]switch_english_layout_on_disable[/i]).
 [color=#CDC2DB]禁用输入法不再改动系统语言布局[/color] —— 旧实现会把系统切到英文键盘布局并被 Windows 留作桌面输入法（退出游戏后任务栏残留 ENG）。现在禁用只关闭当前输入法；旧行为保留为可选项（[i]switch_english_layout_on_disable[/i]）。
 [*][color=#CDC2DB]Upstream's window-switch crash[/color] — switching windows via [b]Win+Shift+S[/b] (or Alt-Tab with a key held) during CJK composition no longer crashes or leaves phantom keys stuck in ImGui; focus steal, teardown and cross-thread COM paths are hardened throughout.
