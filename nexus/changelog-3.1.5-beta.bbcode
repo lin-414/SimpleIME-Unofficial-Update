@@ -1,0 +1,35 @@
+[center][size=4][color=#FFD700][b]🎉 v3.1.5-beta[/b][/color][/size][/center]
+
+[size=3][b]重点：自绘 ImGui 的模组界面可以输入中文了[/b][/size]
+
+[list]
+[*][color=#CDC2DB]Native-ImGui mod menus now take Chinese input[/color] — menus that draw with their own Dear ImGui context (ModExplorerMenu, Tailor 3.x, and hosts that never register a menu of their own) have no Scaleform text field, and they read text from different places. Committed text is now routed per surface: the mod menu that answers the engine's own char events takes the commit, and a host known to swallow them blind is fed through its declared channel instead of a menu-stack guess. Typing Chinese into those fields now delivers to their input box.
+[color=#CDC2DB]自绘 ImGui 的模组界面现在能收到中文[/color] —— 用自家 ImGui 画菜单的模组（ModExplorerMenu、Tailor 3.x，以及一些不注册菜单、自持文本输入的界面）没有 Scaleform 输入框，读字方式还各不相同。上屏文字现在按界面路由：能收引擎字符事件的那家菜单拿到提交；已知会"闷声吞掉"字符事件的宿主按其声明通道投递，不再靠菜单栈猜。中文现在进的是它们的输入框。
+[*][color=#CDC2DB]SKSE Menu Framework: the field no longer deactivates on the next click[/color] — the framework's ImGui refreshes the OS pointer only while the game window is focused, and enabling the IME must move that focus; its own WndProc hook also clears the input state on focus loss. A click then read as "outside the field" and tore down the session that had just opened — the "candidate bar flashes off / needs several clicks" reports. The click frame now gets the cursor position written straight into the host's ImGuiIO (the offset is proven against the live DLL at runtime before the first write).
+[color=#CDC2DB]SKSE Menu Framework：输入框不再被下一次点击关掉[/color] —— 框架的 ImGui 只在游戏窗口持有焦点时刷新鼠标位置，而启用输入法必须移走该焦点；它自己的 WndProc 钩子又会在失焦时清空输入状态。于是点击被判成"点在输入框外"，刚打开的中文会话当场关闭——即"候选栏闪一下就死、要多点几下"的那批报告。现在点击帧会把光标位置直接写进宿主的 ImGuiIO（写入前先在运行时对实际 DLL 校验偏移）。
+[*][color=#CDC2DB]The settings window no longer pauses the game[/color] — the pause bit rode on the language bar, which appears exactly when a mod text field gains focus: opening the settings paused the game mid-typing and could make the host UI close itself. The pause now follows the settings window itself and yields while a host surface owns the keyboard.
+[color=#CDC2DB]设置窗口不再让游戏暂停[/color] —— 暂停位原先挂在语言栏上，而语言栏恰好在模组输入框获得焦点时出现：打开设置会让游戏在打字中途暂停，甚至把宿主界面逼到自行关闭。现在暂停只跟随设置窗口本身，宿主持有键盘时自动让位。
+[/list]
+
+[size=3][b]修复[/b][/size]
+
+[list]
+[*]候选窗在 SKSE Menu Framework 菜单之上重新可见：上屏前的重绘现在无条件绑定交换链后缓冲（此前游戏留下的外来渲染目标会静默吞掉重绘，候选窗"画了但看不见"）。
+[*]提交后输入框不再多出一个字符：提交键（空格、数字选词）本身也会被引擎读成一个字符漏进原生 ImGui 宿主的输入框，现在计入退格补偿（此前打 "mei" 按空格提交"没"，字段变成 "m没"）。
+[*]Esc 取消组字后，引擎已经读进宿主的拼音字母会被一并清掉，不再残留在输入框里。
+[*]文本输入计数由"菜单栈上没有代表"的声明模组 ImGui 宿主持有时，泄漏治愈器不再把它清零——这类宿主只在字段焦点跳变的那一刻认领计数，被清零后不会自行重新认领（清零等于该字段永久失联）。
+[/list]
+
+[size=3][b]内部[/b][/size]
+
+[list]
+[*]SKSE Menu Framework 会话遥测常驻：会话结束时记录字段是否仍是活动项、宿主鼠标位置是否有效、会话期间的鼠标/回车/Esc 次数与游戏暂停计数——下一次"闪退式关闭"的报告可以直接定位到具体路径。
+[/list]
+
+[size=1]完整提交清单：[url=https://github.com/lin-414/SimpleIME-Unofficial-Update/compare/v3.1.4-beta...v3.1.5-beta]v3.1.4-beta...v3.1.5-beta[/url][/size]
+
+[size=1][url=https://github.com/lin-414/SimpleIME-Unofficial-Update/releases][b]➡ 前往 GitHub 下载 / Download on GitHub[/b][/url][/size]
+
+[line]
+遇到问题请优先提交 [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136?tab=bugs][b]BUG[/b][/url]，以便追踪和修复。
+Please [url=https://www.nexusmods.com/skyrimspecialedition/mods/140136?tab=bugs][b]open a BUG[/b][/url] for any bugs or problems — it helps me track and fix them properly.
