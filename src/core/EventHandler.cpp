@@ -250,10 +250,11 @@ void MenuOpenCloseEventSink::FixInconsistentTextEntryCount(const Event *event)
     {
         return;
     }
-    // Same SKSEMF exemption as PollTextEntryCountConsistency: the framework
-    // owns the count via the bridge lease while never appearing on the menu
-    // stack, so this menu-close event must not heal it away.
-    if (Hooks::SkseMenuFrameworkBridge::SessionActive())
+    // Same exemptions as PollTextEntryCountConsistency: a host that owns the
+    // count without any menu of its own on the stack — the SKSEMF bridge lease,
+    // or a declared mod ImGui host (FUCK) — must not have it healed away by a
+    // menu-close event that has nothing to do with that host.
+    if (Hooks::SkseMenuFrameworkBridge::SessionActive() || Skyrim::IsTextEntryCountOwnedByImGuiHost())
     {
         return;
     }
@@ -301,8 +302,11 @@ void PollTextEntryCountConsistency()
     // state. The leak heuristics below would read that as an ownerless count
     // and heal it every frame, killing the session (observed 2026-10-04:
     // begin/heal oscillating 1137 times in 35s). While the bridge session is
-    // active, the lease IS the owner.
-    if (Hooks::SkseMenuFrameworkBridge::SessionActive())
+    // active, the lease IS the owner. A mod that draws its own ImGui from
+    // PostDisplay/Present hooks and holds the count itself (FUCK) has the same
+    // shape, so it is recognised by the claim recorded on its AllowTextInput
+    // call instead — see IsTextEntryCountOwnedByImGuiHost.
+    if (Hooks::SkseMenuFrameworkBridge::SessionActive() || Skyrim::IsTextEntryCountOwnedByImGuiHost())
     {
         return;
     }

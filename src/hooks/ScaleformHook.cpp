@@ -11,9 +11,11 @@
 #include "hooks/MeridianBridge.h"
 #include "ime/ImeController.h"
 #include "log.h"
+#include "utils/Utils.h"
 
 #include <atomic>
 #include <chrono>
+#include <intrin.h>
 #include <memory>
 
 namespace Hooks::Scaleform
@@ -188,9 +190,17 @@ struct Scaleform_AllowTextInputHook
 
     static auto AllowTextInput(Ime::ControlMap *self, bool allow)
     {
+        // _ReturnAddress() has to be read here, before anything else pushes onto
+        // this frame: it is the caller of AllowTextInput, and that module is the
+        // only evidence of WHO claimed the text-entry count. A host that draws
+        // its own ImGui and never registers a menu (FUCK, SKSEMF) holds the count
+        // with nothing on the menu stack to represent it, which is otherwise
+        // indistinguishable from a leaked count (see NoteTextEntryCountChange).
+        const void *caller = _ReturnAddress();
         logger::debug("Scaleform_AllowTextInputHook");
         auto result = hookData->Original(self, allow);
 
+        Ime::Skyrim::NoteTextEntryCountChange(caller, allow, result);
         SKSE_AllowTextInputFnHandler::OnTextEntryCountChanged(result);
         // A Meridian UI focusing its DOM text field calls AllowTextInput(true):
         // probe the field right away so the DOM leak baseline (and the candidate

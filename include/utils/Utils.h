@@ -8,6 +8,8 @@
 #include "core/State.h"
 #include "log.h"
 
+#include <cstdint>
+
 namespace Ime
 {
 inline auto align_to(int value, int alignment) -> int
@@ -47,6 +49,12 @@ inline void HideMenu(const RE::BSFixedString &a_menuName)
 ///        队列时先退格抹掉它们（原生 ImGui 界面没有我们能拦截输入的层次）。
 void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters = 0);
 
+/// IME 线程调用：提交回调之后本线程上的第一个 WM_CHAR 就是那个提交按键自己的回显，
+/// 把它记下来（见 Utils.cpp 的实现注释）。提交键（空格、数字选词）同样会被引擎读成一个
+/// CharEvent 漏进宿主字面，而它不在组字串里——退格补偿不算上它，字段里就会剩一个字符
+/// （实测 2026-10-12：打 "mei" 按空格提交"没"，字段变成 "m没"）。
+void NoteCommitKeyEcho(std::uint32_t charCode);
+
 /// 游戏线程每帧调用：判定当前文本目标是否为"无 Scaleform 字段"的界面。
 void PollExternalImGuiSurface();
 
@@ -54,6 +62,18 @@ void PollExternalImGuiSurface();
 /// 设置窗暂停（ToolWindowMenu::SyncSettingsWindowPause）在它成立期间让位：这类界面
 /// 把游戏暂停当作"自己已失效"，一暂停就会被宿主关掉。
 [[nodiscard]] auto IsExternalImGuiSurface() -> bool;
+
+/// 由 `ControlMap::AllowTextInput` 的 detour 调用：告知是谁把文本输入计数认领/释放了。
+/// 认领者模块是泄漏治愈器唯一能用来区分"模组自己的 ImGui 界面持着租约"和"没人认领的
+/// 残留计数"的依据——这两类宿主在引擎状态上完全同形（计数 > 0、菜单栈上只剩 always-open
+/// 菜单），差别只在认领者是谁。见 IsTextEntryCountOwnedByImGuiHost。
+/// @param callerAddress detour 里的 `_ReturnAddress()`，即 AllowTextInput 的调用点
+void NoteTextEntryCountChange(const void *callerAddress, bool allow, std::uint8_t count);
+
+/// 当前文本输入计数是否由"菜单栈上没有代表"的声明模组 ImGui 宿主持有（声明表见 Utils.cpp）。
+/// 成立时泄漏治愈器不得清零：这类宿主的认领只发生在字段焦点跳变的那一刻，计数被我们清零
+/// 后它不会重新认领，字段不重新点开就再也输不进去（SKSEMF 2026-10-04 实测的同一形状）。
+[[nodiscard]] auto IsTextEntryCountOwnedByImGuiHost() -> bool;
 
 /// 游戏线程每帧调用：与宿主界面握手（窗口属性，同进程）。
 /// - `SimpleIME.Composing`：组字期间存在，值是最后一次刷新的 GetTickCount64()。

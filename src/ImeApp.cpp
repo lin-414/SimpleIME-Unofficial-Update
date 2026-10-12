@@ -27,6 +27,7 @@
 #include "ui/Settings.h"
 #include "ui/SettingsManager.h"
 #include "ui/fonts/FontManager.h"
+#include "utils/Utils.h"
 
 #include <basetsd.h>
 #include <atomic>
@@ -780,11 +781,18 @@ auto ImeApp::SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, s
     // window no matter what we draw earlier. SKSEMF framework menus out-draw
     // ImeMenu::PostDisplay the same way (their render callback sits above
     // ImeMenu in the frame), so a candidate overlapping a framework menu hides
-    // under it. The real swapchain present is the last draw of the frame;
-    // rendering into the backbuffer right before the flip puts our overlay
-    // back on top. Gated on the two surfaces known to out-draw PostDisplay so
-    // every other surface (Scaleform menus, Meridian, ENB) keeps its layering.
-    if ((Hooks::PrismaBridge::ShouldRoute() || Hooks::SkseMenuFrameworkBridge::SessionActive()) &&
+    // under it. FUCK is the third: its menu is drawn from the CursorMenu /
+    // HUDMenu PostDisplay hooks plus its own blur backdrop, and the candidate
+    // window came out dimmed underneath it (observed 2026-10-12 — the text
+    // field was the only thing visible). The real swapchain present is the last
+    // draw of the frame; rendering into the backbuffer right before the flip
+    // puts our overlay back on top. Gated on the surfaces known to out-draw
+    // PostDisplay so every other surface (Scaleform menus, Meridian, ENB) keeps
+    // its layering. A declared ImGui host holding the text-entry count is
+    // exactly "its menu is open and a field is focused", which is the only
+    // moment our overlay has anything to show there.
+    if ((Hooks::PrismaBridge::ShouldRoute() || Hooks::SkseMenuFrameworkBridge::SessionActive() ||
+         Ime::Skyrim::IsTextEntryCountOwnedByImGuiHost()) &&
         g_instance != nullptr && g_instance->m_state.IsInitialized() && g_ImGuiFrameMutex.try_lock())
     {
         std::lock_guard frameLock(g_ImGuiFrameMutex, std::adopt_lock);

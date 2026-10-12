@@ -51,10 +51,19 @@ struct PendingCommit
 {
     std::wstring text;
     std::size_t  eraseLetters{}; ///< 组字期间被引擎原样读进字面的拼音字母数
+    std::uint64_t seq{};         ///< 入队序号，用来把提交按键回显绑到它所属的那一条上
+    /// 还在等这条提交自己的"提交按键回显"（见 NoteCommitKeyEcho）。回显只认领一次；
+    /// 用序号也找不到这条时（已经投完了）就作废——宁可少抹一个字符，不能多抹。
+    bool awaitingCommitEcho = true;
 };
 
 std::mutex             g_commitMutex;
 std::deque<PendingCommit> g_commitQueue;
+
+/// 最近一条入队提交的序号；0 表示还没提交过。IME 线程写（SendUiString）、同一线程的
+/// 提交按键回显读——回显是提交回调之后本线程的第一个 WM_CHAR，所以它一定属于这条。
+std::atomic<std::uint64_t> g_lastCommitSeq{0};
+std::uint64_t              g_nextCommitSeq = 1; ///< 只在 g_commitMutex 内自增
 
 /// 游戏线程写、IME 线程读：当前持有文本输入的是不是"没有 Scaleform 字段"的界面。
 std::atomic_bool g_externalImGuiSurface{false};
@@ -100,7 +109,9 @@ auto Send(RE::BSUIScaleformData *scaleformData, const uint32_t code, RE::UIMessa
 
 void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters)
 {
-    if (wstringView.empty()) return;
+    // 空提交也要走一遍：Esc 取消组字时提交串是空的，但拼音字母已经被引擎读进宿主的
+    // 字面了——不退格它们就永远留在输入框里（实测 2026-10-12：取消后字段里留着 "mei"）。
+    if (wstringView.empty() && eraseLetters == 0) return;
 
     // While our own ToolWindow (the settings overlay) is showing, it is the
     // text target: the bridge routes below would steal its keystrokes into an
@@ -158,11 +169,16 @@ void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters)
         {
             const std::wstring text(wstringView);
             // 界面自己丢弃了组字期的原始字母，就绝不能再去退格——那会删掉玩家
-            // 真正写下的文字。
-            const std::size_t erase = g_imeAwareHost.load(std::memory_order_acquire) ? 0 : eraseLetters;
+            // 真正写下的文字。同理，提交键回显也不能算进它的退格数（那条提交压根
+            // 不需要退格），否则同样删到玩家的字。
+            const bool        hostDropsPreedit = g_imeAwareHost.load(std::memory_order_acquire);
+            const std::size_t erase            = hostDropsPreedit ? 0 : eraseLetters;
             {
                 const std::lock_guard lock(g_commitMutex);
-                g_commitQueue.push_back(PendingCommit{text, erase});
+                PendingCommit item{text, erase, g_nextCommitSeq++};
+                item.awaitingCommitEcho = !hostDropsPreedit;
+                g_commitQueue.push_back(std::move(item));
+                g_lastCommitSeq.store(g_commitQueue.back().seq, std::memory_order_release);
             }
             logger::info(
                 "Queued {} committed unit(s) and {} backspace(s) for an ImGui-family surface",
@@ -172,6 +188,10 @@ void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters)
             return;
         }
     }
+
+    // 只带退格的提交（取消组字）在 Scaleform 路线上没有对应动作：那条路线的字面由引擎
+    // 自己写，我们只能往里投字符，删不了。
+    if (wstringView.empty()) return;
 
     auto             *messageQueue  = RE::UIMessageQueue::GetSingleton();
     const auto *const strings       = RE::InterfaceStrings::GetSingleton();
@@ -322,6 +342,74 @@ auto ForcedChannelOf(const std::string &moduleLeaf) -> std::optional<ImGuiHostCh
     return std::nullopt;
 }
 
+//! 用"模组自己的 ImGui 界面"持有文本输入计数、且**菜单栈上没有任何菜单代表它**的宿主。
+//! 这种宿主和"某个菜单漏掉了配对的 AllowTextInput(false)"在引擎状态上完全同形：计数 > 0、
+//! 栈上只剩 always-open 菜单（HUDMenu / CursorMenu / 我们自己的 ImeMenu），所以泄漏治愈器
+//! 会把它的租约当成残留清零——SKSEMF 2026-10-04 实测 begin/heal 35 秒震荡 1137 次就是这个
+//! 形状，它当时靠一条命名豁免（SessionActive）绕开。差别只在"是谁认领的"，所以这里按认领
+//! 者模块声明：治愈器只放过声明表里的模块，未知模组照旧按泄漏处理。
+//!
+//! 不按"模块已加载"判：那样一个真实泄漏只要恰好和这个模组同时在场就会被放过，而治愈器
+//! 存在的理由（语言栏卡在"输入中"、按键继续被吞）正是那种泄漏。
+struct DeclaredCountOwner
+{
+    const char      *moduleLeaf; ///< 小写的模块文件名
+    ImGuiHostChannel channel;    ///< 上屏文字怎么进它的字段
+};
+
+constexpr DeclaredCountOwner kDeclaredCountOwners[] = {
+    // FUCK.dll（Fuzzlesz/FUCK，Nexus 181603）：从 HUDMenu / CursorMenu 的 PostDisplay 和
+    // Present 钩子里画自己的 Dear ImGui，从不注册 IMenu。字段获得焦点时它自己调
+    // `ControlMap::AllowTextInput(io.WantTextInput)` 持有计数，且只在 WantTextInput 跳变
+    // 的那一刻调一次——计数被我们清零后它不会重新认领，字段不重新点开就再也输不进去。
+    // 通道必须是引擎输入队列：它自己的输入钩子从那里取 CharEvent 灌进 ImGui，而栈上没有
+    // 它的菜单，唯一的入口就是引擎输入事件。声明通道是必须的，不能交给菜单栈探测——
+    // 2026-10-12 实测：FUCK 的字段里打字时，栈上另一个模组（STB_Widgets）的菜单对探测回
+    // kHandled，探测于是判成 GFx 投递，上屏文字进了我们自己的 ImeMenu，FUCK 永远收不到。
+    { "fuck.dll", ImGuiHostChannel::EngineEvents },
+};
+
+//! 当前持有文本输入计数的声明宿主该走的通道；0 表示没有声明宿主认领（含计数为 0）。
+//! 编码成"通道 + 1"：让"有没有主"和"走哪条通道"是同一个原子量，读侧不会看到半新半旧的
+//! 一对值（通道要跨线程读——IME 线程的 SendUiString 每帧问它，见 CurrentImGuiHostChannel）。
+std::atomic<int> g_declaredCountOwnerChannel{0};
+
+auto DeclaredCountOwnerOf(const std::string &moduleLeaf) -> const DeclaredCountOwner *
+{
+    for (const auto &entry : kDeclaredCountOwners)
+    {
+        if (moduleLeaf == entry.moduleLeaf)
+        {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+auto DeclaredOwnerOfCaller(const void *callerAddress) -> const DeclaredCountOwner *
+{
+    const HMODULE module = ModuleOf(callerAddress);
+    if (module == nullptr)
+    {
+        return nullptr;
+    }
+    // 引擎自己（原版菜单）由菜单栈代表，我们自己的计数由 SKSEMF 桥的租约代表：只有
+    // "模组自己的 ImGui 界面"这一类需要在这里认出来。
+    if (module == GetModuleHandleW(nullptr) || module == ModuleOf(reinterpret_cast<const void *>(&DeclaredOwnerOfCaller)))
+    {
+        return nullptr;
+    }
+    return DeclaredCountOwnerOf(Lower(ModuleLeafName(module)));
+}
+
+//! 通道的当前值：声明宿主的声明，或没有声明宿主时的默认值（EngineEvents，即这个特性
+//! 上线时的行为——探测拿不到结论时不会把 Tailor 那类界面弄坏）。
+auto DeclaredChannelOrDefault() -> int
+{
+    const int encoded = g_declaredCountOwnerChannel.load(std::memory_order_acquire);
+    return encoded != 0 ? encoded - 1 : static_cast<int>(ImGuiHostChannel::EngineEvents);
+}
+
 //! 探测结论：走哪条通道，以及是哪个模块的菜单收下了字符事件（写日志用）。
 struct ProbeOutcome
 {
@@ -420,6 +508,19 @@ auto ProbeHostMenus(RE::IMenu **menus, std::size_t count) -> ProbeOutcome
 //! 当前文本目标的投递通道：问菜单栈谁收下字符事件，收下那一家若有声明通道以声明为准。
 auto DecideChannel(RE::IMenu **candidates, std::size_t count) -> ImGuiHostChannel
 {
+    // 计数有声明宿主时以它的声明为准，根本不问菜单栈：栈上的菜单收下 GFx 字符事件并不
+    // 代表字符会进到"这个"宿主的 ImGui 里——它连菜单都没有。实测 2026-10-12：FUCK 的
+    // 字段里打字时，STB_Widgets 的菜单对探测回 kHandled，于是上屏文字被判成走 GFx 通道，
+    // 进了我们自己的 ImeMenu，FUCK 的输入框永远收不到中文。
+    const int declared = g_declaredCountOwnerChannel.load(std::memory_order_acquire);
+    if (declared != 0)
+    {
+        const auto channel = static_cast<ImGuiHostChannel>(declared - 1);
+        logger::info(
+            "Declared ImGui host owns the text-entry count -> {} delivery",
+            channel == ImGuiHostChannel::Scaleform ? "GFx" : "engine input queue");
+        return channel;
+    }
     if (count == 0)
     {
         logger::info("ImGui-family surface has no mod menu on the stack -> engine input queue delivery");
@@ -453,7 +554,9 @@ void InvalidateImGuiHostChannel()
 {
     g_probedMenu.store(nullptr, std::memory_order_release);
     g_nextProbeMs.store(0, std::memory_order_relaxed);
-    g_hostChannel.store(static_cast<int>(ImGuiHostChannel::EngineEvents), std::memory_order_release);
+    // 默认 EngineEvents（这个特性上线时的行为），但计数有声明宿主时用它的声明：否则从
+    // 认领到下一次探测之间会先按默认值投递，而那一次投递正是玩家提交的第一个词。
+    g_hostChannel.store(DeclaredChannelOrDefault(), std::memory_order_release);
 }
 
 auto CurrentImGuiHostChannel() -> ImGuiHostChannel
@@ -514,6 +617,40 @@ void PollExternalImGuiSurface()
 auto IsExternalImGuiSurface() -> bool
 {
     return g_externalImGuiSurface.load(std::memory_order_acquire);
+}
+
+void NoteTextEntryCountChange(const void *callerAddress, const bool allow, const std::uint8_t count)
+{
+    // 释放：认领者通常不变（计数只从 N 降到 N-1），但声明宿主自己释放时必须立刻交还
+    // 所有权——它可能与另一个认领者并存，剩下那个计数不该继续算"有主的"而不被治愈。
+    if (!allow)
+    {
+        const bool ownerReleased = g_declaredCountOwnerChannel.load(std::memory_order_acquire) != 0 &&
+                                   DeclaredOwnerOfCaller(callerAddress) != nullptr;
+        if (count == 0 || ownerReleased)
+        {
+            g_declaredCountOwnerChannel.store(0, std::memory_order_release);
+        }
+        return;
+    }
+
+    const auto *declared = DeclaredOwnerOfCaller(callerAddress);
+    const int   encoded  = declared != nullptr ? static_cast<int>(declared->channel) + 1 : 0;
+    if (g_declaredCountOwnerChannel.exchange(encoded, std::memory_order_acq_rel) != encoded && declared != nullptr)
+    {
+        logger::info(
+            "Text-entry count claimed by declared ImGui host {} -> {} delivery; no menu on the stack owns it, so the leak healer yields",
+            declared->moduleLeaf,
+            declared->channel == ImGuiHostChannel::Scaleform ? "GFx" : "engine input queue");
+        // 让下一次探测按这个宿主的声明重判通道（见 DecideChannel）：被探测缓存的结论可能
+        // 来自上一个界面，而这里的认领正是"界面换人了"的信号。
+        InvalidateImGuiHostChannel();
+    }
+}
+
+auto IsTextEntryCountOwnedByImGuiHost() -> bool
+{
+    return g_declaredCountOwnerChannel.load(std::memory_order_acquire) != 0;
 }
 
 void MarkCompositionActive()
@@ -634,6 +771,41 @@ void DrainPendingCommittedText()
         const std::lock_guard lock(g_commitMutex);
         g_commitQueue.push_front(item);
     }
+}
+
+/// 提交键（空格、数字选词、回车）本身也漏进宿主的字面：引擎从物理键盘读出的 CharEvent
+/// 里有它，而它不在组字串里，所以组字长度算不到它——不补这一个退格，字段里就剩一个字符
+/// （实测 2026-10-12：打 "mei" 按空格提交"没"，字段变成 "m没"：4 个字符减 3 个退格）。
+/// 只算宿主真会插进字面的字符：控制字符（回车 0x0D、退格 0x08、Tab、Esc 0x1B）ImGui 的
+/// InputText 不收，补了退格反而会删掉玩家自己的字——我们自己的 WM_CHAR 分支对这几个字符
+/// 同样不转发给 Skyrim（见 ImeWnd::HandleCharMessage 的 ignoredKeys）。
+void NoteCommitKeyEcho(const std::uint32_t charCode)
+{
+    const std::uint64_t seq = g_lastCommitSeq.load(std::memory_order_acquire);
+    if (seq == 0)
+    {
+        return;
+    }
+    const std::lock_guard lock(g_commitMutex);
+    for (auto &item : g_commitQueue)
+    {
+        if (item.seq != seq)
+        {
+            continue;
+        }
+        if (item.awaitingCommitEcho)
+        {
+            item.awaitingCommitEcho = false;
+            if (charCode >= 0x20U && charCode != 0x7FU)
+            {
+                ++item.eraseLetters;
+                logger::info("Commit keystroke echo {:#x} joins the erase pass", charCode);
+            }
+        }
+        return;
+    }
+    // 这条提交已经投完了（或被判成不需要退格）：这次回显作废。少抹一个字符不会删到
+    // 玩家的字，多抹会。
 }
 
 } // namespace Ime::Skyrim

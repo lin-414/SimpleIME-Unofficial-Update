@@ -773,6 +773,9 @@ auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
         {
             m_lastCommitTickMs = 0;
             logger::debug("ImeWnd WM_CHAR {:#x} dropped (commit keystroke echo)", wParam);
+            // 这个字符同样被引擎从物理键盘读成了一个 CharEvent，已经落进原生 ImGui 宿主的
+            // 字面里了——把它算进那条提交的退格补偿（组字长度里没有它）。
+            Skyrim::NoteCommitKeyEcho(static_cast<std::uint32_t>(wParam));
             return 0;
         }
         m_lastCommitTickMs = 0; // window expired: nothing left to suppress
