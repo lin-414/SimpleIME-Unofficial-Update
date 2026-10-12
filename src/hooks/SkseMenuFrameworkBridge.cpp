@@ -33,6 +33,7 @@
 #include "RE/ControlMap.h"
 #include "RE/I/InputDevices.h"
 #include "RE/M/MenuCursor.h"
+#include "REX/W32/DINPUT.h"
 #include "core/State.h"
 #include "hook.h"
 #include "hooks/BridgeGate.h"
@@ -47,6 +48,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -246,6 +248,10 @@ struct FrameworkApi
     using GetIoFn = void *(*)();
     using GetFrameCountFn = int (*)();
     using AddInputCharacterFn = void (*)(void *, unsigned int);
+    using IsMousePosValidFn = bool (*)(const void *);
+    using AddMousePosEventFn = void (*)(void *, float, float);
+    using GetActiveIdFn = unsigned int (*)();
+    using GetHoveredIdFn = unsigned int (*)();
 
     HMODULE                 module = nullptr;
     RegisterEventPriorityFn registerEventPriority = nullptr;
@@ -254,6 +260,16 @@ struct FrameworkApi
     GetIoFn                 getIo = nullptr;
     GetFrameCountFn         getFrameCount = nullptr;
     AddInputCharacterFn     addInputCharacter = nullptr;
+    /// Optional pair (both present in 3.18+): the host-mouse-position repair and
+    /// the telemetry that proves it. A build without them loses that repair only,
+    /// so they must not fail the whole bridge resolution.
+    IsMousePosValidFn       isMousePosValid = nullptr;
+    AddMousePosEventFn      addMousePosEvent = nullptr;
+    /// Optional telemetry: whose focus the host's ImGui is holding. Distinguishes
+    /// "the field was cleared" from "the field's window stopped being submitted"
+    /// when a session ends, which is what the 2026-10-12 sessions need.
+    GetActiveIdFn           getActiveId = nullptr;
+    GetHoveredIdFn          getHoveredId = nullptr;
 
     template <class T>
     bool ResolveOne(T &target, const char *name) const
@@ -265,6 +281,13 @@ struct FrameworkApi
             return false;
         }
         return true;
+    }
+
+    template <class T>
+    bool ResolveOptional(T &target, const char *name) const
+    {
+        target = reinterpret_cast<T>(GetProcAddress(module, name));
+        return target != nullptr;
     }
 
     [[nodiscard]] bool Resolve()
@@ -281,6 +304,18 @@ struct FrameworkApi
         ok = ResolveOne(getIo, "igGetIO") && ok;
         ok = ResolveOne(getFrameCount, "igGetFrameCount") && ok;
         ok = ResolveOne(addInputCharacter, "ImGuiIO_AddInputCharacter") && ok;
+        // Both optional (see the fields above): without them the bridge still
+        // works, but the host's ImGui keeps no mouse position while we hold the
+        // Win32 focus and its text fields deactivate on the next click.
+        const bool haveMousePosQuery = ResolveOptional(isMousePosValid, "igIsMousePosValid");
+        const bool haveMousePosEvent = ResolveOptional(addMousePosEvent, "ImGuiIO_AddMousePosEvent");
+        if (!haveMousePosQuery || !haveMousePosEvent)
+        {
+            logger::warn("SKSE Menu Framework mouse-position exports unavailable; its text fields may deactivate on the first click after focus moves");
+        }
+        // Optional telemetry only (a missing one costs a log field, nothing else).
+        (void)ResolveOptional(getActiveId, "igGetActiveID");
+        (void)ResolveOptional(getHoveredId, "igGetHoveredID");
         return ok;
     }
 };
@@ -360,6 +395,16 @@ std::atomic<bool>          s_imeDisabledAtBegin{false};
 /// Win32 focus, so any click reads as a click on nothing) — a different fix
 /// from a state clear, and the two look identical in a session-end log.
 std::atomic<std::uint32_t> s_sessionMousePresses{0};
+/// PROBE(2026-10-12): Return/Escape presses seen during the session. ImGui's
+/// InputText deactivates on either (validate / cancel), and both reach the host
+/// through the engine's DirectInput stream even while our ImeWnd holds the Win32
+/// focus — a session that ends without a mouse press but with one of these is
+/// that path, not a click.
+std::atomic<std::uint32_t> s_sessionReturnPresses{0};
+std::atomic<std::uint32_t> s_sessionEscapePresses{0};
+/// The host item that owned focus when the session began — the text field's
+/// ImGui id, for "is it still the active item at the end?".
+std::atomic<unsigned int> s_sessionFieldId{0};
 
 /// The engine's pause counter, for the session-end probe: whether the game was
 /// paused at the moment the host's field deactivated.
@@ -367,6 +412,237 @@ auto GamePauseCounter() -> std::uint32_t
 {
     auto *ui = RE::UI::GetSingleton();
     return ui != nullptr ? ui->numPausesGame : 0;
+}
+
+/// True while the game's own window holds the Win32 foreground. The framework's
+/// ImGui only tracks the OS pointer while this holds (its Win32 backend refreshes
+/// MousePos under exactly this condition).
+auto GameWindowFocused() -> bool
+{
+    const HWND gameWindow = Ime::ImeApp::GetInstance().GetGameHWND();
+    return gameWindow != nullptr && ::GetForegroundWindow() == gameWindow;
+}
+
+/// Whether the framework's ImGui currently holds a usable mouse position.
+/// True when the exports are unavailable (an older framework build): the repair
+/// below is then skipped and this telemetry would only mislead.
+auto HostMousePosValid() -> bool
+{
+    return s_api.isMousePosValid == nullptr || s_api.isMousePosValid(nullptr);
+}
+
+/// The host ImGui item that currently holds focus (0 = none), and the hovered id.
+/// Telemetry: on a session end, "the field is still the active item" means the
+/// field was never cleared — its window stopped being submitted instead.
+auto HostActiveId() -> unsigned int
+{
+    return s_api.getActiveId != nullptr ? s_api.getActiveId() : 0U;
+}
+
+auto HostHoveredId() -> unsigned int
+{
+    return s_api.getHoveredId != nullptr ? s_api.getHoveredId() : 0U;
+}
+
+/// Set by the input-dispatch hook (game thread) when a mouse press arrives while a
+/// session owns the keyboard. The framework's next frame must know where that
+/// click was — see UpdateHostMousePosition.
+std::atomic<bool> s_mousePressPending{false};
+/// True between the injection and the end of the frame that consumed it (probe:
+/// did the injected position actually reach the frame that judged the click?).
+std::atomic<bool> s_injectedForPress{false};
+
+/// PROBE(2026-10-12 SKSEMF session death): trace the host field's focus across
+/// frames. A session ends either because the field's ActiveId was cleared (a
+/// click/Enter/Esc — the click path needs a mouse position the host does not
+/// have) or because the field stopped being submitted (its window closed); this
+/// prints which, with the input state that frame ran with. `stage == nullptr`
+/// seeds the comparison at a session begin.
+void TraceHostFieldFocus(const char *stage)
+{
+    if (!s_sessionActive.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    static unsigned int s_lastActiveId = 0;
+    static bool         s_lastValid    = true;
+    const auto          activeId       = HostActiveId();
+    const bool          valid          = HostMousePosValid();
+    if (stage == nullptr)
+    {
+        s_lastActiveId = activeId;
+        s_lastValid    = valid;
+        return;
+    }
+    if (activeId == s_lastActiveId && valid == s_lastValid)
+    {
+        return;
+    }
+    s_lastActiveId = activeId;
+    s_lastValid    = valid;
+    logger::debug(
+        "Host field focus {}: activeId={:#x} (field {:#x}) mousePosValid={} hoveredId={:#x} gameWindowFocused={} numPausesGame={}",
+        stage,
+        activeId,
+        s_sessionFieldId.load(std::memory_order_relaxed),
+        valid,
+        HostHoveredId(),
+        GameWindowFocused(),
+        GamePauseCounter()
+    );
+}
+
+/// Offset of ImGuiIO::MousePos inside the framework's ImGui build. Derived from
+/// the released DLL itself: disassembling its exported ImGuiIO_ClearInputKeys
+/// shows the one ImVec2 it sets to (-FLT_MAX, -FLT_MAX) at io+0xF8, with MouseDown
+/// at io+0x100 and MouseDownDuration/Prev at io+0x2B50/0x2B64 — the pre-KeysData
+/// layout the two proven anchors (ConfigDebugIgnoreFocusLoss 0x7B, WantTextInput
+/// 0xCC) pin down. A wrong offset would corrupt an unrelated io field, so the
+/// direct write stays disabled until the slot is seen holding the OS cursor.
+constexpr std::size_t IMGUI_IO_MOUSE_POS_OFFSET = 0xF8;
+/// True once io+IMGUI_IO_MOUSE_POS_OFFSET has been observed to hold the OS cursor
+/// (i.e. the offset is this build's MousePos and a direct write is safe).
+std::atomic<bool> s_mousePosOffsetVerified{false};
+/// Set when a frame wrote the position directly, so the end of that frame can put
+/// the host back to "no mouse position" while the game window is unfocused (its
+/// normal state — otherwise the host would draw its software cursor at a stale
+/// spot).
+std::atomic<bool> s_mousePosWroteDirect{false};
+
+/// The position slot of the host's ImGuiIO, or nullptr when the offset is not
+/// verified yet (or the io is gone).
+auto HostMousePosSlot() -> float *
+{
+    if (!s_mousePosOffsetVerified.load(std::memory_order_acquire) || s_api.getIo == nullptr)
+    {
+        return nullptr;
+    }
+    auto *io = s_api.getIo();
+    return io != nullptr ? reinterpret_cast<float *>(reinterpret_cast<std::uint8_t *>(io) + IMGUI_IO_MOUSE_POS_OFFSET) : nullptr;
+}
+
+/// Verify the MousePos offset from the live state: while the game window is
+/// focused its own backend keeps that slot equal to the client-mapped cursor, so a
+/// match proves the offset. Runs outside text sessions too (that is when the
+/// signal exists).
+void VerifyHostMousePosOffset()
+{
+    if (s_mousePosOffsetVerified.load(std::memory_order_acquire) || s_api.getIo == nullptr || !GameWindowFocused())
+    {
+        return;
+    }
+    auto *io = s_api.getIo();
+    const HWND gameWindow = Ime::ImeApp::GetInstance().GetGameHWND();
+    POINT    cursor{};
+    if (io == nullptr || gameWindow == nullptr || ::GetCursorPos(&cursor) == FALSE || ::ScreenToClient(gameWindow, &cursor) == FALSE)
+    {
+        return;
+    }
+    const auto *slot = reinterpret_cast<const float *>(reinterpret_cast<const std::uint8_t *>(io) + IMGUI_IO_MOUSE_POS_OFFSET);
+    // Two consecutive matches: one could be a coincidence (an uninitialised zero
+    // slot and a cursor at the client origin), two cannot.
+    static int s_matches = 0;
+    if (std::abs(slot[0] - static_cast<float>(cursor.x)) <= 2.0F && std::abs(slot[1] - static_cast<float>(cursor.y)) <= 2.0F)
+    {
+        if (++s_matches >= 2)
+        {
+            s_mousePosOffsetVerified.store(true, std::memory_order_release);
+            logger::info("SKSE Menu Framework io+{} verified as ImGuiIO::MousePos; direct mouse writes enabled", IMGUI_IO_MOUSE_POS_OFFSET);
+        }
+    }
+    else
+    {
+        s_matches = 0;
+    }
+}
+
+/// Feed the framework's ImGui the OS cursor for the frame that processes a click,
+/// mapped into the game window's client area exactly like its own Win32 backend
+/// does while the game window is focused.
+///
+/// Why this matters: ImGui's pointer position decides whether a click counts as
+/// "inside the focused field". The backend refreshes it only while the GAME WINDOW
+/// is focused, and our IME enable must move the Win32 focus to ImeWnd (TSF lives on
+/// the IME thread) — on top of that, the framework's own WndProc hook clears its
+/// whole input state, MousePos included, on WM_KILLFOCUS. Its ImGui is then left
+/// with an invalid position, and InputText's "release focus when we click outside"
+/// rule fires for EVERY later click: the user's own second click on the field (or
+/// the press the engine re-emits when the input mode switches as the bar appears)
+/// tears down the session it just opened — every 2026-10-12 "bar flashes off"
+/// report carried a mouse press and a dead field, and none of them a paused game.
+///
+/// The position is WRITTEN INTO the io, not queued: ImGui's "trickle fast inputs"
+/// rule (imgui.cpp, UpdateInputEvents) stops processing the event queue at a
+/// MousePos event once a mouse-button change has been handled in that frame — and
+/// the button event is always queued before we can react to the press, so a queued
+/// position loses that race by construction and the click is judged with the
+/// previous (cleared) position. The log of 2026-10-12 shows exactly that shape:
+/// the click frame ends with mousePosValid=false and activeId=0, and the next frame
+/// has valid=true with the field hovered again. Only the frames that carry a press
+/// get a position: a permanently valid one would make the host draw its software
+/// cursor over the game's own.
+void UpdateHostMousePosition()
+{
+    if (!s_sessionActive.load(std::memory_order_acquire) || s_api.getIo == nullptr)
+    {
+        return;
+    }
+    if (!s_mousePressPending.exchange(false, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    const HWND gameWindow = Ime::ImeApp::GetInstance().GetGameHWND();
+    if (gameWindow == nullptr)
+    {
+        return;
+    }
+    POINT cursor{};
+    if (::GetCursorPos(&cursor) == FALSE || ::ScreenToClient(gameWindow, &cursor) == FALSE)
+    {
+        return;
+    }
+    if (float *slot = HostMousePosSlot(); slot != nullptr)
+    {
+        slot[0] = static_cast<float>(cursor.x);
+        slot[1] = static_cast<float>(cursor.y);
+        s_mousePosWroteDirect.store(true, std::memory_order_release);
+        s_injectedForPress.store(true, std::memory_order_release);
+        return;
+    }
+    // Offset not verified yet: fall back to the event path. It loses to the
+    // trickle rule described above, but it is still better than nothing until the
+    // next focused frame proves the offset.
+    if (s_api.addMousePosEvent != nullptr)
+    {
+        if (auto *io = s_api.getIo(); io != nullptr)
+        {
+            s_api.addMousePosEvent(io, static_cast<float>(cursor.x), static_cast<float>(cursor.y));
+            s_injectedForPress.store(true, std::memory_order_release);
+        }
+    }
+}
+
+/// End of the frame that wrote the position directly: put the host back to "no
+/// mouse position" while the game window is unfocused — that is the state its own
+/// backend keeps (it only refreshes the position while focused), and leaving a
+/// stale valid value behind would make the host draw its software cursor at an
+/// old spot. When the game window IS focused the backend owns the value and keeps
+/// it current, so it is left alone.
+void RestoreHostMousePosAfterFrame()
+{
+    if (!s_mousePosWroteDirect.exchange(false, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    if (GameWindowFocused())
+    {
+        return;
+    }
+    if (float *slot = HostMousePosSlot(); slot != nullptr)
+    {
+        slot[0] = -FLT_MAX;
+        slot[1] = -FLT_MAX;
+    }
 }
 
 /// Per framework frame, at kAfterRender: refresh the field anchor from
@@ -693,6 +969,11 @@ void BeginTextInput()
     s_sessionBeginMs.store(GetTickCount64(), std::memory_order_release);
     s_imeDisabledAtBegin.store(Ime::Core::State::GetInstance().ImeDisabled(), std::memory_order_release);
     s_sessionMousePresses.store(0, std::memory_order_relaxed);
+    s_sessionReturnPresses.store(0, std::memory_order_relaxed);
+    s_sessionEscapePresses.store(0, std::memory_order_relaxed);
+    s_sessionFieldId.store(HostActiveId(), std::memory_order_relaxed);
+    s_mousePressPending.store(false, std::memory_order_relaxed);
+    s_injectedForPress.store(false, std::memory_order_relaxed);
     // Fallback anchor when no live source exists (SetPlatformImeDataFn hook
     // failed to install and no calibrated offset): the engine cursor is on
     // the field the user just clicked. Trust MenuCursor under the same
@@ -714,16 +995,26 @@ void BeginTextInput()
         }
     }
     logger::info("SKSE Menu Framework text session begin (lease acquired)");
+    TraceHostFieldFocus(nullptr);
 }
 
 void EndTextInput()
 {
     ReleaseTextEntryLease();
+    const auto fieldId = s_sessionFieldId.load(std::memory_order_relaxed);
     logger::info(
-        "SKSE Menu Framework text session end (lease released, held {} ms, {} mouse press(es) during the session, numPausesGame={})",
+        "SKSE Menu Framework text session end (lease released, held {} ms, {} mouse press(es), {} return/{} escape during the session, "
+        "numPausesGame={}, hostMousePosValid={}, gameWindowFocused={}, fieldActive={} activeId={:#x} hoveredId={:#x})",
         GetTickCount64() - s_sessionBeginMs.load(std::memory_order_relaxed),
         s_sessionMousePresses.load(std::memory_order_relaxed),
-        GamePauseCounter()
+        s_sessionReturnPresses.load(std::memory_order_relaxed),
+        s_sessionEscapePresses.load(std::memory_order_relaxed),
+        GamePauseCounter(),
+        HostMousePosValid(),
+        GameWindowFocused(),
+        HostActiveId() == fieldId,
+        HostActiveId(),
+        HostHoveredId()
     );
 }
 
@@ -861,6 +1152,20 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
         // PlatformImeData during widget submission — read it here, after the
         // frame, where it is guaranteed current for the next session check.
         UpdateFieldAnchor();
+        RestoreHostMousePosAfterFrame();
+        TraceHostFieldFocus("after the frame");
+        // PROBE(2026-10-12): the frame that judged a click has just finished —
+        // did the injected position actually reach it, and is the field still the
+        // active item?
+        if (s_injectedForPress.exchange(false, std::memory_order_acq_rel))
+        {
+            logger::debug(
+                "Host mouse position after the click frame: valid={} activeId={:#x} (field {:#x})",
+                HostMousePosValid(),
+                HostActiveId(),
+                s_sessionFieldId.load(std::memory_order_relaxed)
+            );
+        }
         return;
     }
     if (eventType != EVENT_BEFORE_RENDER)
@@ -900,6 +1205,14 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
     // (ImGui discards unconsumed input) while dropping it eats the last char.
     FlushPending();
     UpdateFieldAnchor();
+    // The offset proof lives in frames where the game window is focused — which
+    // is every frame outside a session, so this runs unconditionally.
+    VerifyHostMousePosOffset();
+    // Before the transition check too: this frame's widget submission is what
+    // decides hover/click ownership, so the position must be in the queue that
+    // NewFrame is about to consume.
+    UpdateHostMousePosition();
+    TraceHostFieldFocus("before the frame");
     UpdateTextInputState();
 }
 
@@ -1130,11 +1443,20 @@ void ForceEndSession()
     const bool wasActive = s_sessionActive.exchange(false, std::memory_order_acq_rel);
     if (wasActive)
     {
+        const auto fieldId = s_sessionFieldId.load(std::memory_order_relaxed);
         logger::info(
-            "SKSE Menu Framework text session force-ended (held {} ms, {} mouse press(es) during the session, numPausesGame={})",
+            "SKSE Menu Framework text session force-ended (held {} ms, {} mouse press(es), {} return/{} escape during the session, "
+            "numPausesGame={}, hostMousePosValid={}, gameWindowFocused={}, fieldActive={} activeId={:#x} hoveredId={:#x})",
             GetTickCount64() - s_sessionBeginMs.load(std::memory_order_relaxed),
             s_sessionMousePresses.load(std::memory_order_relaxed),
-            GamePauseCounter()
+            s_sessionReturnPresses.load(std::memory_order_relaxed),
+            s_sessionEscapePresses.load(std::memory_order_relaxed),
+            GamePauseCounter(),
+            HostMousePosValid(),
+            GameWindowFocused(),
+            HostActiveId() == fieldId,
+            HostActiveId(),
+            HostHoveredId()
         );
     }
     ReleaseTextEntryLease();
@@ -1156,13 +1478,41 @@ void NeutralizeRawAscii(RE::InputEvent *const *events)
 
     // PROBE(2026-10-12 pause/freeze session death): every input batch during a
     // session passes through here, so this is where a press that kills the host's
-    // field can be counted (see s_sessionMousePresses).
+    // field can be counted (see s_sessionMousePresses) — and where the state that
+    // makes a press fatal is visible: the framework's ImGui reads a click with no
+    // mouse position as a click on nothing, which deactivates its InputText.
     for (auto *event = *events; event != nullptr; event = event->next)
     {
         const auto *button = event->AsButtonEvent();
-        if (button != nullptr && button->GetDevice() == RE::INPUT_DEVICE::kMouse && button->IsPressed())
+        if (button == nullptr || !button->IsPressed())
+        {
+            continue;
+        }
+        if (button->GetDevice() == RE::INPUT_DEVICE::kMouse)
         {
             s_sessionMousePresses.fetch_add(1, std::memory_order_relaxed);
+            // The host's next ImGui frame needs the click position to match it
+            // against the focused field's rectangle (see UpdateHostMousePosition).
+            s_mousePressPending.store(true, std::memory_order_release);
+            logger::debug(
+                "Mouse press during the session: hostMousePosValid={} gameWindowFocused={} activeId={:#x} (field {:#x})",
+                HostMousePosValid(),
+                GameWindowFocused(),
+                HostActiveId(),
+                s_sessionFieldId.load(std::memory_order_relaxed)
+            );
+        }
+        else if (button->GetDevice() == RE::INPUT_DEVICE::kKeyboard)
+        {
+            // InputText's other two deactivation paths (validate / cancel).
+            if (button->GetIDCode() == REX::W32::DIK_RETURN)
+            {
+                s_sessionReturnPresses.fetch_add(1, std::memory_order_relaxed);
+            }
+            else if (button->GetIDCode() == REX::W32::DIK_ESCAPE)
+            {
+                s_sessionEscapePresses.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
 

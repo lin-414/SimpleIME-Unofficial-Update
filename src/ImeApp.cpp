@@ -824,6 +824,16 @@ auto ImeApp::MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> 
     }
     switch (uMsg)
     {
+        case WM_KILLFOCUS:
+        case WM_SETFOCUS:
+            // PROBE(2026-10-12 SKSEMF session death): the focus timeline of the
+            // game window. SKSEMenuFramework's own WndProc hook clears its whole
+            // ImGui input state on WM_KILLFOCUS (mouse position included), and our
+            // IME enable/reclaim moves the focus on every text session — the log
+            // needs to see whether such a clear lands in the frame that judges a
+            // click.
+            logger::debug("Game window {} (foreground={:p})", uMsg == WM_KILLFOCUS ? "lost Win32 focus" : "gained Win32 focus", static_cast<void *>(::GetForegroundWindow()));
+            break;
         case WM_NCACTIVATE:
             if (wParam == TRUE)
             {
