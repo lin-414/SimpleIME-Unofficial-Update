@@ -101,6 +101,61 @@ Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)> *g_swapChainPres
 void                   *g_realSwapChainPresent       = nullptr;
 ID3D11DeviceContext    *g_swapChainContext           = nullptr;
 ID3D11RenderTargetView *g_swapChainBackBufferRtv     = nullptr;
+ID3D11Device           *g_swapChainDevice            = nullptr;
+void                   *g_swapChainBackBufferOwner   = nullptr; ///< swapchain the cached RTV was derived from
+
+/// The backbuffer view the present-hook overlay draws into. Re-derived from the
+/// live swapchain whenever the cached one is missing or belongs to a previous
+/// swapchain: the game rebuilds the swapchain on resolution/window changes
+/// (ResizeBuffers, borderless-upscale recreation), which leaves every view
+/// created earlier pointing at a dead buffer — draws into it succeed and are
+/// never seen. Called from D3DInit (forced; device resets re-run it) and the
+/// present hook (render thread).
+auto EnsureSwapChainBackBufferRtv(void *swapChain, bool force) -> ID3D11RenderTargetView *
+{
+    if (force && g_swapChainBackBufferRtv != nullptr)
+    {
+        g_swapChainBackBufferRtv->Release();
+        g_swapChainBackBufferRtv   = nullptr;
+        g_swapChainBackBufferOwner = nullptr;
+    }
+    if (g_swapChainBackBufferRtv != nullptr && g_swapChainBackBufferOwner == swapChain)
+    {
+        return g_swapChainBackBufferRtv;
+    }
+    auto *device = g_swapChainDevice;
+    if (device == nullptr)
+    {
+        if (auto *renderer = RE::BSGraphics::Renderer::GetSingleton(); renderer != nullptr)
+        {
+            device = reinterpret_cast<ID3D11Device *>(renderer->GetRuntimeData().forwarder);
+        }
+    }
+    if (swapChain == nullptr || device == nullptr)
+    {
+        return g_swapChainBackBufferRtv;
+    }
+    auto            *chain      = static_cast<REX::W32::IDXGISwapChain *>(swapChain);
+    ID3D11Texture2D *backBuffer = nullptr;
+    if (FAILED(chain->GetBuffer(0, REX::W32::IID_ID3D11Texture2D, reinterpret_cast<void **>(&backBuffer))) || backBuffer == nullptr)
+    {
+        return g_swapChainBackBufferRtv;
+    }
+    ID3D11RenderTargetView *rtv = nullptr;
+    const HRESULT           hr  = device->CreateRenderTargetView(backBuffer, nullptr, &rtv);
+    backBuffer->Release();
+    if (FAILED(hr) || rtv == nullptr)
+    {
+        return g_swapChainBackBufferRtv;
+    }
+    if (g_swapChainBackBufferRtv != nullptr)
+    {
+        g_swapChainBackBufferRtv->Release();
+    }
+    g_swapChainBackBufferRtv   = rtv;
+    g_swapChainBackBufferOwner = swapChain;
+    return rtv;
+}
 
 // SimpleIME's per-frame work (ImGui rendering, MeridianBridge::Tick) is driven
 // from ImeMenu::PostDisplay — but the engine STOPS calling it while a Meridian
@@ -321,6 +376,9 @@ void ImeApp::Uninitialize()
     Hooks::MeridianBridge::Uninstall();
     Hooks::PrismaBridge::Uninstall();
     Hooks::SkseMenuFrameworkBridge::Uninstall();
+    // Give back the settings window's engine pause before the frame driver that
+    // holds it stops running, or the counter keeps the game paused.
+    ToolWindowMenu::ReleaseSettingsWindowPause();
     g_pInitErrorMessageShow.reset();
     // Unwind by what was actually acquired, not by the state: a failed or
     // shut-down init leaves these resources behind just the same.
@@ -414,34 +472,27 @@ void ImeApp::OnD3DInit()
     // after our PostDisplay overlay; the real swapchain present is the only
     // point guaranteed to be after every such draw.
     g_swapChainContext = reinterpret_cast<ID3D11DeviceContext *>(renderData.context);
+    g_swapChainDevice  = reinterpret_cast<ID3D11Device *>(renderData.forwarder);
+    // Forced re-derive: a re-init (device reset) leaves the cached view
+    // belonging to the dead device even when the swapchain pointer matches.
+    EnsureSwapChainBackBufferRtv(pSwapChain, /*force=*/true);
+    // IDXGISwapChain::Present = vtable slot 8 (IUnknown 3 + IDXGIObject 2 +
+    // GetPrivateData/GetParent/GetDevice 3).
+    if (g_swapChainPresentHook == nullptr)
     {
-        auto *d3dDevice = reinterpret_cast<ID3D11Device *>(renderData.forwarder);
-        ID3D11Texture2D *backBuffer = nullptr;
-        if (pSwapChain != nullptr && d3dDevice != nullptr &&
-            SUCCEEDED(pSwapChain->GetBuffer(0, REX::W32::IID_ID3D11Texture2D, reinterpret_cast<void **>(&backBuffer))) &&
-            backBuffer != nullptr)
+        // The detour targets the global Present function, so an existing
+        // hook from a previous init already covers the new swapchain.
+        g_realSwapChainPresent = reinterpret_cast<void **>(*reinterpret_cast<void **>(pSwapChain))[8];
+        g_swapChainPresentHook = new Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)>(
+            g_realSwapChainPresent, &ImeApp::SwapChainPresentHook);
+        if (g_swapChainPresentHook->Detoured())
         {
-            d3dDevice->CreateRenderTargetView(backBuffer, nullptr, &g_swapChainBackBufferRtv);
-            backBuffer->Release();
+            logger::info("Swapchain present hook installed (keeps the overlay above Prisma views)");
         }
-        // IDXGISwapChain::Present = vtable slot 8 (IUnknown 3 + IDXGIObject 2 +
-        // GetPrivateData/GetParent/GetDevice 3).
-        if (g_swapChainPresentHook == nullptr)
+        else
         {
-            // The detour targets the global Present function, so an existing
-            // hook from a previous init already covers the new swapchain.
-            g_realSwapChainPresent = reinterpret_cast<void **>(*reinterpret_cast<void **>(pSwapChain))[8];
-            g_swapChainPresentHook = new Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)>(
-                g_realSwapChainPresent, &ImeApp::SwapChainPresentHook);
-            if (g_swapChainPresentHook->Detoured())
-            {
-                logger::info("Swapchain present hook installed (keeps the overlay above Prisma views)");
-            }
-            else
-            {
-                logger::error("Swapchain present hook attach failed at {:#x}; the overlay may hide under Prisma views",
-                              reinterpret_cast<std::uintptr_t>(g_realSwapChainPresent));
-            }
+            logger::error("Swapchain present hook attach failed at {:#x}; the overlay may hide under Prisma views",
+                          reinterpret_cast<std::uintptr_t>(g_realSwapChainPresent));
         }
     }
 
@@ -737,20 +788,18 @@ auto ImeApp::SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, s
         g_instance != nullptr && g_instance->m_state.IsInitialized() && g_ImGuiFrameMutex.try_lock())
     {
         std::lock_guard frameLock(g_ImGuiFrameMutex, std::adopt_lock);
-        // ImGui_ImplDX11 draws into whatever render target is bound; the game
-        // may leave it unbound on its present path, so pin the backbuffer.
-        if (g_swapChainContext != nullptr && g_swapChainBackBufferRtv != nullptr)
+        // ImGui_ImplDX11 draws into whatever render target is bound. The
+        // presented content is always the swapchain backbuffer no matter what
+        // the game left bound on its present path, so pin OUR backbuffer view
+        // unconditionally — a foreign target left bound here silently swallowed
+        // the on-top re-render (the overlay drew "successfully" into a surface
+        // that never reached the screen).
+        if (g_swapChainContext != nullptr)
         {
-            ID3D11RenderTargetView *bound = nullptr;
-            g_swapChainContext->OMGetRenderTargets(1, &bound, nullptr);
-            if (bound == nullptr)
+            ID3D11RenderTargetView *rtv = EnsureSwapChainBackBufferRtv(swapChain, /*force=*/false);
+            if (rtv != nullptr)
             {
-                ID3D11RenderTargetView *rtv = g_swapChainBackBufferRtv;
                 g_swapChainContext->OMSetRenderTargets(1, &rtv, nullptr);
-            }
-            else
-            {
-                bound->Release();
             }
         }
         ImGuiEx::NewFrame();
