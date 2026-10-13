@@ -9,6 +9,7 @@
 #include "core/EventHandler.h"
 #include "core/State.h"
 #include "hook.h"
+#include "hooks/HdrOverlay.h"
 #include "hooks/MeridianBridge.h"
 #include "hooks/NirnLabBridge.h"
 #include "hooks/PrismaBridge.h"
@@ -354,6 +355,9 @@ void ImeApp::Uninitialize()
     // in Shutdown().
     RequestImeThreadTeardown();
     SaveSettings();
+    // The overlay's HDR pipeline holds device objects; drop them with the rest
+    // of the render state. PrepareFrame stays inert from here on.
+    Hooks::HdrOverlay::Shutdown();
     if (m_imeTeardownDone.load())
     {
         // IME worker confirmed finished — its teardown (which releases
@@ -477,6 +481,10 @@ void ImeApp::OnD3DInit()
     // Forced re-derive: a re-init (device reset) leaves the cached view
     // belonging to the dead device even when the swapchain pointer matches.
     EnsureSwapChainBackBufferRtv(pSwapChain, /*force=*/true);
+    // HDR output (Community Shaders) turns this back buffer into a PQ-encoded
+    // HDR10 surface: the overlay's colors have to be encoded to match it. The
+    // swap chain is where the color space that reports it is read from.
+    Hooks::HdrOverlay::SetSwapChain(pSwapChain);
     // IDXGISwapChain::Present = vtable slot 8 (IUnknown 3 + IDXGIObject 2 +
     // GetPrivateData/GetParent/GetDevice 3).
     if (g_swapChainPresentHook == nullptr)
@@ -530,6 +538,7 @@ void ImeApp::Start(const RE::BSGraphics::RendererData &renderData)
     auto *context = reinterpret_cast<ID3D11DeviceContext *>(renderData.context);
 
     ImGuiEx::Initialize(m_hWnd, device, context);
+    Hooks::HdrOverlay::Initialize(device, context);
     // Copy: the settings keep the user's list untouched; the CJK supplementary
     // fonts are a render-time concern, not part of the persisted config.
     auto userFontList = m_settings.resources.fontPathList;
@@ -724,6 +733,10 @@ void ImeApp::Draw()
     g_lastUiFrameMs = GetTickCount64();
 
     ImGuiEx::NewFrame();
+    // Encode this frame's overlay colors for whatever target is bound right
+    // now: an HDR10 back buffer needs PQ, the engine's own UI buffer does not
+    // (see HdrOverlay).
+    Hooks::HdrOverlay::PrepareFrame();
 
     m_imeWnd.Draw(m_settings);
 
@@ -749,6 +762,7 @@ void ImeApp::PresentHook(std::uint32_t a_unk)
         // instead of every present. When PostDisplay resumes, Draw() refreshes
         // the token and the hook stands down on its own.
         ImGuiEx::NewFrame();
+        Hooks::HdrOverlay::PrepareFrame();
         g_instance->m_imeWnd.Draw(g_instance->m_settings);
         ImGuiEx::EndFrame();
         ImGuiEx::Render();
@@ -811,6 +825,7 @@ auto ImeApp::SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, s
             }
         }
         ImGuiEx::NewFrame();
+        Hooks::HdrOverlay::PrepareFrame();
         g_instance->m_imeWnd.Draw(g_instance->m_settings);
         ImGuiEx::EndFrame();
         ImGuiEx::Render();
