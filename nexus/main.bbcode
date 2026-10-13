@@ -1,6 +1,6 @@
 [center][size=5][color=#00B176][b]SimpleIME-Unofficial-Update[/b][/color][/size]
 [size=3]Native IME support for Skyrim SE/AE · 为上古卷轴5 SE/AE 提供完整输入法支持[/size]
-[size=2]v3.1.5-beta · based on upstream v2.2.1 by cyfewlp · GPL-3.0-or-later[/size][/center]
+[size=2]v3.1.6-beta · based on upstream v2.2.1 by cyfewlp · GPL-3.0-or-later[/size][/center]
 
 [line]
 
@@ -54,6 +54,10 @@ SimpleIME 是一个 SKSE 插件，为上古卷轴5 SE/AE 解锁完整的输入�
 
 [size=3][b]What this fork fixes · 本续更版修复[/b][/size]
 [list]
+[*][color=#CDC2DB]Candidate window no longer blown out under HDR[/color] — with Community Shaders' "HDR Display" feature active the swap chain back buffer holds PQ-encoded HDR10 values; the overlay is now encoded the same way Community Shaders encodes the game's own UI (paper white read from its settings), and only for HDR surfaces.
+[color=#CDC2DB]HDR 显示下候选栏不再过曝[/color] —— 社区着色器开启 "HDR Display" 时交换链背缓冲持有 PQ 编码的 HDR10 值；浮层现在按社区着色器处理游戏自身 UI 的同一条链路编码（纸白取其设置），且只对 HDR 表面生效。
+[*][color=#CDC2DB]English, symbols and space type in SKSE Menu Framework fields[/color] — printable ASCII was dropped by both delivery paths at once (the engine's echo of the key was zeroed as IME input, and the injection path rejected ASCII by design); the two now share one decision so each character travels exactly one path.
+[color=#CDC2DB]SKSE Menu Framework 界面可正常输入英文、符号与空格[/color] —— 可打印 ASCII 此前被两条投递路径同时丢弃（引擎回声被当作输入法输入清零、注入通道又按设计拒收 ASCII）；现在两侧共用同一判定，每个字符只走一条路。
 [*][color=#CDC2DB]Stuck IME around mod menus[/color] — the root cause (a leaked text-entry counter that kept the IME, language bar and paused tool window on after leaving a mod window) is healed by event repair plus an every-frame poll; every disable path now also hides the language bar and returns Win32 focus to the game.
 [color=#CDC2DB]模组菜单导致的输入法卡死[/color] —— 根因是文本输入计数泄漏（离开模组窗口后输入法、语言栏与暂停的工具窗口常开），现通过事件修复 + 逐帧轮询治愈；所有停用路径都会收起语言栏并把 Win32 焦点还给游戏。
 [*][color=#CDC2DB]SKSE Menu Framework fields no longer close on the next click[/color] — the framework's ImGui only tracks the mouse while the game window holds the Win32 focus, and enabling the IME must move that focus; a click then read as "outside the field" and tore down the session that had just opened (the "candidate bar flashes off / needs several clicks" reports). The click frame now gets the cursor position written into the framework's own input state.
