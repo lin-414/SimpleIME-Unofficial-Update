@@ -97,3 +97,36 @@ TEST(SkseMenuFrameworkAsciiFilter, active_tip_with_open_keyboard_neutralizes_des
     // No TIP (English keyboard profile): unchanged behaviour.
     EXPECT_FALSE(ShouldNeutralizeAscii(true, false, false, true, false, false, false));
 }
+
+TEST(SkseMenuFrameworkInjection, printable_ascii_rides_the_suppressed_echo_only)
+{
+    // The IME owns the keyboard and its echoes are zeroed: the character has to
+    // come from the injection, or it is lost. Microsoft Pinyin keeps the keyboard
+    // open in EN mode, so English typing, the space and - / + all take this path.
+    EXPECT_TRUE(ShouldInjectCodepoint(0x41, true)); // 'A'
+    EXPECT_TRUE(ShouldInjectCodepoint(0x20, true)); // space
+    EXPECT_TRUE(ShouldInjectCodepoint(0x2D, true)); // '-'
+    EXPECT_TRUE(ShouldInjectCodepoint(0x2B, true)); // '+'
+    EXPECT_TRUE(ShouldInjectCodepoint(0x7E, true)); // '~'
+    // The echo flows (IME disabled, keyboard closed): the engine's own CharEvent
+    // delivers it, so injecting on top would type the character twice.
+    EXPECT_FALSE(ShouldInjectCodepoint(0x41, false));
+    EXPECT_FALSE(ShouldInjectCodepoint(0x20, false));
+    // Control codes are not printable ASCII and the engine delivers them raw.
+    EXPECT_FALSE(ShouldInjectCodepoint(0x08, true)); // backspace
+    EXPECT_FALSE(ShouldInjectCodepoint(0x0D, true)); // enter
+    EXPECT_FALSE(ShouldInjectCodepoint(0x7F, true)); // DEL
+}
+
+TEST(SkseMenuFrameworkInjection, non_ascii_needs_a_valid_scalar)
+{
+    // Committed composition text only ever comes from us — the echo flag does
+    // not apply to it.
+    EXPECT_TRUE(ShouldInjectCodepoint(0x4E2D, false));   // 中
+    EXPECT_TRUE(ShouldInjectCodepoint(0xFF0C, true));    // ，full-width comma
+    EXPECT_TRUE(ShouldInjectCodepoint(0x1F600, false));  // 😀
+    EXPECT_FALSE(ShouldInjectCodepoint(0xD800, true));   // high surrogate
+    EXPECT_FALSE(ShouldInjectCodepoint(0xDFFF, false));  // low surrogate
+    EXPECT_FALSE(ShouldInjectCodepoint(0x110000, true)); // out of range
+    EXPECT_FALSE(ShouldInjectCodepoint(0x0000, true));
+}

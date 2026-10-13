@@ -1046,11 +1046,35 @@ void UpdateTextInputState()
 }
 
 // ---- committed text injection (framework callback thread) --------------
+/// The neutralizer's decision for the current frame, read from the live state.
+/// One source of truth for both sides of the delivery contract: the raw-ASCII
+/// filter below (which drops the engine's echoes of IME-owned keys) and the
+/// injection gate (which has to carry exactly the characters that filter drops).
+auto RawAsciiEchoSuppressed() -> bool
+{
+    const auto &state = Ime::Core::State::GetInstance();
+    const bool  freshEnableTransition =
+        s_imeDisabledAtBegin.load(std::memory_order_acquire) &&
+        (GetTickCount64() - s_sessionBeginMs.load(std::memory_order_acquire)) < TRANSITION_GRACE_MS;
+    const bool tipActive = state.Has(Ime::Core::State::INPUT_PROCESSOR_ACTIVATED);
+    return SkseMenuFrameworkBridgeLogic::ShouldNeutralizeAscii(
+        /*sessionActive=*/true,
+        state.IsImeInputting(),
+        state.ImeDisabled(),
+        state.IsKeyboardOpen(),
+        state.GetConversionMode().IsNative(),
+        freshEnableTransition,
+        tipActive
+    );
+}
+
 void InjectCodepoint(unsigned int codepoint)
 {
-    // Rejects ASCII (the raw CharEvents already deliver English typing) and
-    // surrogates (recombined upstream in FlushPending) — see the logic header.
-    if (!SkseMenuFrameworkBridgeLogic::IsValidUnicodeScalar(codepoint))
+    // Printable ASCII only while the engine's echo of that key is suppressed;
+    // non-ASCII needs a valid scalar (see the logic header). The TIP hands its
+    // passed-through characters (English mode, space, - +) to ImeWnd, so this
+    // gate is what makes them reach the field exactly once.
+    if (!SkseMenuFrameworkBridgeLogic::ShouldInjectCodepoint(codepoint, RawAsciiEchoSuppressed()))
     {
         return;
     }
@@ -1516,19 +1540,7 @@ void NeutralizeRawAscii(RE::InputEvent *const *events)
         }
     }
 
-    const auto &state = Ime::Core::State::GetInstance();
-    const bool freshEnableTransition =
-        s_imeDisabledAtBegin.load(std::memory_order_acquire) &&
-        (GetTickCount64() - s_sessionBeginMs.load(std::memory_order_acquire)) < TRANSITION_GRACE_MS;
-    const bool tipActive = state.Has(Ime::Core::State::INPUT_PROCESSOR_ACTIVATED);
-    if (!SkseMenuFrameworkBridgeLogic::ShouldNeutralizeAscii(
-            /*sessionActive=*/true,
-            state.IsImeInputting(),
-            state.ImeDisabled(),
-            state.IsKeyboardOpen(),
-            state.GetConversionMode().IsNative(),
-            freshEnableTransition,
-            tipActive))
+    if (!RawAsciiEchoSuppressed())
     {
         return;
     }

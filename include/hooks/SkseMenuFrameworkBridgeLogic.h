@@ -15,9 +15,10 @@ inline bool IsPrintableAscii(const std::uint32_t codepoint)
     return codepoint >= 0x20U && codepoint <= 0x7EU;
 }
 
-/// Codepoints eligible for ImGui injection. ASCII is deliberately rejected:
-/// in English mode the game's own CharEvents already deliver it (they pass the
-/// raw-input filter), so injecting the committed copy would double-type.
+/// Non-ASCII codepoints eligible for ImGui injection: any Unicode scalar value
+/// (surrogates are recombined upstream in FlushPending). Committed composition
+/// text never reaches the field through the raw events, so it always needs
+/// injecting; printable ASCII goes through ShouldInjectCodepoint instead.
 inline bool IsValidUnicodeScalar(const std::uint32_t codepoint)
 {
     if (codepoint < 0x80U || codepoint > 0x10FFFFU)
@@ -25,6 +26,31 @@ inline bool IsValidUnicodeScalar(const std::uint32_t codepoint)
         return false;
     }
     return !(codepoint >= 0xD800U && codepoint <= 0xDFFFU);
+}
+
+/// Whether one codepoint may be injected into the host's ImGui.
+///
+/// Printable ASCII needs a second signal: the engine reads the physical keyboard
+/// regardless of the Win32 focus, so every printable key also produces a
+/// game-side CharEvent. While the IME owns the keyboard that event is a pure echo
+/// and the neutralizer zeroes it (ShouldNeutralizeAscii) — the character then has
+/// to come from us. Where the echo flows instead (IME disabled, keyboard closed)
+/// the engine's own event IS the delivery, and injecting on top would double-type.
+/// `rawAsciiEchoSuppressed` is that same neutralizer decision, read from the same
+/// live state, so exactly one of the two paths carries each character.
+///
+/// Characters the TIP passed through — English typing while the keyboard stays
+/// open (Microsoft Pinyin does not close it in EN mode), the space, symbols like
+/// - and + — are the ones this exists for: the echo is suppressed and the raw
+/// path therefore delivers nothing, so rejecting them here dropped them twice
+/// (observed 2026-10-13: "cannot type English or symbols into MCM Bridge's field").
+inline bool ShouldInjectCodepoint(const std::uint32_t codepoint, const bool rawAsciiEchoSuppressed)
+{
+    if (IsPrintableAscii(codepoint))
+    {
+        return rawAsciiEchoSuppressed;
+    }
+    return IsValidUnicodeScalar(codepoint);
 }
 
 /// Decide whether one input batch's printable ASCII is IME composition input
