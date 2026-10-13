@@ -1959,3 +1959,32 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
 - 实机：io+248 校验通过 + 会话中点击存活（19:23 日志）已实证；声明宿主/回显/取消清理为
   19:34 后新构建，待实机。
 - 版本 3.1.4-beta → **3.1.5-beta**。
+
+## 第 50 轮：HDR 浮层 PQ 编码 + SKSEMF 直通 ASCII 投递 → 3.1.6-beta（2026-10-13）
+
+- **HDR 浮层 PQ 编码**（新模块 `include/hooks/HdrOverlay.h` + `src/hooks/HdrOverlay.cpp` +
+  `include/hooks/HdrOverlayLogic.h`）：社区着色器（CS 1.8 / HDR 1.3）开启 "HDR Display" 后把交换链
+  升级为 `R10G10B10A2 + FLIP_DISCARD` 并 `SetColorSpace1(G2084_NONE_P2020)`，其合成器在线性空间合成
+  scene+UI 后以 PQ + BT.2020 编码写回背缓冲；候选窗走 present 钩子直接画进这块背缓冲（为压过宿主菜单），
+  写 sRGB 值被按 PQ 解码 → 全屏过曝（白=10000 nits、0.95≈6228 nits）。修复=自绘 PS（签名同
+  imgui_impl_dx11）复刻 CS 的 sRGB→线性→BT709→BT2020→PQ(纸白)，参数 `#define` 烘入（无常量缓冲）；
+  以 `GetBackgroundDrawList()->AddCallback` 作为帧首命令绑定（后端渲染结束自动还原引擎 PS）。
+  探测不依赖 DXGI 颜色空间查询（交换链没有 GetColorSpace，CS 的 FG 代理只实现 IDXGISwapChain v1）：
+  ①当前绑定 RTV 格式（24=R10G10B10A2 / 10=FP16 才算 HDR 面）②CS `SettingsUser.json` 的 HDR 段
+  （2s 节流 + 写时间戳 + 拒绝半截文件）③仅 autoDetected=false 时 `IDXGIOutput6` 颜色空间兜底。
+  只对 HDR 面生效：8 位目标与引擎 UI 缓冲保持 sRGB（CS 自己按 sRGB 解码合成）。
+  **用户实机验证通过（"颜色没问题了"）**；日志锚点 `[HDR] Community Shaders settings: HDR enabled (…)`
+  与 `[HDR] overlay color transform active: HDR10/PQ, paperWhite=203 nits, uiBrightness=1`。
+- **SKSEMF 直通 ASCII 投递**（`ShouldInjectCodepoint` 契约）：症状=SKSEMF 界面（MCM Bridge 改名框、
+  微软输入法）里英文、`-`、`+`、空格完全输不进。根因=双路径死区：引擎读物理键盘（与 Win32 焦点无关）
+  产生的 CharEvent 回声在"输入法掌键盘"时被中和清零，而注入通道按设计拒收 ASCII——旧理由"英文模式由原始
+  CharEvent 送达"对微软输入法不成立（Shift 切英文不关 KEYBOARD_OPEN 隔间，激活标志在；空格/`-`/`+` 是
+  输入法直通字符）。修复=`ShouldInjectCodepoint(cp, rawAsciiEchoSuppressed)` + `RawAsciiEchoSuppressed()`
+  （与中和器共用同一实时 State 判定）——可打印 ASCII 仅在回声被抑制时注入，回声畅通时不注入以免双打，
+  非 ASCII（中文提交）路径不变。单测 +2。**用户实机验证通过**（日志证据：转发 `+`×9、`_`×9、`#`、`@`、
+  `` ` `` 与英文单字；中文提交 4 次、候选窗 4 次均正常）。
+- **已知未修**：声明宿主通道（自绘 ImGui 模组界面）上直通 ASCII 会双打（引擎原始事件 + 提交队列各一份）；
+  中文输入不受影响。
+- 构建 EXIT 0（RelWithDebInfo，内嵌 3.1.6-beta，POST_BUILD 同步 MO2）；测试 **63/63**（+2 注入契约、
+  +11 HDR 逻辑——含用 D3DCompile 真实编译 PQ 着色器，正是它抓出 `linear` 是 HLSL 关键字）；Node 桥自测全绿。
+- 版本 3.1.5-beta → **3.1.6-beta**。

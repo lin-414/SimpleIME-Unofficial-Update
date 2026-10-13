@@ -9,6 +9,28 @@
 - "✅"= 已在真实游戏环境验证;"🧪"= 仅离线测试(单测/构建)通过;"⬜"= 待验证。
 - 用户确认一节只有用户本人回复后才能勾选。
 
+## v3.1.6-beta + HDR 浮层 PQ 编码 + SKSEMF 直通 ASCII 投递（2026-10-13，CI 构建）
+
+**改动**：HDR 浮层 PQ 着色器管线（`HdrOverlay` 新模块 + `ImeApp` 接线）、SKSEMF 直通 ASCII 单路径契约（`ShouldInjectCodepoint`）。
+**产物**：GitHub Release `v3.1.6-beta`（CI 构建，内嵌版本 3.1.6-beta；7z 含 GPL LICENSE 与 README）。
+
+### 离线（已通过 🧪）
+
+- ✅ 主 DLL 构建 EXIT 0（内嵌 3.1.6-beta；POST_BUILD 已同步 MO2，构建树与 MO2 的 DLL md5 一致 `ece02445…`）。
+- ✅ SimpleIMETest **63/63**（新增 SKSEMF 注入契约 2 例、HDR 逻辑 11 例——含用 D3DCompile 真实编译 PQ 着色器）。
+- ✅ Node 直测内嵌桥脚本（`test/MeridianBridge.cjs`）全绿。
+
+### 游戏内（两项均用户确认 ✅；发行版复核待做 ⬜）
+
+- ✅ HDR 浮层颜色：社区着色器 "HDR Display" 开启时候选栏不再过曝，颜色与引擎 UI 一致（用户确认"颜色没问题了"；日志锚点 `[HDR] overlay color transform active: HDR10/PQ, paperWhite=203 nits, uiBrightness=1`）。
+- ✅ SKSEMF 直通 ASCII：MCM Bridge 改名框可正常输入英文、`-`、`+`、空格与符号（日志实证：转发 `+`×9、`_`×9、`#`、`@`、`` ` `` 与英文单字；中文提交与候选窗正常）。
+- ⬜ 发行版（CI Release 配置 DLL）最终复核：以上两项任选重跑。
+- ⬜ 回归：HDR 关闭 / 无社区着色器环境下 8 位背缓冲走原路径（sRGB 直通）无变化。
+
+### 已知问题（未修）
+
+- ⬜ 声明宿主通道（自绘 ImGui 模组界面）上直通 ASCII 会双打：引擎原始事件与提交队列各送一份；中文输入不受影响。
+
 ## v3.1.5-beta + SKSEMF 会话死亡收尾 + 原生 ImGui 宿主输入（2026-10-12，CI 构建）
 
 **改动**：present 路径 backbuffer 钉定（`6e7079f`）、SKSEMF 宿主鼠标位置直写 + 会话遥测（`4506718`，io+248 运行时校验）、声明宿主通道路由 + 提交键回显/取消清理（`acda9ea`）、逐界面投递路由（`2f34a38`）、设置窗暂停计数器化（`8332be4`）。
