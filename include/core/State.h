@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <type_traits>
 
@@ -191,6 +192,30 @@ public:
     /// session. False only for the untouched startup default.
     [[nodiscard]] constexpr auto HasObservedConversionMode() const -> bool { return m_conversionModeObserved; }
 
+    /// The conversion mode a NEW text-entry session restores, in raw
+    /// TF_CONVERSIONMODE bits ("the mode text was last confirmed in").
+    ///
+    /// Deliberately separate from m_conversionMode: that one is the live display
+    /// value, and the disable path flattens it to ALPHANUMERIC on purpose (the
+    /// TIP must stop composing while the game owns the keyboard). Sampling the
+    /// live mode at disable time — after the TSF focus teardown had already
+    /// reset it — was what brought a Japanese IME back in ひらがな on every
+    /// console open; this value instead tracks the mode the user was actually
+    /// typing in, so the next session can put it back. Seeded at startup from
+    /// the persisted input.last_native_conversion (see ImeApp's ctor).
+    constexpr auto RememberConversionMode(ConversionMode::UnderlyingType flags) -> void
+    {
+        m_rememberedConversionMode    = flags;
+        m_hasRememberedConversionMode = true;
+    }
+
+    [[nodiscard]] constexpr auto HasRememberedConversionMode() const -> bool { return m_hasRememberedConversionMode; }
+
+    [[nodiscard]] constexpr auto GetRememberedConversionMode() const -> ConversionMode::UnderlyingType
+    {
+        return m_rememberedConversionMode;
+    }
+
     [[nodiscard]] constexpr auto TsfFocus() const -> bool { return Has(TEXT_SERVICE_FOCUS); }
 
     [[nodiscard]] auto ImeDisabled() const -> bool { return Has(IME_DISABLED); }
@@ -214,5 +239,11 @@ private:
     ConversionMode              m_conversionMode;
     /// Same single-writer discipline as m_conversionMode (see the mutators above).
     bool                        m_conversionModeObserved{false};
+    /// See RememberConversionMode: the mode a new session restores. Written by
+    /// the IME thread (TextService) and seeded once from the game thread before
+    /// the IME thread exists (ImeApp's ctor) — same no-tear tolerance as
+    /// m_conversionMode.
+    ConversionMode::UnderlyingType m_rememberedConversionMode{static_cast<ConversionMode::UnderlyingType>(ConversionMode::Flags::ALPHANUMERIC)};
+    bool                           m_hasRememberedConversionMode{false};
 };
 } // namespace Ime::Core

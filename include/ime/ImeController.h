@@ -113,10 +113,17 @@ private:
 
     void AddTask(TaskQueue::Task &&task) const;
 
+public:
     /// Queue `body` on the IME thread with the standard readiness re-check:
     /// Shutdown may null the members between queueing (any thread) and
     /// execution (IME thread). Public wrappers keep their own outer IsReady()
     /// gate — failing fast without a queue round-trip.
+    ///
+    /// Public for components that own their own IME-thread-affine objects: the
+    /// TSF text service defers work with it (re-activating the input profile
+    /// out of a compartment notification must not re-enter TSF from inside the
+    /// notification). AddTask above stays private — it is the raw enqueue,
+    /// without the readiness check.
     template <typename Body>
     void PostToImeThread(Body &&body) const
     {

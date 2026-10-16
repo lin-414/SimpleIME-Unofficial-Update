@@ -2,12 +2,31 @@
 // Created by jamie on 2025/2/22.
 //
 #include "core/State.h"
+#include "ime/ImeController.h"
 #include "log.h"
 #include "tsf/TextStore.h"
 #include "tsf/TsfSupport.h"
+#include "utils/ConversionMemoryLogic.h"
 
 #include <format>
 #include <string>
+
+namespace
+{
+/// How long after a session start a conversion-mode write coming from the IME
+/// itself still counts as a re-initialisation (and is corrected once) rather than
+/// a deliberate user choice. See TextService::MaybeReassertRememberedMode.
+///
+/// Deliberately short. The write this defends against is the TIP re-initialising
+/// its mode on the document-focus change, which lands within milliseconds of our
+/// own session-start write; a deliberate toggle needs the user to see the text
+/// entry and press Shift, i.e. hundreds of milliseconds at the very earliest. A
+/// window wide enough to swallow the latter (the value here used to be 1500ms —
+/// never exercised, because the mechanism was disarmed by our own echo before it
+/// could fire) would revert the user's own Shift right after a console open,
+/// which is the exact symptom this project spent three rounds removing.
+constexpr ULONG MODE_REASSERT_WINDOW_MS = 250;
+} // namespace
 
 namespace Tsf
 {
@@ -29,7 +48,7 @@ auto TextService::Initialize(ITfThreadMgr *threadMgr, TfClientId clientId) -> HR
     m_globalOpenCloseCompartment       = new TsfCompartment();
 
     hr = m_conversionModeCompartment->Initialize(
-        m_threadMgr, clientId, GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION, [](const GUID * /*guid*/, const ULONG ulong) {
+        m_threadMgr, clientId, GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION, [this](const GUID * /*guid*/, const ULONG ulong) {
             logger::debug("Thread conversion mode changed: {:#x}", ulong);
             UpdateConversionMode(ulong);
             return S_OK;
@@ -62,7 +81,7 @@ auto TextService::Initialize(ITfThreadMgr *threadMgr, TfClientId clientId) -> HR
                 m_textStore->GetContext(),
                 clientId,
                 GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
-                [](const GUID * /*guid*/, const ULONG ulong) {
+                [this](const GUID * /*guid*/, const ULONG ulong) {
                     // Fires only on real mode changes (Shift toggle etc.) — info
                     // level so an in-game test round can confirm the live sync.
                     logger::info("Context conversion mode changed: {:#x}", ulong);
@@ -90,7 +109,7 @@ auto TextService::Initialize(ITfThreadMgr *threadMgr, TfClientId clientId) -> HR
                 m_textStore->GetContext(),
                 clientId,
                 GUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
-                [](const GUID * /*guid*/, const ULONG ulong) {
+                [this](const GUID * /*guid*/, const ULONG ulong) {
                     logger::info("Context keyboard open/close changed: {}", ulong);
                     auto &state = State::GetInstance();
                     state.Set(State::KEYBOARD_OPEN, ulong != 0);
@@ -102,6 +121,20 @@ auto TextService::Initialize(ITfThreadMgr *threadMgr, TfClientId clientId) -> HR
                     {
                         state.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
                     }
+                    // This IS the IME publishing its 中/英 toggle (the shape some
+                    // Chinese IMEs use instead of conversion bits) and it just
+                    // drove the display above, so it has to count as a publish.
+                    // Without the bump the deferred bare-Shift prediction sees an
+                    // unchanged revision, concludes the IME said nothing and flips
+                    // the display away from the truth it just wrote — the same
+                    // race ConversionModeRevision exists to stop on the
+                    // conversion-mode channel. The THREAD-level sink above stays
+                    // out of this on purpose: it only tracks KEYBOARD_OPEN and
+                    // leaves the display to the prediction (in-game 2026-10-16 the
+                    // thread channel fired 11 times where the context one never
+                    // did; bumping there would mute the prediction for exactly the
+                    // IMEs that need it).
+                    ++m_conversionModeRevision;
                     return S_OK;
                 }
             );
@@ -147,7 +180,7 @@ auto TextService::Initialize(ITfThreadMgr *threadMgr, TfClientId clientId) -> HR
     return hr;
 }
 
-void TextService::UpdateConversionMode() const
+void TextService::UpdateConversionMode()
 {
     ULONG conversionMode = 0;
     // Prefer the focused context's live value (what the active TIP actually
@@ -168,7 +201,194 @@ void TextService::UpdateConversionMode() const
 
 void TextService::UpdateConversionMode(const ULONG conversionMode)
 {
+    // Every observation of a published mode counts, our own mirror echo
+    // included: the counter answers "did anything publish during this tap",
+    // and the echo of the IME's own value is that same publication.
+    // See ITextService::ConversionModeRevision.
+    ++m_conversionModeRevision;
     State::GetInstance().SetConversionMode(conversionMode);
+    // An observation can also be the IME overwriting its own mode right after a
+    // session start — see MaybeReassertRememberedMode. When it corrected one, the
+    // mirror must NOT run for this observation: it would write the value the
+    // correction just rejected back into the compartments, in the same call
+    // stack, undoing it (and posting a profile re-activation on top).
+    if (!MaybeReassertRememberedMode(conversionMode))
+    {
+        MirrorConversionMode(conversionMode);
+    }
+}
+
+/// Keep the other two channels on the value the IME just published.
+///
+/// Microsoft Pinyin reports its 中/英 toggle ONLY on the thread-level compartment
+/// (in-game log 2026-10-16: `Thread conversion mode changed: 0x401` on Shift,
+/// with neither a context nor a global write), and that has two consequences:
+///  - the context compartment keeps the value WE last wrote, and our read paths
+///    prefer the context one — a stale value there feeds the wrong mode into
+///    State::RememberConversionMode (the remembered mode is stamped from it);
+///  - the taskbar / the game thread's TIP instance follow the cross-process
+///    global compartment, which we only write on enable/disable — hence the
+///    reported "the 中/英 indicator only catches up after the next keystroke".
+/// Writing both back costs nothing (the IME is already in that mode) and makes
+/// all three channels agree immediately. The last-written value is remembered so
+/// the sinks' echo of our own write does not bounce back as another write.
+void TextService::MirrorConversionMode(const ULONG conversionMode)
+{
+    if (State::GetInstance().ImeDisabled() || conversionMode == m_lastMirroredMode)
+    {
+        return;
+    }
+    m_lastMirroredMode = conversionMode;
+    if (m_contextConversionModeCompartment != nullptr)
+    {
+        (void)m_contextConversionModeCompartment->SetValue(conversionMode);
+    }
+    if (m_globalConversionModeCompartment != nullptr)
+    {
+        (void)m_globalConversionModeCompartment->SetValue(conversionMode);
+    }
+    logger::info("Mirrored conversion mode {:#x} to the context + global compartments", conversionMode);
+    ReactivateProfileKeepingMode();
+}
+
+/// Ask the system to re-evaluate the input state, so the taskbar's 中/英 chip
+/// repaints with the mode we just published.
+///
+/// The chip only repaints on real input events or activation events, and the key
+/// that toggles the mode makes it read the PRE-toggle value (in-game 2026-10-16:
+/// the first Shift does not flip it, the second one does). A window message does
+/// not trigger a repaint (a WM_INPUTLANGCHANGEREQUEST poke was verified to have
+/// no effect) and injecting a key is off the table (it would reach the game's
+/// DirectInput). What does update the chip instantly is switching input methods —
+/// i.e. a TSF profile activation — so re-activate the profile that is already
+/// active: a no-op switch that still broadcasts the activation event.
+///
+/// Deferred one hop through the IME-thread task queue: this runs from inside a
+/// compartment notification (the sink fires within SetValue), and re-entering
+/// TSF with an activation from there is asking for trouble.
+void TextService::ReactivateProfileKeepingMode()
+{
+    if (const auto *controller = Ime::ImeController::GetInstance(); controller != nullptr)
+    {
+        controller->PostToImeThread([this] -> void { DoReactivateProfileKeepingMode(); });
+    }
+}
+
+void TextService::DoReactivateProfileKeepingMode()
+{
+    const ULONG mode = m_lastMirroredMode;
+    if (m_threadMgr == nullptr)
+    {
+        return;
+    }
+    CComQIPtr<ITfInputProcessorProfileMgr> profileMgr;
+    if (profileMgr.CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER) != S_OK || profileMgr == nullptr)
+    {
+        logger::debug("ReactivateProfileKeepingMode: no input-processor profile manager");
+        return;
+    }
+    TF_INPUTPROCESSORPROFILE profile{};
+    if (FAILED(profileMgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &profile)))
+    {
+        return;
+    }
+    const HRESULT hr = profileMgr->ActivateProfile(
+        profile.dwProfileType,
+        profile.langid,
+        profile.clsid,
+        profile.guidProfile,
+        profile.hkl,
+        TF_IPPMF_FORPROCESS | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE
+    );
+    logger::info("Re-activated the active input profile to refresh the system language bar (hr={:#x})", static_cast<std::uint32_t>(hr));
+    // An activation may put the IME back into its default mode: restore the one
+    // the user was in (the value the mirror just published).
+    SetConversionMode(mode);
+    if (m_globalConversionModeCompartment != nullptr)
+    {
+        (void)m_globalConversionModeCompartment->SetValue(mode);
+    }
+}
+
+/// The remembered mode is applied when a text-entry session starts (see
+/// SetSessionImeEnabled). Some TIPs re-initialise their mode on the new document
+/// focus and write their own default into the compartment right afterwards —
+/// the reported shape: every console open came back in ひらがな. Put the
+/// remembered mode back once. Bounded to a short window after the session start
+/// and to a single correction, so a deliberate mode change by the user is never
+/// fought for long. Only an observation that DIFFERS from the restore target
+/// consumes the attempt (see the body): the echo of our own session-start write
+/// arrives first and must not disarm the mechanism before the IME's own word.
+/// Returns true when it corrected the mode, in which case the caller must not
+/// mirror that same observation (see UpdateConversionMode).
+auto TextService::MaybeReassertRememberedMode(const ULONG observed) -> bool
+{
+    if (!m_reassertArmed || State::GetInstance().ImeDisabled())
+    {
+        return false;
+    }
+    if (GetTickCount64() > m_reassertDeadlineMs)
+    {
+        m_reassertArmed = false;
+        return false;
+    }
+    if (observed == m_restoreTargetMode)
+    {
+        // Nothing to defend — our own echo, or the user picking the remembered
+        // mode again. Deliberately NOT a disarm: the first observation after
+        // the session-start write is always the echo of that write (the sinks
+        // fire synchronously inside SetValue), so disarming here consumed the
+        // one attempt before the IME could ever write its own default — which
+        // is how this stayed dead in-game (a full session logged no "right
+        // after the session start" line at all). The deadline above ends the
+        // window instead.
+        return false;
+    }
+    m_reassertArmed = false; // one correction per session start
+    logger::info(
+        "The IME set its conversion mode to {:#x} right after the session start; re-applying the remembered {:#x}",
+        observed,
+        m_restoreTargetMode
+    );
+    SetConversionMode(m_restoreTargetMode);
+    if (m_globalConversionModeCompartment != nullptr)
+    {
+        // Keep the cross-process channel (the game thread's TIP instance) in step.
+        (void)m_globalConversionModeCompartment->SetValue(m_restoreTargetMode);
+    }
+    State::GetInstance().SetConversionMode(m_restoreTargetMode);
+    return true;
+}
+
+/// See ITextService::StampRememberedConversionModeFromLive. The focused context's
+/// compartment is the live value — but only when the IME actually published it.
+/// A value equal to the one WE last published is our own session-start push (or
+/// its mirror) read back, and for an IME that publishes nothing at all (WeChat)
+/// the compartment never holds anything else: believing it would freeze the
+/// memory at the value we guessed, which is the exact opposite of what this
+/// stamp is for. In that case State — fed by behavioral inference (a composition
+/// start means NATIVE, a raw letter means alphanumeric) — is the only source
+/// that follows the user's typing.
+void TextService::StampRememberedConversionModeFromLive() const
+{
+    ULONG      live          = 0;
+    const auto readPublished = [this](const CComPtr<TsfCompartment> &compartment, ULONG &out) -> bool {
+        return compartment != nullptr && SUCCEEDED(compartment->GetValue(out)) &&
+               Ime::ConversionMemory::IsImePublishedValue(out, m_lastMirroredMode);
+    };
+    if (readPublished(m_contextConversionModeCompartment, live))
+    {
+        // ok
+    }
+    else if (readPublished(m_conversionModeCompartment, live))
+    {
+        // ok
+    }
+    else
+    {
+        live = static_cast<ULONG>(State::GetInstance().GetConversionMode().RawValue());
+    }
+    State::GetInstance().RememberConversionMode(live);
 }
 
 auto TextService::OnFocus(bool focus) -> bool
@@ -239,11 +459,31 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
         // Put the mode back verbatim. Recomposing "NATIVE" from the state we just
         // flattened would leave a Japanese IME in かな入力 (NATIVE without its
         // ROMAN bit) and drop FULLSHAPE from a Chinese one.
-        conversionMode =
-            m_hasSavedSessionConversionMode
-                ? m_savedSessionConversionMode
-                : static_cast<ULONG>(State::GetInstance().GetConversionMode().RawValue() | static_cast<ULONG>(State::ConversionMode::Flags::NATIVE));
+        //
+        // Source order: the stamped "mode text was last confirmed in" (updated at
+        // every commit while the IME is enabled, and seeded at startup from the
+        // persisted setting), then the per-cycle capture (kept for an IME that
+        // publishes nothing and where no confirmation was stamped yet), then the
+        // state-with-NATIVE guess for a genuinely unobserved first entry.
+        auto &state = State::GetInstance();
+        if (state.HasRememberedConversionMode())
+        {
+            conversionMode = static_cast<ULONG>(state.GetRememberedConversionMode());
+        }
+        else if (m_hasSavedSessionConversionMode)
+        {
+            conversionMode = m_savedSessionConversionMode;
+        }
+        else
+        {
+            conversionMode = static_cast<ULONG>(state.GetConversionMode().RawValue() | static_cast<ULONG>(State::ConversionMode::Flags::NATIVE));
+        }
         m_hasSavedSessionConversionMode = false;
+        // Session start: freeze the target and arm the one-shot re-assert for a
+        // TIP that overwrites its own mode right after this write.
+        m_restoreTargetMode  = conversionMode;
+        m_reassertDeadlineMs = static_cast<ULONG>(GetTickCount64()) + MODE_REASSERT_WINDOW_MS;
+        m_reassertArmed      = true;
     }
     else if (!m_hasSavedSessionConversionMode)
     {
@@ -267,8 +507,25 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
         }
         m_hasSavedSessionConversionMode = true;
     }
+    if (!enabled)
+    {
+        // The flattening below is our own write, not the IME's: never let the
+        // session-start re-assert fight it (a fast open/close without typing
+        // would otherwise put the mode straight back).
+        m_reassertArmed = false;
+    }
 
     const ULONG openClose = enabled ? 1U : 0U;
+
+    // Must be set BEFORE the writes below: the sinks fire synchronously from
+    // inside SetValue, so a guard assigned after them still holds the previous
+    // value when the echo of this very write arrives and lets it through
+    // (measured in-game 2026-10-16: `Mirrored conversion mode 0x1` logged in the
+    // same millisecond, immediately before this function's own "Published the
+    // IME on state" line). That echo re-wrote all three channels and posted a
+    // profile re-activation at EVERY session start — the exact hammer the
+    // disable path avoids, and one that could land after a disable.
+    m_lastMirroredMode = conversionMode;
 
     const HRESULT openCloseHr      = m_globalOpenCloseCompartment->SetValue(openClose);
     const HRESULT conversionModeHr = m_globalConversionModeCompartment->SetValue(conversionMode);

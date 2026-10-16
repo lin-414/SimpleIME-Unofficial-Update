@@ -9,6 +9,7 @@
 
 #include <InputScope.h>
 #include "atlcomcli_shim.h"
+#include <atomic>
 #include <olectl.h>
 #include <string>
 
@@ -605,7 +606,84 @@ auto TextStore::InsertTextAtSelection(
     pChange->acpOldEnd = acpOldEnd;
     pChange->acpNewEnd = acpNewEnd;
     m_fLayoutChanged   = true;
+
+    // Direct (composition-less) insert: some TIPs deliver typed characters by
+    // writing straight into the document instead of letting them pass through
+    // as WM_CHAR — Google 日本語入力's 半角英数 mode is the reported one. The
+    // composition-end callback is the only exit toward the game, so without
+    // this the text stayed in the buffer and the user could not type at all in
+    // that mode while the same IME's Japanese composition worked fine.
+    if (!m_fCompositionActive)
+    {
+        DeliverDirectInsert(textBuffer, textBufferSize);
+    }
     return S_OK;
+}
+
+void TextStore::DeliverDirectInsert(const WCHAR *text, ULONG count)
+{
+    // Runs inside the TIP's edit session (RequestLock holds the service write
+    // lock), i.e. the same context OnEndComposition commits from when it fires
+    // within a lock grant — SendUiString only queues/posts game messages, so
+    // calling it here is safe by the same precedent.
+    if (text == nullptr || count == 0)
+    {
+        return;
+    }
+    const std::wstring inserted(text, count);
+    // Same focus guard as the composition commit: when an OS-level window
+    // switch is mid-flight, pushing text into the game is wrong (no field is
+    // there to receive it) — drop the characters but still clear the buffer.
+    const bool windowFocused = GetFocus() == m_hWnd;
+    if (m_OnEndCompositionCallback == nullptr || !windowFocused)
+    {
+        logger::debug(
+            "Direct insert of {} unit(s) dropped (callback={}, window focused {})",
+            inserted.size(),
+            m_OnEndCompositionCallback != nullptr,
+            windowFocused
+        );
+    }
+    else
+    {
+        // First delivery of the run at info (this path is the diagnosis for the
+        // "nothing appears" report), the rest at debug: direct input arrives one
+        // character at a time and would otherwise flood a default-level log.
+        // Atomic because a TSF backend can exist per thread.
+        static std::atomic<bool> firstDeliveryLogged{false};
+        if (!firstDeliveryLogged.exchange(true))
+        {
+            logger::info("Direct (composition-less) insert of {} unit(s): delivering to the game", inserted.size());
+        }
+        else
+        {
+            logger::debug("Direct (composition-less) insert of {} unit(s): delivering to the game", inserted.size());
+        }
+        // Text was confirmed in this mode: remember it for the next session
+        // (see ITextService::StampRememberedConversionModeFromLive). This is the
+        // 半角英数 case the report is about — the mode must survive the console
+        // being closed and reopened.
+        m_pTextService->StampRememberedConversionModeFromLive();
+        // Same Caps Lock rule as the WM_CHAR forwarding path (see
+        // Skyrim::NormalizeCapsCaseIfBlockerLoaded): the IME decided this
+        // letter's case against the OS Caps Lock state, while a caps-blocking
+        // mod removes that toggle from the game's own character generation —
+        // and an IME that types through the document never goes through the
+        // WM_CHAR branch, so both paths need it. The composition-commit path
+        // above stays untouched: that text is the IME's explicit output.
+        std::wstring delivered(inserted);
+        for (auto &ch : delivered)
+        {
+            ch = Ime::Skyrim::NormalizeCapsCaseIfBlockerLoaded(ch);
+        }
+        // No erase compensation: the keys never produced engine characters —
+        // the IME consumed them (they are not in the composition either).
+        Ime::Skyrim::SendUiString(delivered);
+    }
+    auto &textEditor = m_pTextService->GetTextEditorWrite();
+    textEditor.Select(0, 0);
+    textEditor.ClearText();
+    m_pTextService->MarkDirty(DirtyFlag::Composition);
 }
 
 auto TextStore::GetFormattedText(LONG /*acpStart*/, LONG /*acpEnd*/, IDataObject **ppDataObject) -> HRESULT
@@ -818,6 +896,7 @@ auto TextStore::OnStartComposition(ITfCompositionView *pComposition, BOOL *pfOk)
     // composition, and this sink never stores the pointer — the old AddRef
     // leaked one reference (and transitively its context/document refs) on
     // every composition session.
+    m_fCompositionActive = true;
     State::GetInstance().Set(State::IN_COMPOSING);
     m_composingLength = 0;
     // 立刻通知宿主界面"开始组字"：等游戏线程下一帧再发布，第一个字母已经作为
@@ -842,6 +921,13 @@ auto TextStore::OnUpdateComposition(ITfCompositionView * /*pComposition*/, ITfRa
 auto TextStore::OnEndComposition(ITfCompositionView * /*pComposition*/) -> HRESULT
 {
     auto  tracer     = FuncTracer("TextStore::{}", __func__);
+    // Cleared before the commit callback runs: from here on the composition is
+    // over, so a document write the TIP still performs is no longer a preedit
+    // update and must not be gated out — InsertTextAtSelection delivers it
+    // through the direct-insert path instead of swallowing it. The standard flow
+    // writes the final text BEFORE ending the composition, so this only matters
+    // for the reverse order.
+    m_fCompositionActive = false;
     // Composition sinks fire OUTSIDE the TSF document lock (unlike the
     // ITextStoreACP methods inside OnLockGranted), so the editor/candidate
     // mutations below must take the service lock themselves — the render
@@ -868,6 +954,9 @@ auto TextStore::OnEndComposition(ITfCompositionView * /*pComposition*/) -> HRESU
             "TSF composition ended, committing {} characters: '{}'",
             committed.size(),
             committed.size() <= 16 ? WCharUtils::ToString(committed) : WCharUtils::ToString(committed.substr(0, 16)));
+        // Text was confirmed in this mode: remember it for the next session
+        // (see ITextService::StampRememberedConversionModeFromLive).
+        m_pTextService->StampRememberedConversionModeFromLive();
         m_OnEndCompositionCallback(committed);
     }
     else

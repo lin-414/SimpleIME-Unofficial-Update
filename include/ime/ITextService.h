@@ -8,6 +8,7 @@
 #include "TextEditor.h"
 #include "core/State.h"
 
+#include <cstdint>
 #include <shared_mutex>
 
 namespace Ime
@@ -155,6 +156,43 @@ public:
      */
     virtual auto RefreshConversionMode() -> void {}
 
+    /**
+     * @brief Monotonic counter, bumped every time the active IME PUBLISHES a
+     * conversion mode through a TSF compartment.
+     *
+     * The bare-Shift 中/英 prediction needs to know whether the IME handled the
+     * tap itself, and the published VALUE cannot answer that: Microsoft Pinyin
+     * writes its toggle from the same WM_KEYUP that arms the prediction, so by
+     * the time the deferred step looks, the value is the post-toggle one either
+     * way. A changed revision is the unambiguous signal — "the IME published
+     * during this tap, so its value is the truth". IMEs that publish nothing at
+     * all (WeChat) leave it untouched, which is exactly when the prediction
+     * must step in.
+     *
+     * The Imm32 backend tracks the mode through IMN_SETCONVERSIONMODE
+     * notifications rather than compartments, so it keeps the default 0 and the
+     * prediction stays unconditional there (the pre-existing behavior).
+     */
+    [[nodiscard]] virtual auto ConversionModeRevision() const -> std::uint64_t { return 0; }
+
+    /**
+     * @brief Remember the live conversion mode as the one a NEW text-entry
+     * session restores ("the mode text was last confirmed in").
+     *
+     * Called at every text confirmation — a composition commit, a
+     * composition-less insert, a forwarded WM_CHAR character — so the memory
+     * follows what the user is actually typing, not what the compartments hold
+     * during the session teardown (sampling there is what brought a Japanese IME
+     * back in ひらがな on every console open). The TSF backend reads the focused
+     * context's compartment, falls back to the thread one and finally to State
+     * (IMEs that publish nothing are tracked by behavioral inference).
+     *
+     * const because it reads the service and writes the State singleton, nothing
+     * else — that is what lets the callers reach it through ImeWnd's
+     * teardown-guarded GetTextService() (which hands out a const pointer).
+     */
+    virtual auto StampRememberedConversionModeFromLive() const -> void {}
+
     virtual void RegisterCallback(OnEndCompositionCallback *callback) { m_OnEndCompositionCallback = callback; }
 
     /// 本次组字期间引擎同时读到的原始字符数（TSF 后端从组字内容取；Imm32 后端不
@@ -197,6 +235,15 @@ public:
     auto CommitCandidate(DWORD index) -> bool override;
 
     auto SetConversionMode(DWORD conversionMode) -> bool override;
+
+    /// See ITextService::StampRememberedConversionModeFromLive. There are no
+    /// compartments on this backend: the live mode is the input context's own
+    /// conversion status. Without this override the inherited no-op left the
+    /// remembered mode at its startup seed forever (nothing else ever writes it
+    /// on this backend), so input.last_native_conversion stopped following the
+    /// user and the per-cycle capture fallback in SetSessionImeEnabled became
+    /// unreachable.
+    auto StampRememberedConversionModeFromLive() const -> void override;
 
     auto SnapshotCompositionAndCandidates(CompositionInfo &outComposition, CandidateUi &outCandidates) -> void override
     {

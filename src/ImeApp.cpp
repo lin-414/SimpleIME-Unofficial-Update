@@ -28,6 +28,7 @@
 #include "ui/Settings.h"
 #include "ui/SettingsManager.h"
 #include "ui/fonts/FontManager.h"
+#include "utils/ConversionMemoryLogic.h"
 #include "utils/Utils.h"
 
 #include <basetsd.h>
@@ -325,6 +326,18 @@ ImeApp::ImeApp()
     {
         conversionState.ClearConversionModeFlag(Core::State::ConversionMode::Flags::NATIVE);
     }
+
+    // Seed the RESTORE side of the same prior: the first text entry of this
+    // session puts the IME back into the mode the user last typed in, instead of
+    // forcing native mode on every console open (the reported "it always comes
+    // back in Japanese"). The persisted flag is exact for the alphanumeric case
+    // — the one it can express without guessing ROMAN.
+    using ConversionFlags = Core::State::ConversionMode::Flags;
+    conversionState.RememberConversionMode(
+        static_cast<Core::State::ConversionMode::UnderlyingType>(
+            m_settings.input.lastNativeConversion ? ConversionFlags::NATIVE : ConversionFlags::ALPHANUMERIC
+        )
+    );
 
     SksePlugin::InitializeLogging({.level = m_settings.logging.level, .flushLevel = m_settings.logging.flushLevel});
 }
@@ -672,16 +685,45 @@ bool ImeApp::RequestImeThreadTeardown()
 
 auto ImeApp::SaveSettings() -> bool
 {
-    // Stamp the last in-game observed 中/英 state into the runtime cache
-    // before the write. Only when this session actually observed a mode: the
-    // boot-time WM_NCACTIVATE churn can trigger a save before any observation,
-    // and stamping the untouched default over the loaded value would erase the
-    // previous session's prior. (After the startup seed the mode counts as
-    // observed and the stamp writes the seeded value back unchanged.)
+    // Persist the prior for the NEXT session's first text entry: the mode text was
+    // last CONFIRMED in (State::GetRememberedConversionMode, stamped at every
+    // commit / direct insert / forwarded letter from the IME's own live value),
+    // NOT the live display value. The display value is no record of what the user
+    // typed — the disable path flattens it to ALPHANUMERIC on every console close
+    // and the bare-Shift prediction flips it for IMEs that publish no toggle — and
+    // persisting it is what handed the next session's first text entry the
+    // opposite mode from the one the user last typed in (the reported "语言栏中英
+    // 与实际状态不一致" right at the first entry). KeepLoaded: the boot-time
+    // WM_NCACTIVATE churn can trigger a save before any text input, and writing
+    // the untouched default over the loaded value would erase the previous
+    // session's prior.
     auto &conversionState = Core::State::GetInstance();
-    if (conversionState.HasObservedConversionMode())
+    switch (ConversionMemory::ChoosePriorSource(
+        conversionState.HasRememberedConversionMode(),
+        conversionState.HasObservedConversionMode()
+    ))
     {
-        m_settings.input.lastNativeConversion = conversionState.GetConversionMode().IsNative();
+        case ConversionMemory::PriorSource::Remembered: {
+            const auto remembered = conversionState.GetRememberedConversionMode();
+            m_settings.input.lastNativeConversion = ConversionMemory::IsNativeMode(remembered);
+            logger::info(
+                "Persisted the last confirmed conversion mode {:#x} (native={}) as input.last_native_conversion; the live display value was {:#x}",
+                remembered,
+                m_settings.input.lastNativeConversion,
+                conversionState.GetConversionMode().RawValue()
+            );
+            break;
+        }
+        case ConversionMemory::PriorSource::Display:
+            m_settings.input.lastNativeConversion = conversionState.GetConversionMode().IsNative();
+            logger::info(
+                "Persisted the live display conversion mode (nothing confirmed yet) as input.last_native_conversion (native={})",
+                m_settings.input.lastNativeConversion
+            );
+            break;
+        case ConversionMemory::PriorSource::KeepLoaded:
+            logger::debug("No conversion mode observed yet; keeping the loaded input.last_native_conversion");
+            break;
     }
     return SettingsManager::Save(m_settings);
 }

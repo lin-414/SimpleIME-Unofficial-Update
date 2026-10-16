@@ -149,8 +149,13 @@ private:
     auto ReclaimImeFocus(HWND hWnd) -> void;
     /// WM_KEYDOWN body: Shift-tap arming and the Prisma edit-key forward.
     auto HandleKeyDown(UINT uMsg, WPARAM wParam, LPARAM lParam) -> void;
-    /// WM_KEYUP body: the bare-Shift-tap 中/英 prediction and the forward.
+    /// WM_KEYUP body: arms the deferred bare-Shift 中/英 prediction and the forward.
     auto HandleKeyUp(UINT uMsg, WPARAM wParam, LPARAM lParam) -> void;
+    /// The guards the bare-Shift prediction shares between arming and applying.
+    [[nodiscard]] auto IsShiftTapPredictable() const -> bool;
+    /// WM_TIMER body: applies the bare-Shift prediction unless the IME published
+    /// its own toggle in the meantime.
+    auto OnShiftTapPredictTimer() -> void;
     /// WM_CHAR body: the IME gate, the composition/commit echo suppressions and
     /// the Scaleform forwarding. Always consumes the message.
     auto HandleCharMessage(WPARAM wParam, LPARAM lParam) -> LRESULT;
@@ -199,6 +204,11 @@ private:
     /// behavioral inference on the next keystroke). IME thread only.
     bool                            m_shiftTapArmed         = false;
     std::uint64_t                   m_shiftTapDownTickMs    = 0;
+    /// The deferred prediction (WM_TIMER) and the IME's conversion-mode revision
+    /// captured at the Shift keydown: a change means the IME published its own
+    /// toggle during the tap, and its value then wins (see OnShiftTapPredictTimer).
+    bool                            m_shiftTapPredictPending      = false;
+    std::uint64_t                   m_shiftTapRevisionAtKeyDown   = 0;
 };
 } // namespace Ime
 

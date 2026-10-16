@@ -60,6 +60,18 @@ constexpr std::size_t kMaxLeakedLetterErase = 32;
 /// does not actually toggle on Shift.
 constexpr auto SHIFT_TAP_WINDOW_MS = 1000U;
 
+/// How long the tap prediction is held back so an IME that publishes its own
+/// toggle can win. Microsoft Pinyin writes its mode from the same WM_KEYUP
+/// that arms the prediction, and the two land within ~2 ms of each other
+/// (in-game 2026-10-16: `Thread conversion mode changed: 0x401` at .945, our
+/// `Bare Shift tap` at .947) — whichever wrote last decided the display, so
+/// half the taps left it one step behind the real mode. Deferring the
+/// prediction by this much lets the compartment sink apply the IME's own value
+/// first; the deferred step then only predicts when nothing arrived, which is
+/// exactly the no-compartment case (WeChat) the prediction exists for.
+constexpr auto SHIFT_TAP_PREDICT_DELAY_MS = 20U;
+constexpr auto SHIFT_TAP_PREDICT_TIMER_ID = 0x5349U; // 'SI'
+
 /// IME-thread only: the ImeWnd whose text service is live, set in
 /// InitializeTextService and cleared in UnInitialize. The commit callback is a
 /// plain function pointer (no captures), so it reaches the instance through
@@ -582,6 +594,17 @@ auto ImeWnd::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRES
                 pThis->HandleKeyUp(uMsg, wParam, lParam);
             }
             break;
+        case WM_TIMER:
+            // The bare-Shift 中/英 prediction's deferred step (see
+            // OnShiftTapPredictTimer). The IME thread owns this window, so the
+            // handler runs where the prediction's state lives.
+            if (pThis != nullptr && wParam == SHIFT_TAP_PREDICT_TIMER_ID)
+            {
+                KillTimer(hWnd, SHIFT_TAP_PREDICT_TIMER_ID);
+                pThis->OnShiftTapPredictTimer();
+                return 0;
+            }
+            break;
         case WM_DESTROY: {
             if (pThis == nullptr) break;
             ImmAssociateContextEx(hWnd, nullptr, IACE_DEFAULT);
@@ -681,10 +704,21 @@ void ImeWnd::HandleKeyDown(UINT uMsg, WPARAM wParam, LPARAM lParam)
     {
         m_shiftTapArmed      = true;
         m_shiftTapDownTickMs = GetTickCount64();
+        // The tap window opens here: any conversion-mode publish from now on
+        // belongs to this tap (see OnShiftTapPredictTimer).
+        if (const auto *service = GetTextService(); service != nullptr)
+        {
+            m_shiftTapRevisionAtKeyDown = service->ConversionModeRevision();
+        }
     }
     else
     {
         m_shiftTapArmed = false; // Shift+key combo is not a mode toggle
+        // A key pressed between the Shift tap and its deferred prediction makes
+        // this a combo after all (the tap window is checked at the deferred
+        // step, but the pending flag has to be cleared here or the prediction
+        // would still fire on a stale tap).
+        m_shiftTapPredictPending = false;
     }
     ForwardEditingKeyToPrismaHostIfOwned(m_hWndParent, uMsg, wParam, lParam);
 }
@@ -694,28 +728,15 @@ void ImeWnd::HandleKeyUp(UINT uMsg, WPARAM wParam, LPARAM lParam)
     if (wParam == VK_SHIFT && m_shiftTapArmed)
     {
         m_shiftTapArmed = false;
-        // Bare Shift tap (no other key down/up in between): for
-        // Chinese IMEs this is the 中/英 toggle. Only predict while
-        // the IME actually owns the keyboard and no composition is
-        // active (Shift during a composition commits raw text in
-        // most IMEs instead of toggling). Behavioral inference
-        // corrects the display on the next keystroke if the active
-        // IME does not use Shift as its toggle.
-        auto       &state      = State::GetInstance();
-        const bool  imeOwnsKeys = ImeController::GetInstance()->IsModEnabled() && state.NotHas(State::IME_DISABLED) &&
-                                  state.Has(State::INPUT_PROCESSOR_ACTIVATED) && state.TsfFocus() &&
-                                  state.NotHas(State::IN_COMPOSING, State::IN_CAND_CHOOSING);
-        if (imeOwnsKeys && GetTickCount64() - m_shiftTapDownTickMs <= SHIFT_TAP_WINDOW_MS)
+        // Bare Shift tap (no other key down/up in between): for Chinese IMEs
+        // this is the 中/英 toggle. The prediction itself is deferred one
+        // timer hop (see OnShiftTapPredictTimer) so an IME that publishes the
+        // toggle into a compartment gets to win the race — writing both from
+        // the same keyup left the display one step behind every time.
+        if (IsShiftTapPredictable())
         {
-            logger::info("Bare Shift tap while the IME owns input: toggling the displayed 中/英 state");
-            if (state.GetConversionMode().IsNative())
-            {
-                state.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
-            }
-            else
-            {
-                state.AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
-            }
+            m_shiftTapPredictPending = true;
+            SetTimer(m_hWnd, SHIFT_TAP_PREDICT_TIMER_ID, SHIFT_TAP_PREDICT_DELAY_MS, nullptr);
         }
     }
     else if (wParam != VK_SHIFT)
@@ -723,6 +744,65 @@ void ImeWnd::HandleKeyUp(UINT uMsg, WPARAM wParam, LPARAM lParam)
         m_shiftTapArmed = false;
     }
     ForwardEditingKeyToPrismaHostIfOwned(m_hWndParent, uMsg, wParam, lParam);
+}
+
+/// The guards the bare-Shift prediction shares between the keyup that arms it
+/// and the deferred step that applies it: the IME must actually own the
+/// keyboard, no composition may be active (Shift during one commits raw text
+/// in most IMEs instead of toggling), and the tap must still be inside its
+/// window. Every guard is re-checked at the deferred step — the delay is a
+/// window in which any of them can change.
+auto ImeWnd::IsShiftTapPredictable() const -> bool
+{
+    const auto &state = State::GetInstance();
+    return ImeController::GetInstance()->IsModEnabled() && state.NotHas(State::IME_DISABLED) &&
+           state.Has(State::INPUT_PROCESSOR_ACTIVATED) && state.TsfFocus() &&
+           state.NotHas(State::IN_COMPOSING, State::IN_CAND_CHOOSING) &&
+           GetTickCount64() - m_shiftTapDownTickMs <= SHIFT_TAP_WINDOW_MS;
+}
+
+/// Deferred step of the bare-Shift prediction (WM_TIMER, IME thread).
+///
+/// An IME that publishes its own 中/英 toggle — Microsoft Pinyin writes the
+/// thread-level compartment from the very same keyup that arms this prediction
+/// — has already published by now, and that value is the truth; predicting on
+/// top of it would flip the display away from it. Whether it published is
+/// decided by the conversion-mode revision, not by the value: the IME's toggle
+/// and the pre-toggle state can be the same number (both "English"), so
+/// comparing values cannot tell "it already wrote 0x0" from "it was already
+/// 0x0". A bumped revision is the unambiguous signal. IMEs that publish nothing
+/// at all (WeChat — all six watchpoints stay unwritten, see
+/// DumpConversionCompartments) leave the revision untouched, and that is
+/// exactly when the prediction must step in. Behavioral inference still
+/// corrects the display on the next keystroke if even that guess was wrong.
+auto ImeWnd::OnShiftTapPredictTimer() -> void
+{
+    if (!std::exchange(m_shiftTapPredictPending, false))
+    {
+        return; // cancelled or already consumed
+    }
+    if (!IsShiftTapPredictable())
+    {
+        return;
+    }
+    if (const auto *service = GetTextService(); service != nullptr && service->ConversionModeRevision() != m_shiftTapRevisionAtKeyDown)
+    {
+        // The IME published its own toggle: its value already drives the
+        // display. Logged at info so an in-game round can tell this path from
+        // the prediction below.
+        logger::info("Bare Shift tap: the IME published its own 中/英 toggle; the prediction stands down");
+        return;
+    }
+    auto &state = State::GetInstance();
+    logger::info("Bare Shift tap while the IME owns input: toggling the displayed 中/英 state");
+    if (state.GetConversionMode().IsNative())
+    {
+        state.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+    }
+    else
+    {
+        state.AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+    }
 }
 
 auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
@@ -796,8 +876,38 @@ auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
     static const auto ignoredKeys = {VK_TAB, VK_RETURN, VK_BACK, VK_ESCAPE /*, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT*/};
     if (std::ranges::find(ignoredKeys, wcharCode) == std::end(ignoredKeys))
     {
-        logger::debug("ImeWnd WM_CHAR {:#x} accepted, forwarding to Skyrim", wcharCode);
-        const std::wstring wstring(1, LOWORD(wParam));
+        // Windows resolved this character against the OS Caps Lock state
+        // (TranslateMessage -> ToUnicode). The game's own character generation
+        // tracks caps itself from DirectInput, and a caps-blocking mod (Kill
+        // Caps Lock NG) patches exactly that toggle out so its console text
+        // never turns upper case. While the IME owns the keyboard the game's
+        // char events are swallowed (ImeMenu::OnCharEvent) and this branch is
+        // the only source of letters, so with such a mod loaded we reproduce
+        // the patched behavior: honor Shift, ignore Caps Lock. Without one the
+        // game honors caps — and so must we (a user may want "SWORD").
+        wchar_t       character  = static_cast<wchar_t>(LOWORD(wParam));
+        const wchar_t normalized = Skyrim::NormalizeCapsCaseIfBlockerLoaded(character);
+        if (normalized != character)
+        {
+            logger::debug(
+                "ImeWnd WM_CHAR {:#x} normalized to {:#x}: a Caps Lock blocker is loaded, so the forwarded case follows Shift only",
+                static_cast<std::uint32_t>(character),
+                static_cast<std::uint32_t>(normalized)
+            );
+            character = normalized;
+        }
+        logger::debug("ImeWnd WM_CHAR {:#x} accepted, forwarding to Skyrim", static_cast<std::uint32_t>(character));
+        // A character was confirmed in this mode: remember it for the next
+        // text-entry session (the console reopens in the mode text was last
+        // typed in). Stamped after the inference above so State carries the
+        // alphanumeric reading for IMEs that publish no compartment. Reached
+        // through GetTextService() so the teardown window stays guarded, as at
+        // this file's other call sites.
+        if (const auto *service = GetTextService(); service != nullptr)
+        {
+            service->StampRememberedConversionModeFromLive();
+        }
+        const std::wstring wstring(1, character);
         Skyrim::SendUiString(wstring);
     }
     return 0;

@@ -243,6 +243,20 @@ private:
 
     std::size_t m_composingLength = 0;
 
+    /// Set by the composition sink (OnStartComposition / OnEndComposition), NOT
+    /// by the global State flags: those get cleared by profile activations and
+    /// aborts, and a preedit write misread as a direct insert would type the raw
+    /// composition into the game. This one only follows TSF's composition
+    /// lifetime, which is exactly what InsertTextAtSelection has to distinguish.
+    bool m_fCompositionActive{false};
+
+    /// A TIP typed through the document without any composition — direct input
+    /// (Google 日本語入力's 半角英数 does this: its keys never reach WM_CHAR, so
+    /// the old code dropped them silently). Deliver the inserted text now and
+    /// leave the buffer empty, mirroring OnEndComposition's commit. See
+    /// InsertTextAtSelection for the gate.
+    void DeliverDirectInsert(const WCHAR *text, ULONG count);
+
     friend class TextService;
 
     std::deque<DWORD>                          m_lockQueue;
@@ -341,6 +355,12 @@ public:
     /// stale thread default.
     auto RefreshConversionMode() -> void override;
 
+    /// See ITextService::StampRememberedConversionModeFromLive.
+    auto StampRememberedConversionModeFromLive() const -> void override;
+
+    /// See ITextService::ConversionModeRevision.
+    [[nodiscard]] auto ConversionModeRevision() const -> std::uint64_t override { return m_conversionModeRevision; }
+
     auto SnapshotCompositionAndCandidates(Ime::CompositionInfo &outComposition, Ime::CandidateUi &outCandidates) -> void override
     {
         const std::scoped_lock lock(m_mutex);
@@ -397,10 +417,27 @@ protected:
     }
 
 private:
-    void        UpdateConversionMode() const;
-    static void UpdateConversionMode(ULONG conversionMode);
+    /// Re-read the live mode (context compartment, then thread, then keep the
+    /// current State value) — also the re-assert trigger for a session start.
+    /// Not const: the observation can correct the mode (see MaybeReassert...).
+    void        UpdateConversionMode();
+    void        UpdateConversionMode(ULONG conversionMode);
     void        DumpConversionCompartments() const;
-
+    /// The one-shot correction for an IME that re-initialises its own mode right
+    /// after a session starts. Returns true when it corrected the mode — the
+    /// caller must then skip MirrorConversionMode for that observation, or the
+    /// mirror writes the rejected value back over the correction. See the
+    /// implementation.
+    [[nodiscard]] auto MaybeReassertRememberedMode(ULONG observed) -> bool;
+    /// Publish a live mode observation to the context + global compartments. See
+    /// the implementation (Microsoft Pinyin writes only the thread one).
+    void        MirrorConversionMode(ULONG conversionMode);
+    /// Make the system re-evaluate the input state so the taskbar's 中/英 chip
+    /// repaints with the mode we just published (it only repaints on real input
+    /// or activation events). See the implementation.
+    void        ReactivateProfileKeepingMode();
+    /// The IME-thread half of ReactivateProfileKeepingMode.
+    void        DoReactivateProfileKeepingMode();
     Ime::TextEditor           m_textEditor;
     Ime::CandidateUi          m_candidateUi;
     CComPtr<ITfThreadMgr>     m_threadMgr{nullptr};
@@ -423,9 +460,26 @@ private:
     CComPtr<TsfCompartment>   m_globalOpenCloseCompartment       = nullptr;
     /// Conversion mode captured on the first disable of a cycle and restored
     /// verbatim on the next enable, so a Japanese IME comes back with its ROMAN
-    /// bit (NATIVE alone is かな入力) and a Chinese one with FULLSHAPE.
+    /// bit (NATIVE alone is かな入力) and a Chinese one with FULLSHAPE. Only the
+    /// fallback source now: the primary one is the continuously stamped
+    /// State::GetRememberedConversionMode (see StampRememberedConversionModeFromLive).
     ULONG                     m_savedSessionConversionMode       = 0;
     bool                      m_hasSavedSessionConversionMode    = false;
+    /// Session-start restore target + its one-shot re-assert window: a TIP that
+    /// re-initialises on the new document focus writes its own default into the
+    /// compartment right after our restore, and that write must not decide the
+    /// session (see MaybeReassertRememberedMode).
+    ULONG                     m_restoreTargetMode                = 0;
+    ULONG                     m_reassertDeadlineMs               = 0;
+    bool                      m_reassertArmed                    = false;
+    /// Last value published to the context + global compartments by
+    /// MirrorConversionMode (and by SetSessionImeEnabled): the sinks fire on our
+    /// own writes too, so without this every observation would bounce back as
+    /// another write.
+    ULONG                     m_lastMirroredMode                 = 0;
+    /// See ITextService::ConversionModeRevision — bumped on every observed
+    /// conversion-mode publish, i.e. whenever a sink fires with a new value.
+    std::uint64_t             m_conversionModeRevision           = 0;
     CComPtr<TextStore>        m_textStore                        = nullptr;
     mutable std::shared_mutex m_mutex;
     TfClientId                m_clientId;

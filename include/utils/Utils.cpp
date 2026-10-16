@@ -22,8 +22,10 @@
 #include "hooks/PrismaBridge.h"
 #include "hooks/SkseMenuFrameworkBridge.h"
 #include "menu/MenuNames.h"
+#include "utils/CharDeliveryLogic.h"
 #include "utils/ImGuiHostChannel.h"
 #include "utils/InputFocusAnchor.h"
+#include "WCharUtils.h"
 
 #include <algorithm>
 #include <atomic>
@@ -35,6 +37,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tlhelp32.h>
 #include <unordered_map>
 #include <windows.h>
 
@@ -651,6 +654,58 @@ void NoteTextEntryCountChange(const void *callerAddress, const bool allow, const
 auto IsTextEntryCountOwnedByImGuiHost() -> bool
 {
     return g_declaredCountOwnerChannel.load(std::memory_order_acquire) != 0;
+}
+
+namespace
+{
+/// 进程里有没有"屏蔽 Caps Lock 切换"的模组 DLL（判定见 CharDeliveryLogic.h）。
+/// 用 Toolhelp 快照枚举而不是 GetModuleHandleW：这里要问的恰恰是"有没有这样一个名字"，
+/// 而这类模组的存在形式就是一个 DLL 名（改名版本也存在）。
+auto DetectCapsLockBlockingModule() -> bool
+{
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
+    if (snapshot == INVALID_HANDLE_VALUE)
+    {
+        logger::warn("IsCapsLockToggleBlocked: module snapshot failed (error {})", GetLastError());
+        return false;
+    }
+    MODULEENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    bool found   = false;
+    if (Module32FirstW(snapshot, &entry) != FALSE)
+    {
+        do
+        {
+            if (CharDelivery::IsCapsBlockingModuleName(entry.szModule))
+            {
+                logger::info("Caps Lock toggle blocker detected: {}", WCharUtils::ToString(entry.szModule));
+                found = true;
+                break;
+            }
+        } while (Module32NextW(snapshot, &entry) != FALSE);
+    }
+    CloseHandle(snapshot);
+    return found;
+}
+} // namespace
+
+auto IsCapsLockToggleBlocked() -> bool
+{
+    // 单次检测 + 缓存（函数内静态量，首次调用的初始化线程安全）：SKSE 插件在启动期
+    // 全部加载完毕，首次文本输入远在其后，缓存不会漏判。
+    static const bool blocked = DetectCapsLockBlockingModule();
+    return blocked;
+}
+
+auto NormalizeCapsCaseIfBlockerLoaded(const wchar_t c) -> wchar_t
+{
+    if (!IsCapsLockToggleBlocked())
+    {
+        return c;
+    }
+    // 左右 Shift 分别查：GetAsyncKeyState 的泛化 VK_SHIFT 语义有歧义。
+    const bool shiftDown = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 || (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+    return CharDelivery::NormalizeCapsCase(c, shiftDown);
 }
 
 void MarkCompositionActive()

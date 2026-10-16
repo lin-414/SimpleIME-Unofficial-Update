@@ -75,6 +75,22 @@ void NoteTextEntryCountChange(const void *callerAddress, bool allow, std::uint8_
 /// 后它不会重新认领，字段不重新点开就再也输不进去（SKSEMF 2026-10-04 实测的同一形状）。
 [[nodiscard]] auto IsTextEntryCountOwnedByImGuiHost() -> bool;
 
+/// 是否加载了"屏蔽 Caps Lock 大小写切换"的模组（Kill Caps Lock NG / KillCapsLockNG.dll，
+/// Nexus 99090；判定见 CharDeliveryLogic::IsCapsBlockingModuleName）。这类模组打掉的是
+/// **游戏自己的**大小写翻转指令（实测 AE 1.6.1170 在 `SkyrimSE.exe+0xCDE200` 的 `sete al`），
+/// 而输入法掌键盘期间引擎的字符事件被 ImeMenu 吞掉、字母由我们转发（Windows 生成的，
+/// 带 Caps 效果），补丁便不再生效——玩家在控制台里一开 Caps Lock 又变大写了。判定成立时
+/// 转发路径按同样语义去掉 Caps 效果（保留 Shift），见 ImeWnd::HandleCharMessage。
+/// 结果缓存：SKSE 插件在启动期全部加载完毕，首次文本输入远在其后。
+[[nodiscard]] auto IsCapsLockToggleBlocked() -> bool;
+
+/// 投递前对 ASCII 字母做大小写归一化：**仅在检测到上面这类模组时**生效
+/// （没有它时游戏本身认 Caps，用户可能就想打 "SWORD"）。Shift 取左右两键分别判定，
+/// 泛化 VK_SHIFT 在 GetAsyncKeyState 下语义有歧义。两条"按键直通"投递路径共用它：
+/// ImeWnd 的 WM_CHAR 转发与 TextStore 的无组字直写投递（Google 日本語入力半角英数），
+/// 保证同一份语义——报告者可能只走其中一条。
+[[nodiscard]] auto NormalizeCapsCaseIfBlockerLoaded(wchar_t c) -> wchar_t;
+
 /// 游戏线程每帧调用：与宿主界面握手（窗口属性，同进程）。
 /// - `SimpleIME.Composing`：组字期间存在，值是最后一次刷新的 GetTickCount64()。
 ///   界面方应在它"新鲜"（<500ms）期间丢弃 ASCII 字符事件——那些字母是输入法的

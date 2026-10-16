@@ -247,6 +247,23 @@ auto Imm32TextService::SetConversionMode(DWORD conversionMode) -> bool
     return success;
 }
 
+void Imm32TextService::StampRememberedConversionModeFromLive() const
+{
+    // The live mode is the input context's own conversion status. State carries
+    // the same value (kept in step by the IMN_SETCONVERSIONMODE notification)
+    // and is the fallback for a context we cannot acquire, e.g. mid
+    // focus-transition — the same "fall back to the behaviorally tracked value"
+    // shape the TSF backend uses when no compartment carries a published value.
+    DWORD conversion = 0;
+    DWORD sentence   = 0;
+    if (AcquiredHimc himc(m_imeHwnd); himc && ImmGetConversionStatus(himc, &conversion, &sentence) != FALSE)
+    {
+        State::GetInstance().RememberConversionMode(conversion);
+        return;
+    }
+    State::GetInstance().RememberConversionMode(State::GetInstance().GetConversionMode().RawValue());
+}
+
 void Imm32TextService::OnComposition(HWND hWnd, LPARAM compFlag)
 {
     AcquiredHimc hIMC(hWnd);
