@@ -9,6 +9,37 @@
 - "✅"= 已在真实游戏环境验证;"🧪"= 仅离线测试(单测/构建)通过;"⬜"= 待验证。
 - 用户确认一节只有用户本人回复后才能勾选。
 
+## v3.1.7-beta + 中/英模式记忆 + 无组字直写投递 + Caps 模组兼容（2026-10-16，CI 构建）
+
+**改动**：三连用户反馈（① Google 日本語入力半角英数打不出字 → `m_fCompositionActive` + `DeliverDirectInsert`；② Kill Caps Lock NG 失效 → `CharDelivery::IsCapsBlockingModuleName` + `NormalizeCapsCase`，两条按键直通路径共用；③ 记住"上次确认文字时的输入模式" → `State::RememberConversionMode` + 三处上屏盖章 + 会话起点写回），
+以及裸 Shift 预测的 revision 判据（第八轮）与一轮审查修复（53 轮：会话起点镜像回弹、死掉的 `MaybeReassertRememberedMode`、revision 的 open/close 盲区、Imm32 后端盖章）。
+**产物**：GitHub Release `v3.1.7-beta`（CI 构建，内嵌版本 3.1.7-beta；7z 含 GPL LICENSE 与 README）。
+
+### 离线（已通过 🧪）
+
+- ✅ 主 DLL 构建 EXIT 0（内嵌 3.1.7，`__SimpleIMEPlugin.cpp` 的 `REL::Version{3,1,7,0}`；POST_BUILD 已同步 MO2，构建树与 MO2 的 DLL md5 一致 `b664dad1…`，4996608 字节）。
+- ✅ SimpleIMETest **71/71**（原 63 + `CharDeliveryLogicTest` 5 例：ASCII 字母判定 / Caps 归一化 / 非字母不动作 / 模组名匹配与不匹配；`ConversionMemoryLogicTest` 3 例：自发布值不算证据 / 只有 NATIVE 位可持久化 / 先验来源优先级）。
+- ⚠️ 版本 bump 会触发自动 reconfigure，**必须带 `MO2_MODS_PATH`**（否则 POST_BUILD 同步块静默消失——本轮实测复现，用 `build/_reconfigure.cmd` 重配后恢复）。
+
+### 游戏内（用户确认 ✅）
+
+- ✅ Kill Caps Lock NG 兼容：日志 `Caps Lock toggle blocker detected: KillCapsLockNG.dll`；开着 Caps 打 `A A S A S D` 全部 `normalized to 0x64/0x73/0x61` 转发，Caps 关掉后不再归一化。
+- ✅ 裸 Shift 预测不再抢写：首次 Shift 即翻且不闪（日志 6 次 `the IME published its own 中/英 toggle; the prediction stands down`、0 次预测翻显示）。
+- ✅ 首次进游戏的语言栏先验：用户确认"问题已解决"（判据日志 `Persisted the last confirmed conversion mode …`）。
+- ✅ 中英恢复侧时序（53 轮）：用户"没发现有明显问题"；日志三条判据全过——每次 `IME enabled` 前后 7 行内**无** `Mirrored conversion mode`（会话起点回弹已消除，也不再紧跟 `Re-activated the active input profile`）；8 次镜像逐一对应真实 Shift 切换；`right after the session start` 0 次（= 被测输入法照我们的写入执行，re-assert 是有待触发的保险）。
+
+### 明确未验证（⬜）
+
+- ⬜ **无组字直写投递**（`DeliverDirectInsert`）：整份日志 0 次 `Direct (composition-less) insert`——需要 Google 日本語入力**半角英数**模式才会走这条路径；现有实机轮次用的是微软拼音/微信，未覆盖。Caps 归一化在该路径上的表现同样未覆盖。
+- ⬜ **Imm32 后端**（`enable_tsf = false`）的盖章：新增的 `Imm32TextService::StampRememberedConversionModeFromLive` 仅离线编译通过。
+- ⬜ 发行版（CI Release 配置 DLL）最终复核：以上任一项在发行版上重跑。
+
+### 已知问题（未修）
+
+- ⬜ 微信输入法不读也不写任何 TSF 隔间 ⇒ 会话起点的模式只能是"我们记住的模式"这一最优猜测；在游戏外改过模式仍会不一致（无系统接口可读，架构固有）。
+- ⬜ 任务栏的中/英小标滞后一拍（架构固有：小标在触发刷新的按键进入队列时就读取状态，早于输入法切换与我们的回写；poke / 二次叫醒 / 重新激活 profile 均实测无效）——以本模组自己的语言栏与打字行为为准。
+- ⬜ 自绘 ImGui 宿主通道上的直通 ASCII 双打（v3.1.6 起记录，未修）。
+
 ## v3.1.6-beta + HDR 浮层 PQ 编码 + SKSEMF 直通 ASCII 投递（2026-10-13，CI 构建）
 
 **改动**：HDR 浮层 PQ 着色器管线（`HdrOverlay` 新模块 + `ImeApp` 接线）、SKSEMF 直通 ASCII 单路径契约（`ShouldInjectCodepoint`）。

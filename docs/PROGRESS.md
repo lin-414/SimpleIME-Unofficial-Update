@@ -1988,3 +1988,239 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
 - 构建 EXIT 0（RelWithDebInfo，内嵌 3.1.6-beta，POST_BUILD 同步 MO2）；测试 **63/63**（+2 注入契约、
   +11 HDR 逻辑——含用 D3DCompile 真实编译 PQ 着色器，正是它抓出 `linear` 是 HLSL 关键字）；Node 桥自测全绿。
 - 版本 3.1.5-beta → **3.1.6-beta**。
+
+## 第 51 轮：用户反馈三连 —— Google 日本語入力半角英数打不出字 / Kill Caps Lock NG 失效 / 记忆上次输入模式（2026-10-16）
+
+用户（日语，Google 日本語入力）反馈三条：①切到半角英数后完全打不出字（同环境微软输入法正常）；②与
+"Kill Caps Lock NG"（Nexus 99090）同用后该模组不再屏蔽 Caps 大小写切换；③希望记住"上次确认文字时的
+输入模式"——控制台里打完半角英数命令，关掉再打开又回到日文。
+
+- **① 无组字直写文档的文本被吞**（`TextStore`）。本插件朝游戏方向的唯一出口是组字结束回调
+  （`OnEndComposition`）；而 TIP 若不组字、直接把字符写进文档（`SetText`/`InsertTextAtSelection`，
+  Google 日本語入力半角英数就是这个形状——按键被 TIP 吃掉，不会变成 WM_CHAR），文本就只留在组字缓冲区
+  里，既不上屏也永不清理（还会污染下一次提交）。微软输入法的英数模式走 WM_CHAR，所以对照正常。
+  修复=`m_fCompositionActive`（只跟随组字 sink 生命周期，不受 profile 激活/中止清标志影响）+
+  `InsertTextAtSelection` 在无活动组字时按"立即提交"处理（`DeliverDirectInsert`：投递本次插入的文字、
+  清空缓冲区、MarkDirty；焦点守卫与提交路径一致）。首次投递记 info（这条路径就是该症状的判据），
+  之后 debug 以免逐字符刷日志。已知：该路径不做退格补偿（按键被 TIP 吃掉，引擎没读到它们）。
+- **② Kill Caps Lock NG 失效**：实证该模组只改**游戏自己**的大小写翻转指令——本机
+  `KillCapsLockNG.log`（2026-10-16 12:28）记录 AE 1.6.1170 打在 `SkyrimSE.exe+0xCDE200`
+  （SE 为 `0xC1A2EB`），反汇编该处为 `0f 94 c0`（`sete al`），落在"上一帧未按 + 本帧按下 → 翻转
+  [rbx+0x368] 标志位"的边沿触发逻辑上。输入法掌键盘期间引擎的 CharEvent 被 `ImeMenu::OnCharEvent`
+  吞掉、字母改由我们转发（Windows 生成的，**带** Caps 效果），补丁便不在回路里 → 玩家一开 Caps 又变大写。
+  修复=`CharDelivery::IsCapsBlockingModuleName`（模块名折叠后含 "capslock"，Toolhelp 快照枚举一次并
+  缓存）+ 检测到这类模组时，把 ASCII 字母按"只认 Shift、不认 Caps"归一化
+  （`NormalizeCapsCase`；Shift 取 L/R 两键，避免 VK_SHIFT 泛化键的歧义）。归一化收敛到
+  `Skyrim::NormalizeCapsCaseIfBlockerLoaded`，**两条"按键直通"投递路径共用**：`ImeWnd::HandleCharMessage`
+  的 WM_CHAR 转发 + `TextStore::DeliverDirectInsert` 的无组字直写（报告者若走直写路径，字符由 IME
+  自己产生、根本不经过 WM_CHAR——只补一条会漏）。组字提交路径**不**归一化（那是 IME 的显式输出）。没有这类模组时保持原样
+  ——游戏本身是认 Caps 的，用户可能就想打 "SWORD"。
+- **③ 记忆上次确认文字时的输入模式**：旧实现有两处把模式拉回日文——(a) 禁用时**采样**（`ClearFocus`
+  之后才读隔间，TIP 可能已把自己的默认模式写回）；(b) 启用时若没有记忆就 `State | NATIVE` 强制原生模式，
+  而每个游戏会话的首次输入必然走这条路。修复=①`State` 增加"最近确认模式"（`RememberConversionMode`，
+  与显示用的 `m_conversionMode` 分开——后者会被禁用路径按设计压平成 ALPHANUMERIC），启动时用
+  `input.last_native_conversion` 播种（不再强制 NATIVE）；②每次上屏盖章
+  （`ITextService::StampRememberedConversionModeFromLive`：组字提交、直写投递、WM_CHAR 字母三处，
+  读"聚焦上下文隔间 → 线程隔间 → State"，无隔间的输入法由行为推断兜底）；③会话开始写回该模式，
+  并在 1.5s 内对"TIP 自己在会话起点重置模式"做**一次性**纠正（`MaybeReassertRememberedMode`；
+  禁用路径会先解除武装，避免快速开关把压平动作顶回去）。逐周期采样降级为兜底来源。
+- **验证**：新增 `test/CharDeliveryLogicTest.cpp`（5 项：ASCII 字母判定 / Caps 归一化四种 Shift×Caps
+  组合 / 非字母不动作 / 模组名匹配与不匹配）；**构建 EXIT 0**（clang-cl 全量重编，SimpleIME.dll 已由
+  POST_BUILD 同步到 MO2）；测试 **68/68 通过**（原 63 + 新增 5）。**三条仍待实机验证**：判据分别为日志
+  `Direct (composition-less) insert of N unit(s)`、控制台里 Caps 开启时字母仍小写、
+  `Published the IME on state ... conversion=0x0`（半角英数）跨开关保持。
+- **工具链重建（同日，C 盘清理的连带修复）**：本机 chocolatey、独立 LLVM、FontForge 都被清理删掉，
+  且 VS BuildTools 从 64 位路径搬到了 `Program Files (x86)`。恢复动作：winget 装回 **LLVM 23.1.3**
+  （`C:\Program Files\LLVM`，与构建缓存记录的路径一致）与 **FontForge 20251009**（图标字体生成需要
+  `C:\Program Files\FontForgeBuilds\bin\fontforge.exe`，缺了会在 `[1/1156]` 直接失败）；把 VS 自带
+  ninja 1.12.1 复制到构建缓存期望的 `C:\ProgramData\chocolatey\bin\Ninja.exe`；`build_ime.cmd` /
+  `build/_reconfigure.cmd` / `build/_reconfigure_tests.cmd` / `build/_build_tests.cmd` 的 vcvars64
+  路径改到 (x86)——否则 rc.exe 找不到 winres.h（RC1015，只有 .rc 这一步失败，很迷惑）；构建目录用
+  可用 cmake 重新配置（`-DCMAKE_TOOLCHAIN_FILE` 指向 (x86) vcpkg、显式 clang-cl 路径，并按
+  `build/_reconfigure.cmd` 的约定带上 MO2_MODS_PATH，同步块因此保住）。vcpkg 因工具版本变化重建了
+  libpng/freetype（主目录移除 gtest/benchmark，测试目录再装回）；**下载必须走代理 `127.0.0.1:7897`**
+  （旧的 7890 已失效，直连 github 时通时不通）。
+- **实机反馈第一轮（2026-10-16 傍晚，微信输入法）**：② **通过**——日志 `Caps Lock toggle blocker detected:
+  KillCapsLockNG.dll`；开着 Caps 打 `A A S A S D` 全部 `normalized to 0x64/0x73/0x61` 转发，Caps 关掉后
+  不再归一化。③ **不生效**：enable 确实写了 `conversion=0x0`，但紧接着就起中文组字 → **微信输入法不读也
+  不写任何隔间**（此前已知它不写；现在补上"也不读"），对这类输入法"写回隔间"的机制天然到不了，属已知
+  限制（要覆盖只能合成它自己的切换键，有按键漏进游戏的风险，未做）。① 得到一个重要负向确认：真实组字
+  段（`TSF composition started` + `InsertTextAtSelection count=1…8`）里没有出现任何
+  `Direct (composition-less) insert` → 新分支没有误判组字。
+- **实机反馈第二轮（同日，微软拼音）**：③ **通过**——enable 写 `conversion=0x0` 后输入法照做，只有按
+  Shift 才起中文组字。但暴露两条新问题：微软拼音按 Shift **只写线程级隔间**（`Thread conversion mode
+  changed: 0x401`，context 与 global 都不写）→ (a) 我们"读隔间优先 context"读到的是**我们自己上次写的
+  陈旧值**，③ 的盖章会盖错（打中文却记成英文，下次回来变英文）；(b) 任务栏/游戏线程的 TIP 实例跟的是
+  跨进程 **global** 隔间，而我们只在 enable/disable 写它 → 用户报"状态栏的中英要等打字后才更新"。
+  修复=`TextService::MirrorConversionMode`：把观察到的实时模式回写 **context + global**
+  （`m_lastMirroredMode` 去重防自写回弹；`ImeDisabled()` 期间不动；`SetSessionImeEnabled` 写完三通道
+  也盖章），判据日志 `Mirrored conversion mode 0x… to the context + global compartments`。
+  构建 EXIT 0 + 68/68。
+- **实机反馈第三轮（同日，状态栏滞后）**：镜像**确实触发**了（日志三次），但系统状态栏仍滞后 ⇒
+  **任务栏那个中/英小标不读 conversion 隔间**（context/global 都不是它的来源）。用户按我给的对照实验
+  在**记事本**里试：**立刻翻** ⇒ 确认这是本架构的产物：小标跟的是**前台窗口（游戏窗口）所属线程**的
+  TIP 实例，而我们的输入法实例在 IME 线程上；游戏线程的实例在"我们掌键盘"期间不做任何 IME 工作，
+  所以只有等到打字（字符经我们投递进游戏、游戏线程处理文本）才刷新。修复尝试=
+  `TextService::NudgeGameThreadInputState()`：每次模式变化后向游戏窗口 Post 一条**同布局**的
+  `WM_INPUTLANGCHANGEREQUEST`，让 DefWindowProc 在游戏线程上重新激活布局 → 其输入法实例重读我们刚写的
+  global。安全性：同布局请求正是 disable 路径已在用的手法；游戏窗口的 `WM_INPUTLANGCHANGE` 看门狗只在
+  "IME 已禁用 + 切英文布局模式"下动作（用户配置 false）⇒ 会话中不干预；每次模式变化一条，非每键一条。
+  判据=游戏窗口日志 `Game window input language changed`（poke 落地）。**效果待实机**；若仍不动，则这条
+  属架构固有、仅剩"焦点往返"之类的重手段，建议不再追（纯外观，模式本身与我们的语言栏都是即时的）。
+- **实机反馈第四轮（同日）**：poke **不产生** `Game window input language changed`（同布局请求不真的换布局），
+  但行为确实变了——从"打字后才翻"变成"**第一次按 Shift 不翻、第二次才翻**"⇒ 小标在游戏线程处理事件时刷新，
+  而它读到的值比我们刚写入的早一步（于是永远与实际模式错一拍，用户明确指出"状态栏与实际不匹配"）。
+  修复尝试=**叫醒两次**：`Skyrim::RequestInputStateNudge()`（IME 线程：立刻 poke 一次并 arm 一个 150ms 到期
+  时刻）+ `Skyrim::TickInputStateNudge()`（游戏线程每帧，`ImeMenu::PostDisplay` 里调用，到期补第二次 poke）
+  ——第二次没有新的状态变化，它应当读到刚写入的模式。
+- **结论（第四轮实测后）：这条从我们这侧无解，叫醒代码已撤除。** 实测两次叫醒都落地（日志 11 条
+  `Input state nudge: second poke`，每次模式变化后 ~165ms 由游戏线程发出）**但小标依旧** ⇒ 小标的刷新
+  不由游戏窗口的消息处理驱动。结构性原因：游戏线程是 MTA（无 TSF），任务栏小标对"前台线程"只能退回
+  跨进程/全局输入状态这一层，而它在**触发刷新的那个按键事件进入队列时就读取**（早于输入法切换与我们的
+  回写）⇒ 永远慢一个事件；记事本里即时是因为那里输入法实例与前台线程同线程、小标读的是输入法自己
+  的新鲜状态。**镜像（context+global 回写）保留**——它修的是"③ 盖章盖错"那个真 bug（与外观无关）。
+  建议以我们自己的语言栏与打字行为为准（两者都是即时且正确的）。
+- **实机反馈第五轮（同日，"输入事件驱动"假说）**：上面那条"无解"结论被用户驳回后重新推导——小标的刷新由
+  **输入事件**驱动，且它在事件进入系统时就读状态（早于输入法切换与我们的回写）⇒ 触发切换的那个按键本身永远
+  读到切换前的值（"第一次按 Shift 不翻、第二次才翻"）；窗口消息不触发刷新（poke 实测无效）⇒ 唯一杠杆是
+  **真实按键事件**。修复尝试=`TextService::KickLanguageBarRefresh()`：模式变化后 `SendInput` 注入一次
+  **F24** 轻敲（无字符、无 LED、最不可能被模组绑定的键；F13 是常见"备用热键"故避开）。代价与风险：注入按键
+  同样会被游戏的 DirectInput 看到（F24 在 Skyrim 无绑定，但若某模组绑了它就会被触发），且这是本仓库首次使用
+  `SendInput`（新的行为类别）。**待实机**：判据=按 Shift 后任务栏小标**立即**翻转，日志紧随模式变化出现
+  `ImeWnd WM_KEYDOWN vk=0x87`（F24）；若无效或触发意外动作，撤除或换键。
+- **实机反馈第六轮（同日）**：用户否掉注入按键的做法（"这个方法不太行"）⇒ F24 代码已撤除。改用**不注入输入**的
+  等价事件：**重新激活当前输入法 profile**（`TextService::ReactivateProfileKeepingMode` →
+  `ImeController::PostToImeThread` 延迟一跳 → `DoReactivateProfileKeepingMode`：CoCreate
+  `ITfInputProcessorProfileMgr` → `GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD)` → 用**同一组参数**再
+  `ActivateProfile(TF_IPPMF_FORPROCESS | …)`）。理由=切换输入法时任务栏小标是**立刻**更新的，那正是
+  profile 激活事件；而同一个输入法内部的模式变化只触发"输入事件"式的重绘（慢一拍）。副作用：激活可能让
+  输入法回到默认模式 ⇒ 紧接着把刚才的模式写回（thread+context+global）；若切换瞬间有活动组字会被中止
+  （模式切换通常意味无组字）。判据=模式变化后日志出现 `Re-activated the active input profile to refresh
+  the system language bar (hr=0x0)`。**待实机**；这是最后一个已知杠杆，若仍无效即收手。
+- **实机反馈第七轮（2026-10-16 傍晚，微软拼音，"首次 Shift 不翻"复现）**：用户报"首次按下 Shift，IME
+  状态栏中英不翻转，连按两次后每次都能正常翻"。**日志实证定位到真因**：不是任务栏小标，是我们**自己的
+  语言栏**——`ImeWnd` 的裸 Shift 预测与微软拼音自己的模式写入**在同一枚 WM_KEYUP 上互相抢写**
+  （18:59:56.945 `Thread conversion mode changed: 0x401` ↔ .947 `Bare Shift tap`，相隔 2ms）。谁最后写
+  谁定显示：预测后写 ⇒ 把显示从"输入法刚写的真值"翻到反面，于是显示比真实模式**错一拍**，用户看到的就是
+  "第一次按不翻、第二次才对"。**修复=`ImeWnd` 的预测改为延迟一跳（WM_TIMER 20ms）**：keyup 只记录
+  "预测前的隔间值"并 arm 定时器；定时器里若隔间值已变（输入法自己发布了），说明输入法已赢，预测直接放弃
+  （真值已由隔间 sink 驱动显示）；值未变才预测（正是"不发布任何隔间"的微信输入法所要的路径）。三个守卫
+  （IME 掌键盘/无组字/在 tap 窗口内）抽成 `IsShiftTapPredictable()`，在 arm 与 apply 两处都过；Shift 后
+  按别的键（组合键）会清掉 pending。构建 EXIT 0 + ctest 68/68。**待实机**：判据=首次 Shift 即翻，且日志
+  里模式变化后**不再**紧跟 `Bare Shift tap`（微软拼音），微信输入法仍能翻（那条 `Bare Shift tap` 保留）。
+- **实机反馈第八轮（同日，第七轮修复后仍闪）**：用户报"初次 Shift 会翻到中后**快速翻回**英，后续正常；打字后
+  再按又翻一下再翻回"。日志（19:56 那批，ImeWnd.cpp:787 = 延迟版）证实**延迟生效了**（tap 消息落到模式写入
+  **之后** 25–40ms），但**预测仍然照跑** ⇒ 闪一下再被输入法的真值盖回。**第七轮的值比较是无效判据**：
+  输入法把模式写成 0x0（英）时，与"本来就是 0x0"**数值相同**，`!=` 判不出来 ⇒ 必须知道"有没有**发布**过"
+  而不是"值是多少"。修复=`ITextService::ConversionModeRevision()`（TSF 后端在 `UpdateConversionMode` 里
+  `++m_conversionModeRevision`）：Shift **keydown** 时记下 revision，延迟步里 revision 变了 ⇒ 输入法自己
+  发布了 ⇒ 预测 stand down（并留一条 info 日志便于实机判读）；没变 ⇒ 预测（微信输入法那条路径）。Imm32
+  后端走 IMN 通知、无隔间，保持默认 0 ⇒ 行为不变。构建 EXIT 0 + ctest 68/68。**待实机**：判据=首次 Shift
+  即翻且**不闪**，日志出现 `the IME published its own 中/英 toggle; the prediction stands down`。
+
+## 第 52 轮：首次进入游戏时语言栏中英与实际不一致 —— 先验的持久化路径（2026-10-16 晚）
+
+用户报"**首次进入游戏时**，IME 状态栏的中英状态与实际状态不一致"——注意这与上面第八轮的"初次 Shift 翻一下又翻回"
+是**不同触发点**：本轮是会话的**第一次输入**（尚未按过任何键）。
+
+- **根因链（代码 + 19:53 那份日志实证）**：新会话首次进入文本输入时，语言栏显示的是**落盘先验**
+  `input.last_native_conversion`（`ImeApp` ctor 用它同时播种显示值与 `State::GetRememberedConversionMode`），
+  而该键由 `ImeApp::SaveSettings` 从**实时显示值** `State::GetConversionMode().IsNative()` 写回。显示值**不是**
+  "用户上次在什么模式下打字"的记录：(a) 禁用路径（每次关控制台）经线程/上下文隔间的 sink 把它压平成
+  ALPHANUMERIC，而保存与压平分属不同线程（日志 19:57:01.695 保存 / .719 压平）——**谁先谁后是竞态**；
+  (b) 裸 Shift 预测会把它翻到与实际相反（19:56:59.752 那次 tap 把显示留在 `0x400`=英，而微软拼音实际是
+  `0x401`=中，**显示当场就是错的**）；(c) 行为推断（组字起点置 NATIVE、裸字母清 NATIVE）也在改它。与此同时，
+  真正决定"下次会话恢复成什么"的 `GetRememberedConversionMode`（每次上屏从输入法实时值盖章）**从不落盘**
+  ⇒ 先验与用户实际打字模式漂移 ⇒ 下次首次输入显示并下发相反的模式。微信输入法不读隔间 ⇒ 它保持自己的模式，
+  于是"状态栏显示 X、实际 Y"当场可见。
+- **修复**：①`SaveSettings` 改持久化**已确认模式**（`ConversionMemory::ChoosePriorSource`：Remembered > Display >
+  KeepLoaded，保留旧值以防开机 WM_NCACTIVATE churn 抹除先验），并打判据日志
+  `Persisted the last confirmed conversion mode 0x… (native=…) as input.last_native_conversion; the live display value was 0x…`；
+  ②`TextService::StampRememberedConversionModeFromLive` 补**证据判定**：与"我们自己最后发布的值"
+  （`m_lastMirroredMode`）相等的隔间值，是我们会话起点的推送被读回，**不算输入法的发言** ⇒ 落到 State
+  （行为推断）。不修②的话，把已确认模式落盘会让**不发布隔间的输入法（微信）**的记忆永久冻结在我们猜的值上
+  （它此前能"学到"全靠显示值那条路）。逻辑抽成纯头 `include/utils/ConversionMemoryLogic.h` +
+  `test/ConversionMemoryLogicTest.cpp`。顺带给 `core/State.h` 补 `#include <atomic>`（它用了 `std::atomic`
+  却没包含，只有单独编译的 TU 才会暴露）。
+- **验证**：构建 EXIT 0（RelWithDebInfo，POST_BUILD 已同步 MO2）；测试 **71/71**（原 68 + 新增 3）。
+  **待实机**：判据=①日志出现上面那行，且 `native=` 与你上次实际打字的模式一致；②下次开游戏**首次**进输入框，
+  语言栏即显示该模式（不用先打字）。**用户确认（2026-10-16 晚）：问题已解决。**残留：对**不发布隔间**的输入法（微信），首帧仍只能是"我们记住的模式"这一
+  最优猜测——它自己在游戏外改过模式仍会不一致（没有任何系统接口可读，属架构固有），这类输入法靠首次按键的
+  行为推断纠正。
+- **备注（并行会话）**：同一工作树里另一会话正在做第八轮的 Shift 预测 revision 修复（未提交，已随本次构建一起进
+  DLL）。两者互补：revision 修的是"按 Shift 时显示闪错"，本轮修的是"会话第一次输入的显示先验"。
+- **实机反馈第九轮（同日）：用户确认"问题已解决"** ⇒ 裸 Shift 预测的 revision 判据（第八轮）实测通过。微软拼音
+  首次 Shift 即翻且不闪，微信输入法路径不受影响。此事终结。
+
+## 第 53 轮：审查未提交改动 —— 会话起点时序 / 判据盲区 / 后端覆盖（2026-10-16 深夜）
+
+对 51/52 轮与第八轮的未提交改动做了一轮代码审查（`git status` 里的全部改动 + 四个新文件），
+用当晚实机日志（`SimpleIME.log` 22:09–22:11）实证了几处时序判断，共修 4 类缺陷 + 6 处小问题。
+
+- **① 会话起点的自写回弹击穿 `m_lastMirroredMode` 守卫（P1）**。`SetSessionImeEnabled` 先
+  `SetConversionMode` 再设守卫，而隔间 sink 在 `SetValue` 内同步回调 ⇒ 守卫此刻还是上一轮的旧值，
+  我们**自己这次写入**的回弹被当成"输入法发布"而放行。日志实证：22:10:44.711 同一毫秒内
+  `Mirrored conversion mode 0x1` 出现在本函数自己的 `Published the IME on state` **之前**。
+  后果：每次开会话都白做一次三通道重写 + 一次 `ActivateProfile`（`:275` 日志紧随其后），
+  而且可能落在禁用**之后**（22:09:36.002 发出 off → `.003` 才激活 profile → `.006`
+  `Thread keyboard open/close changed: 1`，即我们禁用后 TIP 键盘状态又被拉活）。
+  修复=把守卫赋值移到 `ToogleKeyboard`/`SetConversionMode` **之前**（会话起点的镜像本就是冗余的：
+  三个通道在 480–487 行已写入同一值）。
+- **② `MaybeReassertRememberedMode` 是死代码（P1）**。武装后**第一次**观测必然是我们自己的回弹
+  （值等于 `m_restoreTargetMode`），旧代码据此解除武装；而 TIP 的重初始化写入总在更晚 ⇒
+  纠正永不触发。整份日志 `right after the session start` 出现 **0** 次，与代码路径分析一致。
+  修复=值相等不再解除武装（由期限结束窗口），只有**不同**的观测才消耗那一次纠正。
+  随之补两个必须的配套：
+  (a) `UpdateConversionMode` 在纠正发生时**跳过镜像**——否则同一次调用栈里 `MirrorConversionMode`
+  会把刚被否决的输入法默认值写回隔间，纠正当场撤销（`MaybeReassertRememberedMode` 改为返回 bool）；
+  (b) 窗口 **1500ms → 250ms**：旧值从未被验证过（机制是死的），而 1.5s 宽到足以吞掉用户在开会话后
+  立刻按的那次 Shift——那正是本项目花了三轮才消掉的症状。250ms 只覆盖"文档焦点变化后 TIP 立刻重写
+  自己默认模式"这一瞬间，人的 Shift（需先看到输入框）最快也要几百毫秒。
+- **③ revision 判据漏了 open/close 通道（P2）**。`ConversionModeRevision` 只在
+  `UpdateConversionMode(ULONG)` 自增，但**上下文** open/close sink 同样把中英切换写进显示
+  （`TextService.cpp:99`），却不动 revision ⇒ 对这种形状的输入法，显示已被真值更新，延迟 20ms 的
+  预测随后又翻一次（第八轮修掉的"翻一下再翻回"）。修复=在该 sink 内 `++m_conversionModeRevision`。
+  **线程级** open/close sink 刻意不碰：它只记 `KEYBOARD_OPEN`、不更新显示（当晚日志里它触发 11 次、
+  上下文级 0 次），在那里自增会把最需要预测的输入法（微信）的预测一起静音。
+- **④ Imm32 后端"记忆模式"永久冻结（P2）**。ctor 播种无条件执行 ⇒ `HasRememberedConversionMode()`
+  恒为 true；而 `Imm32TextService` 未覆写盖章（基类空实现）⇒ `SaveSettings` 永远走 `Remembered`
+  分支写入一个不再变化的值，`input.last_native_conversion` 不再跟随用户（旧实现持久化显示值至少会跟随）。
+  同一原因使 `SetSessionImeEnabled` 里 `m_savedSessionConversionMode` 与 `| NATIVE` 兜底对所有后端
+  都成为死代码。修复=`Imm32TextService::StampRememberedConversionModeFromLive()`（`AcquiredHimc`
+  读 `ImmGetConversionStatus`，失败回落 State——与 TSF 后端"回落行为推断"同形）；盖章方法因
+  `ImeWnd` 的 `GetTextService()` 交出 const 指针而统一改为 **const**（它只读服务、写 State 单例）。
+- **小问题**：`OnEndComposition` 的 `m_fCompositionActive` 注释写反了（先清标志恰恰是让后续写入**成为**
+  直写投递，而非"不被误认为"）；`ImeController::AddTask` 被误提为 public（调用者只有 `PostToImeThread`，
+  把 `public:` 下移到它头上）；`DeliverDirectInsert` 的 `firstDeliveryLogged` 改原子量、drop 分支
+  `GetFocus()` 调两次改为局部量；`ImeWnd` 的盖章调用改走 `GetTextService()`（带拆除空检查）；
+  `CharDeliveryLogicTest` 去掉重复断言（`(L'a', true)` 那条与上一条输入相同，函数无法区分 Caps 开关）。
+- **验证**：构建 EXIT 0（RelWithDebInfo，POST_BUILD 已同步 MO2，23:08）；测试 **71/71**。
+  **待实机**：①判据=日志里 `Mirrored conversion mode` **不再**紧跟在 `Published the IME on state`
+  之前（会话起点无镜像），且会话起点不再出现 `Re-activated the active input profile`；
+  ②判据=若某个 TIP 仍重写默认模式，出现 `right after the session start; re-applying`；
+  ③需要"用 open/close 表达中英切换"的输入法才可判读（现有输入法走线程级通道，不触发）。
+- **实机反馈（同日 23:31–23:32，微软拼音）**：用户报"没发现有明显问题"，日志核对三条判据全部符合预期——
+  ①每一次 `IME enabled` 前后 7 行内**没有**任何 `Mirrored conversion mode`（会话起点回弹已消除，也不再紧随
+  `Re-activated the active input profile`），而修复前的同一形状是"同一毫秒内镜像出现在 `Published the IME on state` 之前"；
+  ②新会话 8 次镜像逐一对应真实的 Shift 切换（`WM_KEYDOWN vk=0x10` → 输入法发布 `Thread/Context conversion
+  mode changed` → 镜像），属设计行为；③`right after the session start` 0 次——re-assert 没有触发，即这些 TIP
+  照我们的写入执行，不需要纠正（它现在是有待触发的保险而非死代码）。另有 6 次 `stands down`、0 次预测翻显示，
+  说明发布型输入法上 revision 判据完全接管；新会话无 warn/error。**仍未被实机覆盖**：`DeliverDirectInsert`
+  （整份日志 0 次 `Direct (composition-less) insert`——需要 Google 日本語入力半角英数才会走）与 Imm32 后端的盖章。
+
+## 第 54 轮：发布 3.1.7-beta（2026-10-16）
+
+把 51/52 轮（用户三连）+ 第八轮（裸 Shift 预测 revision）+ 53 轮（审查修复）一并发布。
+
+- **改动清单**：①无组字直写投递（`m_fCompositionActive` + `DeliverDirectInsert`，Google 日本語入力半角英数）；
+  ②Kill Caps Lock NG 兼容（`CharDelivery::IsCapsBlockingModuleName` / `NormalizeCapsCase`，WM_CHAR 转发与
+  直写投递两条路径共用）；③"上次确认文字时的输入模式"记忆（`State::RememberConversionMode` + 三处上屏盖章 +
+  会话起点写回，Imm32 后端本轮补盖章）；④裸 Shift 预测改 revision 判据 + 20ms 延迟；⑤审查修复四条
+  （会话起点镜像回弹、`MaybeReassertRememberedMode` 死代码、revision 的 open/close 盲区、若干小问题）。
+- **离线**：构建 EXIT 0（内嵌 3.1.7，POST_BUILD 同步 MO2，md5 `b664dad1…`）；测试 **71/71**；
+  `docs/VALIDATION.md` 新增 v3.1.7-beta 节，含三项**明确未验证**（无组字直写投递、Imm32 盖章、发行版复核）
+  与三条已知问题（微信不读隔间、任务栏小标滞后、宿主直通 ASCII 双打）。
+- **工具链陷阱复现**：版本 bump 触发自动 reconfigure 时若不带 `MO2_MODS_PATH`，POST_BUILD 同步块**静默消失**
+  （本轮实测：DLL 构建成功但 MO2 里仍是旧版，md5 不一致）⇒ 必须用 `build/_reconfigure.cmd` 重配。
+  另：新 CMake 的 rules.ninja 已无 `cmake_llvm_rc`，版本 bump 触发 `version.rc.res` 重编一次过，无需重打 RC 补丁。
+- 版本 3.1.6-beta → **3.1.7-beta**。
