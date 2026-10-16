@@ -1,6 +1,9 @@
 @echo off
 REM SimpleIME incremental build wrapper - MUST run under vcvars64 env
-call "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul
+REM 2026-10-16: BuildTools now lives under "Program Files (x86)" — the previous
+REM 64-bit install was removed by a C-drive cleanup, and without vcvars the
+REM resource compiler cannot find winres.h (fatal error RC1015).
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul
 cd /d D:\Documents\Hermes\WorkSpace\simpleIME
 cmake --build build\RelWithDebInfo-clangcl-ninja-vcpkg --config RelWithDebInfo 2>&1
 exit /b %ERRORLEVEL%
