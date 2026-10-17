@@ -6,10 +6,12 @@
 #include "log.h"
 #include "tsf/TextStore.h"
 #include "tsf/TsfSupport.h"
+#include "utils/CompositionScriptLogic.h"
 #include "utils/ConversionMemoryLogic.h"
 
 #include <format>
 #include <string>
+#include <string_view>
 
 namespace
 {
@@ -26,6 +28,43 @@ namespace
 /// could fire) would revert the user's own Shift right after a console open,
 /// which is the exact symptom this project spent three rounds removing.
 constexpr ULONG MODE_REASSERT_WINDOW_MS = 250;
+
+/// Minimum spacing between two profile re-activations driven by mode mirrors.
+///
+/// Re-activating the active TIP makes it re-initialise and publish its mode
+/// again; that publication is indistinguishable from a user toggle here, so it
+/// mirrored and re-activated in turn. In-game 2026-10-17 Microsoft Pinyin
+/// alternated 0x401/0x409 every 240-400 ms with one profile activation per
+/// flip — a self-sustaining loop that only ended when the user switched modes.
+/// Long enough to swallow a few echo cycles, short enough that a genuine second
+/// toggle still refreshes the language bar.
+constexpr ULONGLONG PROFILE_REACTIVATE_GUARD_MS = 800;
+
+/// Publish `value` through a compartment only when it does not already hold it.
+///
+/// The compartment sinks fire synchronously from inside SetValue, so a redundant
+/// write costs a full round of sink handling — and, through MirrorConversionMode,
+/// a profile re-activation — for a value nobody changed. Session start and menu
+/// close fire repeatedly (five enables in one logged session), which is what made
+/// every one of them re-publish the same mode.
+///
+/// Returns S_FALSE when the value was already there (nothing written), the
+/// SetValue result otherwise, E_POINTER for a missing compartment. A value the
+/// IME overwrote is therefore still written back: only an unchanged compartment
+/// skips the call.
+auto SetCompartmentIfDifferent(const CComPtr<Tsf::TsfCompartment> &compartment, const ULONG value) -> HRESULT
+{
+    if (compartment == nullptr)
+    {
+        return E_POINTER;
+    }
+    ULONG current = 0;
+    if (SUCCEEDED(compartment->GetValue(current)) && current == value)
+    {
+        return S_FALSE;
+    }
+    return compartment->SetValue(value);
+}
 } // namespace
 
 namespace Tsf
@@ -39,6 +78,15 @@ auto TextService::Initialize(ITfThreadMgr *threadMgr, TfClientId clientId) -> HR
         return hr;
     }
     m_clientId                         = clientId;
+    // The TIP's input language decides whether a composition's content may be
+    // read as conversion-mode evidence at all (see CompositionScriptLogic.h).
+    // Optional on purpose: a failure only costs the fallback in
+    // GetInputLanguageId, never the TSF service.
+    if (FAILED(m_inputProcessorProfiles.CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER)))
+    {
+        logger::warn("Can't create ITfInputProcessorProfiles; the input language falls back to the keyboard layout");
+    }
+    RefreshInputLanguage();
     m_textStore                        = new TextStore(this);
     m_conversionModeCompartment        = new TsfCompartment();
     m_contextConversionModeCompartment = new TsfCompartment();
@@ -113,13 +161,26 @@ auto TextService::Initialize(ITfThreadMgr *threadMgr, TfClientId clientId) -> HR
                     logger::info("Context keyboard open/close changed: {}", ulong);
                     auto &state = State::GetInstance();
                     state.Set(State::KEYBOARD_OPEN, ulong != 0);
-                    if (ulong != 0)
+                    // Only a Chinese TIP encodes 中/英 as open/close. Japanese
+                    // uses it for かな/英数 while the conversion bits carry
+                    // ひらがな vs 全角英数 (Microsoft IME publishes open=0 for
+                    // English with the conversion channel already at 0x0), so
+                    // deriving NATIVE from it would overwrite the mode that
+                    // channel just reported — the shape that left the display on
+                    // 「あ」 while the IME was typing 全角英数. An unresolved
+                    // language (0) keeps the old inference: better a guess than
+                    // no tracking at all for an IME that only uses this channel.
+                    const LANGID languageId = GetInputLanguageId();
+                    if (languageId == 0 || PRIMARYLANGID(languageId) == LANG_CHINESE)
                     {
-                        state.AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
-                    }
-                    else
-                    {
-                        state.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+                        if (ulong != 0)
+                        {
+                            state.AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+                        }
+                        else
+                        {
+                            state.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+                        }
                     }
                     // This IS the IME publishing its 中/英 toggle (the shape some
                     // Chinese IMEs use instead of conversion bits) and it just
@@ -239,6 +300,7 @@ void TextService::MirrorConversionMode(const ULONG conversionMode)
         return;
     }
     m_lastMirroredMode = conversionMode;
+    RecordPublishedConversionMode(conversionMode);
     if (m_contextConversionModeCompartment != nullptr)
     {
         (void)m_contextConversionModeCompartment->SetValue(conversionMode);
@@ -248,7 +310,33 @@ void TextService::MirrorConversionMode(const ULONG conversionMode)
         (void)m_globalConversionModeCompartment->SetValue(conversionMode);
     }
     logger::info("Mirrored conversion mode {:#x} to the context + global compartments", conversionMode);
-    ReactivateProfileKeepingMode();
+    // Throttled: see PROFILE_REACTIVATE_GUARD_MS. The mirror itself still runs
+    // on every value (the compartments must follow the IME); only the
+    // activation — the thing that provokes the next publication — is rate
+    // limited.
+    const auto now = GetTickCount64();
+    if (now >= m_nextProfileReactivateMs)
+    {
+        m_nextProfileReactivateMs = now + PROFILE_REACTIVATE_GUARD_MS;
+        ReactivateProfileKeepingMode();
+    }
+}
+
+void TextService::RecordPublishedConversionMode(const ULONG conversionMode)
+{
+    const auto mode = static_cast<std::uint32_t>(conversionMode);
+    if (m_publishedModeCount < PUBLISHED_MODE_HISTORY)
+    {
+        m_publishedModes[m_publishedModeCount++] = mode;
+        return;
+    }
+    // Full: drop the oldest and append. The history only answers "did we ever
+    // write this value", so order inside it does not matter — recency does.
+    for (std::size_t i = 1; i < PUBLISHED_MODE_HISTORY; ++i)
+    {
+        m_publishedModes[i - 1] = m_publishedModes[i];
+    }
+    m_publishedModes[PUBLISHED_MODE_HISTORY - 1] = mode;
 }
 
 /// Ask the system to re-evaluate the input state, so the taskbar's 中/英 chip
@@ -374,7 +462,7 @@ void TextService::StampRememberedConversionModeFromLive() const
     ULONG      live          = 0;
     const auto readPublished = [this](const CComPtr<TsfCompartment> &compartment, ULONG &out) -> bool {
         return compartment != nullptr && SUCCEEDED(compartment->GetValue(out)) &&
-               Ime::ConversionMemory::IsImePublishedValue(out, m_lastMirroredMode);
+               !Ime::ConversionMemory::IsSelfPublishedValue(static_cast<std::uint32_t>(out), m_publishedModes.data(), m_publishedModeCount);
     };
     if (readPublished(m_contextConversionModeCompartment, live))
     {
@@ -435,7 +523,10 @@ void TextService::AbortIme()
 
 auto TextService::ToogleKeyboard(bool open) -> void
 {
-    if (const auto hr = m_keyboardOpenCloseCompartment->SetValue(static_cast<ULONG>(open)); FAILED(hr))
+    // Skipped when the compartment already holds the value: the session start
+    // publishes open/close on every enable, and an unchanged write only makes
+    // the sink run again (see SetCompartmentIfDifferent).
+    if (const auto hr = SetCompartmentIfDifferent(m_keyboardOpenCloseCompartment, static_cast<ULONG>(open)); FAILED(hr))
     {
         logger::debug("Can't toggle keyboard: {:#X}", hr);
     }
@@ -526,9 +617,15 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
     // profile re-activation at EVERY session start — the exact hammer the
     // disable path avoids, and one that could land after a disable.
     m_lastMirroredMode = conversionMode;
+    RecordPublishedConversionMode(conversionMode);
 
-    const HRESULT openCloseHr      = m_globalOpenCloseCompartment->SetValue(openClose);
-    const HRESULT conversionModeHr = m_globalConversionModeCompartment->SetValue(conversionMode);
+    // Publishing an unchanged value is not free: the sinks fire synchronously
+    // from inside SetValue. A session start can run several times per session
+    // (five enables in one logged session — window activations and menu
+    // toggles), and each pass used to re-publish the same mode. hr=0x1 below
+    // means "already there, skipped".
+    const HRESULT openCloseHr      = SetCompartmentIfDifferent(m_globalOpenCloseCompartment, openClose);
+    const HRESULT conversionModeHr = SetCompartmentIfDifferent(m_globalConversionModeCompartment, conversionMode);
 
     // Mirror into this thread's own compartments: the language bar's 中/英 state
     // reads them (their sinks refresh State), so the overlay must not go stale
@@ -561,10 +658,73 @@ auto TextService::SetConversionMode(DWORD conversionMode) -> bool
 
 void TextService::RefreshConversionMode()
 {
+    // A TIP activation is also the only thing that changes the input language,
+    // and the composition sinks gate their mode inference on it (see
+    // CompositionScriptLogic.h), so re-read it here as well.
+    RefreshInputLanguage();
     UpdateConversionMode();
     // One diagnostic line per TIP activation: shows which of the six watched
     // compartments actually carry a value for the active IME.
     DumpConversionCompartments();
+}
+
+auto TextService::GetInputLanguageId() const -> LANGID
+{
+    if (m_langId != 0)
+    {
+        return m_langId;
+    }
+    // Nothing resolved yet (no TIP activation since startup): the thread's
+    // keyboard layout carries the same language id for the usual layouts.
+    return LOWORD(GetKeyboardLayout(GetCurrentThreadId()));
+}
+
+void TextService::RefreshInputLanguage()
+{
+    LANGID           langId = 0;
+    std::string_view source = "keyboard layout";
+    if (m_inputProcessorProfiles != nullptr)
+    {
+        // The active profile is the authoritative answer: it is the IME the user
+        // actually selected, and its langid is the language the composition
+        // sinks need (in-game 2026-10-17: GetCurrentLanguage reported 0x0804 —
+        // the system default — while the active TIP was Microsoft Pinyin; the
+        // two only agree by coincidence).
+        CComQIPtr<ITfInputProcessorProfileMgr> profileMgr(m_inputProcessorProfiles);
+        TF_INPUTPROCESSORPROFILE               profile{};
+        if (profileMgr != nullptr && SUCCEEDED(profileMgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &profile)) && profile.langid != 0)
+        {
+            langId = profile.langid;
+            source = "active profile";
+        }
+        else if (SUCCEEDED(m_inputProcessorProfiles->GetCurrentLanguage(&langId)) && langId != 0)
+        {
+            source = "TSF current language";
+        }
+        else
+        {
+            langId = LOWORD(GetKeyboardLayout(GetCurrentThreadId()));
+        }
+    }
+    else
+    {
+        langId = LOWORD(GetKeyboardLayout(GetCurrentThreadId()));
+    }
+    if (langId != m_langId)
+    {
+        // The composition sinks gate their script inference on this language
+        // (CompositionScriptLogic.h). A value that resolves to the US layout
+        // while a Japanese IME is active would silently disable the whole
+        // correction path, so make the decision visible in the log.
+        logger::info(
+            "Input language resolved: langId={:#06x} (primary={:#04x}, Japanese inference {}) via {}",
+            static_cast<std::uint32_t>(langId),
+            static_cast<std::uint32_t>(PRIMARYLANGID(langId)),
+            PRIMARYLANGID(langId) == Ime::CompositionScript::LANG_JAPANESE_PRIMARY ? "enabled" : "disabled",
+            source
+        );
+    }
+    m_langId = langId;
 }
 
 void TextService::DumpConversionCompartments() const

@@ -5,6 +5,7 @@
 #include "imgui_internal.h"
 #include "log.h"
 #include "tsf/TsfSupport.h"
+#include "utils/CompositionScriptLogic.h"
 #include "utils/Utils.h"
 
 #include <InputScope.h>
@@ -12,10 +13,57 @@
 #include <atomic>
 #include <olectl.h>
 #include <string>
+#include <string_view>
 
 namespace Tsf
 {
 using DirtyFlag = Ime::ITextService::DirtyFlag;
+
+namespace
+{
+/// Apply the conversion-mode evidence a live Japanese composition's text
+/// carries (see CompositionScriptLogic.h). Chinese is deliberately excluded: a
+/// pinyin preedit is ASCII by construction, so ASCII there proves nothing about
+/// the mode.
+///
+/// Before this, OnStartComposition asserted NATIVE unconditionally. Microsoft
+/// IME composes 全角英数/半角英数 too, so every composition start in those modes
+/// turned the display into NATIVE|FULLSHAPE — 「あ」 on the language bar while the
+/// IME actually typed 「ａ」 — and no path ever took it back (in-game report,
+/// 2026-10-17).
+auto ApplyCompositionScriptEvidence(const TextService &service, const std::wstring_view text) -> void
+{
+    if (!Ime::CompositionScript::ShouldInferFromComposition(PRIMARYLANGID(service.GetInputLanguageId())))
+    {
+        return;
+    }
+    const auto evidence = Ime::CompositionScript::EvidenceFor(Ime::CompositionScript::Classify(text));
+    if (!evidence.decisive)
+    {
+        return;
+    }
+    auto &state = Ime::Core::State::GetInstance();
+    if (evidence.native)
+    {
+        state.AddConversionModeFlag(Ime::Core::State::ConversionMode::Flags::NATIVE);
+    }
+    else
+    {
+        state.ClearConversionModeFlag(Ime::Core::State::ConversionMode::Flags::NATIVE);
+    }
+    if (evidence.fullShapeKnown)
+    {
+        if (evidence.fullShape)
+        {
+            state.AddConversionModeFlag(Ime::Core::State::ConversionMode::Flags::FULLSHAPE);
+        }
+        else
+        {
+            state.ClearConversionModeFlag(Ime::Core::State::ConversionMode::Flags::FULLSHAPE);
+        }
+    }
+}
+} // namespace
 
 auto TextStore::InitSinks() -> HRESULT
 {
@@ -902,12 +950,20 @@ auto TextStore::OnStartComposition(ITfCompositionView *pComposition, BOOL *pfOk)
     // 立刻通知宿主界面"开始组字"：等游戏线程下一帧再发布，第一个字母已经作为
     // CharEvent 被它收进字面了。
     Ime::Skyrim::MarkCompositionActive();
-    // Behavioral mode inference: a TIP only starts composing in native
-    // (Chinese/Japanese) mode — raw letters never begin a composition. IMEs
-    // that publish no mode compartment (WeChat IME) are still tracked this
-    // way; the compartment watchers provide the instant updates where they
-    // actually fire.
-    State::GetInstance().AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+    // Behavioral mode inference: a Chinese TIP only starts composing in native
+    // (Chinese) mode — raw letters never begin a composition there, and IMEs
+    // that publish no mode compartment (WeChat IME) are still tracked this way;
+    // the compartment watchers provide the instant updates where they actually
+    // fire.
+    //
+    // Japanese must NOT be asserted here: Microsoft IME composes 全角英数/半角英数
+    // as well, so "a composition is running" proves nothing there and only its
+    // content does — corrected on every update and again at the commit (see
+    // ApplyCompositionScriptEvidence).
+    if (PRIMARYLANGID(m_pTextService->GetInputLanguageId()) != LANG_JAPANESE)
+    {
+        State::GetInstance().AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+    }
     return S_OK;
 }
 
@@ -915,6 +971,12 @@ auto TextStore::OnUpdateComposition(ITfCompositionView * /*pComposition*/, ITfRa
 {
     logger::debug("TSF composition updated");
     State::GetInstance().Set(State::IN_COMPOSING);
+    // Japanese: the preedit content is the only mode evidence there is (see
+    // ApplyCompositionScriptEvidence). Reading the editor text takes the same
+    // lock discipline as the commit below, because the render thread copies the
+    // same state under it.
+    auto lock = m_pTextService->GetSinkWriteLock(m_fLocked != FALSE);
+    ApplyCompositionScriptEvidence(*m_pTextService, m_pTextService->GetTextEditorWrite().GetText());
     return S_OK;
 }
 
@@ -954,6 +1016,10 @@ auto TextStore::OnEndComposition(ITfCompositionView * /*pComposition*/) -> HRESU
             "TSF composition ended, committing {} characters: '{}'",
             committed.size(),
             committed.size() <= 16 ? WCharUtils::ToString(committed) : WCharUtils::ToString(committed.substr(0, 16)));
+        // The committed text is the last word on the mode it was typed in:
+        // correct State BEFORE the stamp, or the stamp persists the stale value
+        // and a 全角英数 commit keeps 「あ」 alive into the next session.
+        ApplyCompositionScriptEvidence(*m_pTextService, committed);
         // Text was confirmed in this mode: remember it for the next session
         // (see ITextService::StampRememberedConversionModeFromLive).
         m_pTextService->StampRememberedConversionModeFromLive();

@@ -311,33 +311,51 @@ ImeApp::ImeApp()
     m_settings = SettingsManager::Load();
 
     // Seed the conversion-mode (中/英) prior from the previous session's last
-    // in-game observation (persisted as input.last_native_conversion). This
-    // marks the mode as observed, so the activation path's "unknown mode ⇒
-    // assume 中" seed never fires on top of it — the remembered value is the
-    // better first-entry prior. A config without the key (fresh install or
-    // pre-existing file) loads the default true, i.e. the same 中 guess the
-    // activation seed would have made.
-    auto &conversionState = Core::State::GetInstance();
-    if (m_settings.input.lastNativeConversion)
+    // in-game observation. input.last_conversion_mode carries the FULL mode
+    // (ひらがな 0x9, 全角英数 0x8, …); input.last_native_conversion is the old
+    // boolean and only survives for configs written before the full value
+    // existed. Either one marks the mode as observed, so the activation path's
+    // "unknown mode ⇒ assume 中" seed never fires on top of it — the remembered
+    // value is the better first-entry prior. A config without both keys (fresh
+    // install) keeps the default -1/true, i.e. the same 中 guess the activation
+    // seed would have made.
+    //
+    // Restoring the full value is what stops a Japanese session from starting in
+    // NATIVE-only 0x1: the boolean cannot express FULLSHAPE/ROMAN, and that is
+    // the shape the in-game log showed being pushed into Microsoft IME.
+    auto       &conversionState = Core::State::GetInstance();
+    using ConversionFlags       = Core::State::ConversionMode::Flags;
+    if (m_settings.input.lastConversionMode >= 0)
     {
-        conversionState.AddConversionModeFlag(Core::State::ConversionMode::Flags::NATIVE);
+        const auto fullMode = static_cast<Core::State::ConversionMode::UnderlyingType>(m_settings.input.lastConversionMode);
+        if ((static_cast<std::uint32_t>(fullMode) & static_cast<std::uint32_t>(ConversionFlags::NATIVE)) != 0U)
+        {
+            conversionState.AddConversionModeFlag(ConversionFlags::NATIVE);
+        }
+        else
+        {
+            conversionState.ClearConversionModeFlag(ConversionFlags::NATIVE);
+        }
+        conversionState.RememberConversionMode(fullMode);
     }
     else
     {
-        conversionState.ClearConversionModeFlag(Core::State::ConversionMode::Flags::NATIVE);
+        if (m_settings.input.lastNativeConversion)
+        {
+            conversionState.AddConversionModeFlag(ConversionFlags::NATIVE);
+        }
+        else
+        {
+            conversionState.ClearConversionModeFlag(ConversionFlags::NATIVE);
+        }
+        // Exact for the alphanumeric case — the one the boolean can express
+        // without guessing ROMAN.
+        conversionState.RememberConversionMode(
+            static_cast<Core::State::ConversionMode::UnderlyingType>(
+                m_settings.input.lastNativeConversion ? ConversionFlags::NATIVE : ConversionFlags::ALPHANUMERIC
+            )
+        );
     }
-
-    // Seed the RESTORE side of the same prior: the first text entry of this
-    // session puts the IME back into the mode the user last typed in, instead of
-    // forcing native mode on every console open (the reported "it always comes
-    // back in Japanese"). The persisted flag is exact for the alphanumeric case
-    // — the one it can express without guessing ROMAN.
-    using ConversionFlags = Core::State::ConversionMode::Flags;
-    conversionState.RememberConversionMode(
-        static_cast<Core::State::ConversionMode::UnderlyingType>(
-            m_settings.input.lastNativeConversion ? ConversionFlags::NATIVE : ConversionFlags::ALPHANUMERIC
-        )
-    );
 
     SksePlugin::InitializeLogging({.level = m_settings.logging.level, .flushLevel = m_settings.logging.flushLevel});
 }
@@ -706,23 +724,30 @@ auto ImeApp::SaveSettings() -> bool
         case ConversionMemory::PriorSource::Remembered: {
             const auto remembered = conversionState.GetRememberedConversionMode();
             m_settings.input.lastNativeConversion = ConversionMemory::IsNativeMode(remembered);
+            // Full value as well: the boolean above loses FULLSHAPE/ROMAN, which
+            // is what made a Japanese session start in NATIVE-only 0x1.
+            m_settings.input.lastConversionMode = static_cast<std::int32_t>(remembered);
             logger::info(
-                "Persisted the last confirmed conversion mode {:#x} (native={}) as input.last_native_conversion; the live display value was {:#x}",
+                "Persisted the last confirmed conversion mode {:#x} (native={}) as input.last_native_conversion / input.last_conversion_mode; the live display value was {:#x}",
                 remembered,
                 m_settings.input.lastNativeConversion,
                 conversionState.GetConversionMode().RawValue()
             );
             break;
         }
-        case ConversionMemory::PriorSource::Display:
-            m_settings.input.lastNativeConversion = conversionState.GetConversionMode().IsNative();
+        case ConversionMemory::PriorSource::Display: {
+            const auto displayMode = conversionState.GetConversionMode();
+            m_settings.input.lastNativeConversion = displayMode.IsNative();
+            m_settings.input.lastConversionMode   = static_cast<std::int32_t>(displayMode.RawValue());
             logger::info(
-                "Persisted the live display conversion mode (nothing confirmed yet) as input.last_native_conversion (native={})",
-                m_settings.input.lastNativeConversion
+                "Persisted the live display conversion mode (nothing confirmed yet) as input.last_native_conversion / input.last_conversion_mode (native={}, mode={:#x})",
+                m_settings.input.lastNativeConversion,
+                m_settings.input.lastConversionMode
             );
             break;
+        }
         case ConversionMemory::PriorSource::KeepLoaded:
-            logger::debug("No conversion mode observed yet; keeping the loaded input.last_native_conversion");
+            logger::debug("No conversion mode observed yet; keeping the loaded input.last_native_conversion / input.last_conversion_mode");
             break;
     }
     return SettingsManager::Save(m_settings);

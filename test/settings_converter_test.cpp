@@ -180,6 +180,7 @@ TEST(ConfigurationToSettingsTest, should_set_base_type_member_value_from_configu
     EXPECT_EQ(settings.input.imguiSurfaceInput, configuration.input.imguiSurfaceInput);
     EXPECT_EQ(settings.input.pauseGameWhileSettingsOpen, configuration.input.pauseGameWhileSettingsOpen);
     EXPECT_EQ(settings.input.lastNativeConversion, configuration.input.lastNativeConversion);
+    EXPECT_EQ(settings.input.lastConversionMode, configuration.input.lastConversionMode);
 }
 
 // The first conversion normalizes (clamps, parses enums, pins the default
@@ -221,6 +222,7 @@ TEST(SettingsRoundTripTest, settings_config_settings_is_a_fixed_point)
         EXPECT_EQ(actual.input.imguiSurfaceInput, expected.input.imguiSurfaceInput);
         EXPECT_EQ(actual.input.pauseGameWhileSettingsOpen, expected.input.pauseGameWhileSettingsOpen);
         EXPECT_EQ(actual.input.lastNativeConversion, expected.input.lastNativeConversion);
+        EXPECT_EQ(actual.input.lastConversionMode, expected.input.lastConversionMode);
     };
 
     // Randomized configuration: the wide input space (random strings, out-of-
@@ -288,6 +290,9 @@ TEST(ConfigurationToSettingsTest, should_convert_default_configuration_to_defaul
     // (fresh install) that is the same guess the activation path makes.
     EXPECT_EQ(settings.input.lastNativeConversion, defaultSettings.input.lastNativeConversion);
     EXPECT_EQ(settings.input.lastNativeConversion, true);
+    // Nothing recorded yet: -1 is what makes the startup seed fall back to the
+    // boolean above instead of restoring an unset mode.
+    EXPECT_EQ(settings.input.lastConversionMode, -1);
 }
 
 TEST(ConfigurationToSettingsTest, should_convert_theme_style_string_to_variant)
@@ -418,4 +423,5 @@ TEST(ShippedConfigurationTest, shipped_toml_converts_to_default_settings)
     EXPECT_EQ(shipped.input.imguiSurfaceInput, expected.input.imguiSurfaceInput);
     EXPECT_EQ(shipped.input.pauseGameWhileSettingsOpen, expected.input.pauseGameWhileSettingsOpen);
     EXPECT_EQ(shipped.input.lastNativeConversion, expected.input.lastNativeConversion);
+    EXPECT_EQ(shipped.input.lastConversionMode, expected.input.lastConversionMode);
 }

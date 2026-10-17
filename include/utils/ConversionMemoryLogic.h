@@ -33,6 +33,31 @@ namespace Ime::ConversionMemory
 }
 
 /**
+ * True when `value` is one WE published at some point this session.
+ *
+ * The single "last published" value above is the right test for a synchronous
+ * bounce (the sink echoing the write that is running), but the compartment
+ * stamp needs a wider net: it reads a compartment minutes later, and by then
+ * the client has published several distinct values (the session-start push,
+ * then one mirror per observed toggle). In-game 2026-10-17 the session-end stamp
+ * read 0x401 — a value we had mirrored earlier — judged it foreign because the
+ * last write had been 0x0, and recorded it as the IME's own word while the live
+ * display said 0x0.
+ */
+[[nodiscard]] constexpr auto
+    IsSelfPublishedValue(const std::uint32_t value, const std::uint32_t *history, const std::size_t count) -> bool
+{
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (history[i] == value)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * The NATIVE (中/あ side) bit of a raw TF_CONVERSIONMODE value — the only part
  * of the mode the persisted `input.last_native_conversion` flag can express.
  * ROMAN/かな etc. are lost by that key by design; see the comment on the key.

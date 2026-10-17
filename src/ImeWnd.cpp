@@ -754,6 +754,17 @@ void ImeWnd::HandleKeyUp(UINT uMsg, WPARAM wParam, LPARAM lParam)
 /// window in which any of them can change.
 auto ImeWnd::IsShiftTapPredictable() const -> bool
 {
+    // The bare-Shift 中/英 toggle is a Chinese IME convention. Japanese IMEs
+    // express 日/英 through the open/close compartment (Microsoft IME writes
+    // thread open/close) and leave the conversion bits alone, so flipping NATIVE
+    // here only desynchronises the display from the IME: the language bar showed
+    // 「Ａ」 while the IME still typed あ (in-game report, 2026-10-17 — six
+    // phantom toggles in one log). The open/close→NATIVE mirror below is
+    // Chinese-only for the same reason.
+    if (m_inputMethodManager == nullptr || PRIMARYLANGID(GetActiveLangProfile().langid) != LANG_CHINESE)
+    {
+        return false;
+    }
     const auto &state = State::GetInstance();
     return ImeController::GetInstance()->IsModEnabled() && state.NotHas(State::IME_DISABLED) &&
            state.Has(State::INPUT_PROCESSOR_ACTIVATED) && state.TsfFocus() &&

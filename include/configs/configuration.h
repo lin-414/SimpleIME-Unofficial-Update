@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -74,7 +75,17 @@ struct Configuration
         /// session's first text-field entry — IMEs like WeChat publish no
         /// conversion compartment, so without this the first entry has no
         /// information at all to display.
+        ///
+        /// Kept for configurations written before lastConversionMode existed:
+        /// the full mode below supersedes it, this only carries the 中/英 bit.
         bool        lastNativeConversion;
+        /// Runtime cache, NOT a preference: the full conversion mode last
+        /// confirmed in-game (State::GetRememberedConversionMode), e.g. 0x9 for
+        /// ひらがな or 0x8 for 全角英数. -1 means "nothing recorded yet" — the
+        /// boolean above cannot tell 0x0 (半角英数) from "unset", and it drops
+        /// FULLSHAPE/ROMAN, which is how a Japanese session used to start in
+        /// NATIVE-only (0x1) instead of the mode the user actually typed in.
+        std::int32_t lastConversionMode;
     };
 
     std::string shortcut;
@@ -123,7 +134,7 @@ constexpr auto GetDefaultConfiguration() -> Configuration
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true, .lastConversionMode = -1}
     };
 }
 

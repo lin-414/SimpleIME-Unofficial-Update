@@ -361,6 +361,13 @@ public:
     /// See ITextService::ConversionModeRevision.
     [[nodiscard]] auto ConversionModeRevision() const -> std::uint64_t override { return m_conversionModeRevision; }
 
+    /// The input language of the TIP that currently owns this thread (e.g.
+    /// LANG_JAPANESE, LANG_CHINESE, LANG_ENGLISH). Cached: refreshed on every TIP
+    /// activation (RefreshConversionMode) and at Initialize, because the TSF
+    /// sinks that need it fire per keystroke and a live COM query there would be
+    /// wasteful. Falls back to the thread's keyboard layout.
+    [[nodiscard]] auto GetInputLanguageId() const -> LANGID;
+
     auto SnapshotCompositionAndCandidates(Ime::CompositionInfo &outComposition, Ime::CandidateUi &outCandidates) -> void override
     {
         const std::scoped_lock lock(m_mutex);
@@ -423,6 +430,10 @@ private:
     void        UpdateConversionMode();
     void        UpdateConversionMode(ULONG conversionMode);
     void        DumpConversionCompartments() const;
+    /// Re-read the active TIP's language into m_langId (see GetInputLanguageId).
+    void        RefreshInputLanguage();
+    /// Append to m_publishedModes (bounded, oldest dropped). See its comment.
+    void        RecordPublishedConversionMode(ULONG conversionMode);
     /// The one-shot correction for an IME that re-initialises its own mode right
     /// after a session starts. Returns true when it corrected the mode — the
     /// caller must then skip MirrorConversionMode for that observation, or the
@@ -477,9 +488,33 @@ private:
     /// own writes too, so without this every observation would bounce back as
     /// another write.
     ULONG                     m_lastMirroredMode                 = 0;
+    /// Every value this client published recently, oldest first. The single
+    /// "last written" value above answers "is this a bounce of the write I just
+    /// did", which is all the mirror's early-out needs — but the compartment
+    /// stamp asks a different question: "did WE ever write this", because a
+    /// compartment can hand back a value written minutes ago (in-game
+    /// 2026-10-17: the session-end stamp read 0x401 we had mirrored earlier and
+    /// recorded it as the IME's own word while the display said 0x0).
+    static constexpr std::size_t PUBLISHED_MODE_HISTORY = 8;
+    std::array<std::uint32_t, PUBLISHED_MODE_HISTORY> m_publishedModes{};
+    std::size_t               m_publishedModeCount               = 0;
+    /// Earliest tick at which MirrorConversionMode may re-activate the input
+    /// profile again. A re-activation makes the IME re-initialise and publish a
+    /// mode, which arrives here as a fresh observation and would re-activate in
+    /// turn: in-game 2026-10-17 Microsoft Pinyin alternated 0x401/0x409 every
+    /// 240-400 ms, one profile activation per flip, until the user switched
+    /// away. The throttle keeps the first refresh and drops the echo-driven
+    /// ones.
+    ULONGLONG                 m_nextProfileReactivateMs          = 0;
     /// See ITextService::ConversionModeRevision — bumped on every observed
     /// conversion-mode publish, i.e. whenever a sink fires with a new value.
     std::uint64_t             m_conversionModeRevision           = 0;
+    /// See GetInputLanguageId. 0 means "not resolved yet" — the accessor falls
+    /// back to the thread keyboard layout in that case.
+    LANGID                    m_langId                           = 0;
+    /// Backs RefreshInputLanguage. Optional: a machine without a working
+    /// ITfInputProcessorProfiles degrades to the keyboard-layout fallback.
+    CComPtr<ITfInputProcessorProfiles> m_inputProcessorProfiles  = nullptr;
     CComPtr<TextStore>        m_textStore                        = nullptr;
     mutable std::shared_mutex m_mutex;
     TfClientId                m_clientId;

@@ -169,7 +169,15 @@ struct Settings
         /// aligned bool — same no-tear tolerance doctrine as above) and seeded
         /// into State at startup so the next session's FIRST text-field entry
         /// shows the remembered mode instead of a guess.
+        ///
+        /// Superseded by lastConversionMode (the full value); kept so a config
+        /// written by an older build still carries its 中/英 bit.
         bool                  lastNativeConversion = true;
+        /// Runtime cache: the full conversion mode last confirmed in-game, e.g.
+        /// 0x9 (ひらがな) or 0x8 (全角英数). -1 = nothing recorded yet. Restoring
+        /// the full value is what keeps a Japanese session from starting in
+        /// NATIVE-only 0x1 and losing FULLSHAPE/ROMAN.
+        std::int32_t          lastConversionMode = -1;
     } input;
 };
 
@@ -193,7 +201,7 @@ inline auto GetDefaultSettings() -> Settings
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true, .lastConversionMode = -1}
     };
 }
 

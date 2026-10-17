@@ -46,3 +46,28 @@ TEST(ConversionMemoryPriorSource, remembered_mode_wins_over_the_live_display)
     // previous session's prior with an untouched default.
     EXPECT_EQ(ChoosePriorSource(false, false), PriorSource::KeepLoaded);
 }
+
+TEST(ConversionMemorySelfPublishedValue, any_value_we_wrote_counts_as_our_own)
+{
+    const std::uint32_t history[] = {0x1, 0x401, 0x409};
+    EXPECT_TRUE(IsSelfPublishedValue(0x1, history, 3));
+    EXPECT_TRUE(IsSelfPublishedValue(0x401, history, 3));
+    EXPECT_TRUE(IsSelfPublishedValue(0x409, history, 3));
+    // Never written by us: that is the IME's own word.
+    EXPECT_FALSE(IsSelfPublishedValue(0x0, history, 3));
+    EXPECT_FALSE(IsSelfPublishedValue(0x8, history, 3));
+    // Empty history: nothing was published, so nothing can be ours.
+    EXPECT_FALSE(IsSelfPublishedValue(0x0, history, 0));
+}
+
+TEST(ConversionMemorySelfPublishedValue, the_reported_regression_is_caught)
+{
+    // In-game 2026-10-17: the session-end stamp read 0x401 — a value we had
+    // mirrored earlier — while m_lastMirroredMode was 0x0 (the disable path had
+    // just flattened it). The single-value test called 0x401 foreign and
+    // recorded it as the IME's own word while the display said 0x0; the history
+    // recognises it.
+    const std::uint32_t history[] = {0x401, 0x0};
+    EXPECT_TRUE(IsImePublishedValue(0x401, 0x0)); // the old single-value answer: "foreign"
+    EXPECT_TRUE(IsSelfPublishedValue(0x401, history, 2));
+}

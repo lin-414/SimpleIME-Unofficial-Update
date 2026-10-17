@@ -83,6 +83,7 @@ inline auto GetRandomConfiguation(std::uint32_t *seedOut = nullptr) -> Ime::Conf
     configuration.input.imguiSurfaceInput        = random.NextBool();
     configuration.input.pauseGameWhileSettingsOpen = random.NextBool();
     configuration.input.lastNativeConversion     = random.NextBool();
+    configuration.input.lastConversionMode       = static_cast<std::int32_t>(random.NextInt(0, 0x20));
     return configuration;
 }
 

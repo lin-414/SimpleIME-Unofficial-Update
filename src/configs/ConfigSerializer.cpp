@@ -69,6 +69,7 @@ constexpr auto KEY_SKSEMF_SUPPORT         = "skse_menu_framework_support";
 constexpr auto KEY_IMGUI_SURFACE_INPUT    = "imgui_surface_input";
 constexpr auto KEY_PAUSE_FOR_SETTINGS     = "pause_game_while_settings_open";
 constexpr auto KEY_LAST_NATIVE_CONVERSION = "last_native_conversion";
+constexpr auto KEY_LAST_CONVERSION_MODE   = "last_conversion_mode";
 
 //! @brief Format the configuration to a TOML string with comments for better readability.
 //! May throw `toml::exception` if the configuration contains unsupported types or values.
@@ -147,7 +148,12 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         " 运行时缓存，非用户配置：游戏内最后观察到的 中/英 输入状态(true=中文)",
         " 由 Mod 在每次保存配置时自动更新，用于下次启动游戏时语言栏的初始显示。",
         " 微信等输入法不通过系统接口公布中/英状态，没有这个缓存时首次进入输入框无法预判。",
-        " 请勿手动修改。",
+        " 已被 last_conversion_mode 取代（完整模式值），仅用于读取旧配置。请勿手动修改。",
+    };
+    const Comments lastConversionModeComment = {
+        " 运行时缓存，非用户配置：游戏内最后确认的完整输入模式(十六进制)，如 0x9=ひらがな、0x8=全角英数",
+        " -1 表示尚未记录。下次启动时据此恢复完整模式（含全角/罗马字标志），",
+        " 旧的 last_native_conversion 只记录 中/英 一位，会丢掉这些标志。请勿手动修改。",
     };
     const Comments logFlushLevelComment = {
         " 达到此级别及以上的日志立即写入磁盘，低于它的先留在缓冲区；可选值与 level 相同",
@@ -203,6 +209,7 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         {KEY_IMGUI_SURFACE_INPUT,  {configuration.input.imguiSurfaceInput, imguiSurfaceInputComment}},
         {KEY_PAUSE_FOR_SETTINGS,   {configuration.input.pauseGameWhileSettingsOpen, pauseForSettingsComment}},
         {KEY_LAST_NATIVE_CONVERSION, {configuration.input.lastNativeConversion, lastNativeConversionComment}},
+        {KEY_LAST_CONVERSION_MODE, {configuration.input.lastConversionMode, lastConversionModeComment}},
     };
     const toml::value tomlTable = {
         toml::table{
@@ -336,6 +343,7 @@ auto ParseConfigurationFromToml(toml::value &rawToml, std::vector<std::string> *
         apply(input, KEY_IMGUI_SURFACE_INPUT, config.input.imguiSurfaceInput);
         apply(input, KEY_PAUSE_FOR_SETTINGS, config.input.pauseGameWhileSettingsOpen);
         apply(input, KEY_LAST_NATIVE_CONVERSION, config.input.lastNativeConversion);
+        apply(input, KEY_LAST_CONVERSION_MODE, config.input.lastConversionMode);
     }
     if (ignoredKeysOut != nullptr)
     {

@@ -354,6 +354,7 @@ auto ConvertConfigurationToSettings(const Configuration &config) -> Settings
     settings.input.imguiSurfaceInput        = config.input.imguiSurfaceInput;
     settings.input.pauseGameWhileSettingsOpen = config.input.pauseGameWhileSettingsOpen;
     settings.input.lastNativeConversion     = config.input.lastNativeConversion;
+    settings.input.lastConversionMode       = config.input.lastConversionMode;
 
     if (const auto posPolicyOpt = Converter<Settings::WindowPosUpdatePolicy>::fromString(config.input.posUpdatePolicy); posPolicyOpt.has_value())
     {
@@ -432,6 +433,7 @@ auto ConvertSettingsToConfiguration(const Settings &settings) -> Configuration
     configuration.input.imguiSurfaceInput        = settings.input.imguiSurfaceInput;
     configuration.input.pauseGameWhileSettingsOpen = settings.input.pauseGameWhileSettingsOpen;
     configuration.input.lastNativeConversion     = settings.input.lastNativeConversion;
+    configuration.input.lastConversionMode       = settings.input.lastConversionMode;
 
     if (const auto posPolicyOpt = Converter<Settings::WindowPosUpdatePolicy>::toString(settings.input.posUpdatePolicy); posPolicyOpt.has_value())
     {
