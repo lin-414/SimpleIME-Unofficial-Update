@@ -179,14 +179,25 @@ auto ImeManager::DoEnable() -> bool
 {
     auto &state   = State::GetInstance();
     bool  success = false;
-    logger::info("IME enabled: clearing IME_DISABLED, focusing TSF");
-    state.Clear(State::IME_DISABLED);
+    logger::info("IME enabled: focusing TSF and restoring the remembered mode");
     success = m_imeWnd->FocusTextService(true);
     if (!m_settings.switchEnglishLayoutOnDisable)
     {
         // The disable path never switched the profile away — it only closed the
         // user's input method. Open it back up; that needs no session write.
-        m_imeWnd->SetSessionImeEnabled(true);
+        //
+        // Order matters: publish the remembered mode while IME_DISABLED still
+        // stands. The conversion-mode sink stays guarded then
+        // (UpdateConversionMode returns early), so the IME's own default —
+        // which some Chinese IMEs republish as soon as the document regains
+        // focus (0x9 for a 英全角 session) — cannot land in State first and
+        // get mirrored. SetSessionImeEnabled(true) freezes m_restoreTargetMode
+        // and arms the one-shot re-assert; clearing IME_DISABLED afterwards
+        // lets that IME default through, where MaybeReassertRememberedMode
+        // puts the remembered 0x8 back (in-game report, 2026-10-17: 英全角
+        // sometimes flipped to 中全角 after reopening the console).
+        (void)m_imeWnd->SetSessionImeEnabled(true);
+        state.Clear(State::IME_DISABLED);
         // Unless what is active is a plain keyboard layout: an English-only
         // session, or a TIP the user never had. Enabling the IME means they want
         // to compose, so pick their own IME from the enumeration.
@@ -197,6 +208,14 @@ auto ImeManager::DoEnable() -> bool
         }
         return success;
     }
+    // Same ordering as the branch above: arm the restore while the conversion
+    // sink is still guarded, so the default mode the profile activation below
+    // republishes lands through MaybeReassertRememberedMode instead of into
+    // State. Without this, a 英全角 session reopened with
+    // switchEnglishLayoutOnDisable on still came back as 中全角 (review
+    // follow-up, 2026-10-17).
+    (void)m_imeWnd->SetSessionImeEnabled(true);
+    state.Clear(State::IME_DISABLED);
     // Restore the input method that was active before IME was disabled.
     // Without this, the system TIP stays on the English keyboard after
     // EnableIme(false) switched it away, and typing in a text field

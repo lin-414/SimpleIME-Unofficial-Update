@@ -2224,3 +2224,239 @@ SendUiString 路由入队 → 框架回调线程 ImGuiIO_AddInputCharacter 注�
   （本轮实测：DLL 构建成功但 MO2 里仍是旧版，md5 不一致）⇒ 必须用 `build/_reconfigure.cmd` 重配。
   另：新 CMake 的 rules.ninja 已无 `cmake_llvm_rc`，版本 bump 触发 `version.rc.res` 重编一次过，无需重打 RC 补丁。
 - 版本 3.1.6-beta → **3.1.7-beta**。
+
+## 第 55 轮：3.1.8 补丁——无组字直通路径的两处漏修（2026-10-17）
+
+用户（日语用户，控制台窗口，Google 日本語入力 + Microsoft IME）反馈：Shift+Caps / Win 键锁定全角
+已修好，但**关闭再打开控制台又回到全角**；且 **Google 日本語入力切半角英数打不出字**仍未解决。
+日志：pastebin.com/AyjY6Zfx（本地 `dev/ime-user-log-lines.txt`）。
+
+- **根因 A（重开回全角）**：`src/ImeWnd.cpp` 的 ASCII 直通分支只
+  `ClearConversionModeFlag(NATIVE)`，**不清 FULLSHAPE**。微软 IME 的 Shift 切英数只写 open/close
+  （17:08:31.437 `Thread keyboard open/close changed: 0`），不写 conversion mode；字母经 WM_CHAR
+  到达时 State 从 0x9 变 0x8（FULLSHAPE 残留）→ `StampRememberedConversionModeFromLive()` 回落到
+  State 盖 0x8 → 17:08:58.392 `Persisted the last confirmed conversion mode 0x8` → 重开恢复 0x8 →
+  输出 0xff41。修复=同分支连清 NATIVE + FULLSHAPE（半角字母能到 WM_CHAR 本身就证明全角不成立）。
+- **根因 B（Google 半角失声）**：`src/ImeWnd.cpp` 在 `IN_COMPOSING || IN_CAND_CHOOSING` 时
+  `return 0` 丢弃 WM_CHAR；而 `TextStore::OnEndComposition` 的 `ClearComposing()` 排在函数**最末尾**
+  （提交回调 `SendUiString`、盖章、candidate-UI close 之后），任一步失败/重入即残留。日志：
+  17:08:16.499 提交「あああ」后，17:08:20.099–17:08:21.899 的 `0x74/0x65/0x73/0x74/0x61` 全被
+  `dropped (composition active)` 丢掉。修复=`ClearComposing()` 提到 `m_fCompositionActive = false`
+  之后立即执行；dropped 分支日志改为打印 `IN_COMPOSING={} IN_CAND_CHOOSING={}` 具体标志对。
+- **为什么 3.1.8 没覆盖**：3.1.8 六条修复全在「有组字」路径（`CompositionScriptLogic` 证据只在
+  OnStart/OnUpdate/OnEndComposition 跑；裸 Shift 预测对日文直接 `return false`），两个症状都发生在
+  **无组字直通**路径。
+- **离线**：构建 EXIT 0（RelWithDebInfo，`[11/12] Linking CXX shared library SimpleIME.dll`，39 条
+  警告均为既有 `unused variable 'tracer'`）；DLL md5 `6C8D31A29F9E9A5467B15348BD6A7982`，已部署
+  `E:\Skyrim AE\mods\SimpleIME\SKSE\Plugins\`（旧版备份 `SimpleIME.dll.bak-20261017-HALFWIDTH`）；
+  `docs/changelog-3.1.8-beta.md` 追加两条 Fixed。
+- **待实机**：①微软 IME：Shift 切英数打 `a` → 关 → 重开 → 判据=`Persisted ... 0x0` 且
+  `send code 0x61`，不再出现 `0xff41`；②Google：打完日文 → Shift 切半角 → 直接打 `test` → 判据=
+  日志不再出现 `WM_CHAR ... dropped`，且 `send code 0x74/0x65/0x73/0x74` 逐字符到达。
+
+### 补充（同日，用户新反馈「英全角下输入会翻转成中全角」）
+
+回查日志发现第三处漏修：17:07:27.007 组字预编辑是 `0xff54`（全角ｔ），17:07:27.123 变成 `0x3066`（で），
+**`TextStore::ApplyCompositionScriptEvidence` 对假名证据无条件加 NATIVE**，State 由 0x8（全角英数）翻成
+0x9（NATIVE|FULLSHAPE），语言栏「Ａ」→「あ」——用户所说的「英全角 → 中全角」。诱因是 17:07:18 会话起点
+用 Remembered 0x8 覆盖了 IME 实际发布的 0x9（根因 A 的错误持久化），于是「显示全角、实际假名」。
+
+- **修复**：`ApplyCompositionScriptEvidence` 的 `evidence.native` 分支加守卫——当前 State 是
+  `FULLSHAPE && !NATIVE`（0x8）时**不再加 NATIVE**。假名证据只证明「不是半角英数」，不证明 IME 已切
+  かな；全角英数的组字预编辑是罗马字、转换候选是假名，据此加 NATIVE 就会把 0x8 翻成 0x9。真正的かな
+  切换由 IME 自己通过 `UpdateConversionMode` 发布。同函数新增 debug 日志：
+  `Composition script evidence (native=…, fullShapeKnown=…, fullShape=…) moved the conversion mode 0x… -> 0x…`
+  （只在 State 真变化时打印），补上此前「静默改 State、日志无痕」的盲区。
+- **离线**：构建 EXIT 0（`[4/4] Linking CXX shared library SimpleIME.dll`，39 条既有 tracer 警告）；
+  DLL md5 `240BCFC8123710D956E8E8F9E543869E`，已部署 MO2（旧版备份
+  `SimpleIME.dll.bak-20261017-KANAFLIP`）；changelog 追加一条 Fixed。
+- **日志其余健康项**：整份日志 warn/error **0 条**；`right after the session start` 0 次、
+  `Bare Shift tap` 0 次（日文不跑预测）、`Direct (composition-less) insert` 0 次（当时走的是组字路径）。
+  `dropped` 共 16 次：17:07:31.991–17:07:33.674 有 5 次（含 0xd 回车，用户当时命令提交不了）+
+  17:08:20.099–17:08:22.450 有 11 次，均为根因 B，已被 `ClearComposing()` 提前修复。
+  17:09:27.543/.544 与 17:09:29.361/.363 的成对 `Thread conversion mode changed` 是
+  `ReactivateProfileKeepingMode` 让 IME 重发布，冗余但无害。
+
+### 补充二（同日，用户定位触发条件：英半角下退出输入即翻转）
+
+用户进一步定位：**英半角（0x0）状态下退出输入状态（关闭控制台）后，系统 IME 状态栏立刻翻转为
+「中 半角」（0x1）再消失**，导致下次开启时显示与实际不符。这是禁用路径的漏修：
+
+- **根因 1**：`SetSessionImeEnabled(false)` 把 `conversionMode` 初始化为 `ALPHANUMERIC`（0x0）并
+  **无条件写入** global/thread/context 三个 conversion 隔间（日志旧形状 `Published the IME off state
+  ... conversion=0x0`）。中文 IME 收到 0x0 后会重新发布 `NATIVE`（0x1）——系统语言栏就在关闭瞬间
+  从「英 半角」翻成「中 半角」。翻转发生在 `Language bar hidden` 之后，所以用户看到的是**系统**语言栏。
+- **根因 2**：`TextService::UpdateConversionMode` **没有 `ImeDisabled()` 守卫**，无条件
+  `State::SetConversionMode(...)`（只有 `MirrorConversionMode` 有守卫）。禁用期间 IME 的回弹
+  （0x1）照样改写 State，`SaveSettings` 抓到的 live 值就可能与实际不符。
+- **修复**：
+  - `UpdateConversionMode` 开头加 `if (State::GetInstance().ImeDisabled()) return;`——禁用期间
+    任何 sink 事件都不移动显示、不计入 revision。
+  - `SetSessionImeEnabled(false)` **不再触碰 conversion 隔间**（global/thread/context 三处都跳过），
+    只写 global open/close=0 + 线程级 `ToogleKeyboard(false)`；日志改为
+    `Published the IME off state through the global compartments (open/close hr={:#x}); the conversion
+    mode is left to the IME`。下次 enable 会用 Remembered 原样重发，不需要压平。
+  - `RecordPublishedConversionMode` 只在 enable 时记录（disable 不再把 0x0 写进「我们发布过的值」
+    历史，避免 `StampRememberedConversionModeFromLive` 把 0x0 误判为 IME 发言）。
+- **离线**：构建 EXIT 0（`[4/4] Linking CXX shared library SimpleIME.dll`，7 条既有警告）；
+  DLL md5 `7A25F17CFE97A3D2D1680CC3EBCD7570`，已部署 MO2（旧版备份
+  `SimpleIME.dll.bak-20261017-DISABLEFLAT`）；changelog 追加一条 Fixed。
+- **待实机判据**：英半角下关闭控制台 → 系统语言栏保持「英 半角」不翻转；日志中
+  `Published the IME off state` 不再带 `conversion=0x0`；下次开启后 `Persisted ... 0x0` 且
+  `send code 0x61` 逐字符到达。若仍翻转，需要 `IME disabled` 前后 10 行日志（含
+  `Context/Thread conversion mode changed` 与 `Context keyboard open/close changed`）。
+
+### 补充三（同日，用户定位触发条件：英全角下重进有概率翻成中全角）
+
+用户进一步缩小范围：**只有英全角（0x8）状态下退出再重进**会概率性变成中全角（0x9）；
+中全角（0x9）和半角（0x0）都不会。这是启用路径的时序漏洞：
+
+- **根因**：`ImeManager::DoEnable()` 原顺序是 `state.Clear(State::IME_DISABLED)` →
+  `FocusTextService(true)` → `SetSessionImeEnabled(true)`。`Clear` 之后、`SetSessionImeEnabled`
+  之前的窗口里，补充二刚加的 `ImeDisabled()` 守卫**已经失效**，而一次性纠正（`m_reassertArmed`）
+  还没 arm：中文 IME 在重新聚焦后重发布的默认模式 0x9 直接进 `UpdateConversionMode` → 写 State →
+  `MirrorConversionMode` 写进三层隔间。概率性取决于 IME 是否恰好在这个窗口发布。英全角时 IME 的
+  上下文 open/close 是 0，重新聚焦把它推到 1，IME 因而重发默认模式；中全角的目标值等于默认值、
+  半角时 IME 不重发，所以两者不触发。
+- **修复**：`DoEnable()` 顺序改为 `FocusTextService(true)` → `(void)m_imeWnd->SetSessionImeEnabled(true)`
+  （写 Remembered 到隔间、arm 一次性纠正、冻结 `m_restoreTargetMode`；此时 `IME_DISABLED` 仍在，
+  sink 被守卫拦住，State 不动）→ `state.Clear(State::IME_DISABLED)`（此后 IME 的默认 0x9 才被放进来，
+  由 `MaybeReassertRememberedMode` 写回 0x8 并同步 State）。`switchEnglishLayoutOnDisable` 分支
+  不 arm，`Clear` 移到该分支开头保持原语义。日志文案改为
+  `IME enabled: focusing TSF and restoring the remembered mode`。
+- **离线**：构建 EXIT 0（`[4/4] Linking CXX shared library SimpleIME.dll`，7 条既有警告）；
+  DLL md5 `DCA3F13F2512FC3BB9D7D313F402A53F`，已部署 MO2（旧版备份
+  `SimpleIME.dll.bak-20261017-ENABLEORDER`）；changelog 追加一条 Fixed。
+- **待实机判据**：英全角下关闭控制台再打开 → 语言栏保持「英 全角」。日志二选一即正确：
+  ①出现 `The IME set its conversion mode to 0x9 right after the session start; re-applying the
+  remembered 0x8`（IME 抢跑，被纠正）；②根本没有 `0x9` 的 `Thread/Context conversion mode changed`
+  （IME 没抢跑）。连续开关 10 次都不应出现 `Published the IME on state ... conversion=0x9`。
+
+### 补充四（同日，新日志定位：中文 IME 的 OnStartComposition 与 LCID 污染）
+
+用户重启游戏后复测，提供新日志（`D:\Documents\My Games\Skyrim Special Edition\SKSE\SimpleIME.log`）。
+新日志的环境变了：`Input language resolved: langId=0x0804 (primary=0x04)`，IME 列表是
+**微信输入法 + 微软拼音**——用户这次测的是中文输入法，「中全角/中半角」是字面意思。上一轮的
+`DoEnable` 顺序修复已生效（日志出现新文案 `IME enabled: focusing TSF and restoring the remembered
+mode`），但翻转仍在，原因完全不同：
+
+- **根因 1（OnStartComposition 无条件加 NATIVE）**：17:11:53.615 用户 Shift 切到 0x8（英全角，
+  `Thread/Context/Global conversion mode changed: 0x8` + `Mirrored 0x8`）；17:11:54.201 打全角
+  字符 `0xff40` 触发组字，`TextStore::OnStartComposition` 对**非日语**无条件
+  `AddConversionModeFlag(NATIVE)` → State 0x8 → 0x9；`ApplyCompositionScriptEvidence` 对中文
+  直接 return（`ShouldInferFromComposition` 只对日语 true），没有任何路径把 NATIVE 清回去；
+  提交时 `StampRememberedConversionModeFromLive` 读 context 隔间（0x8，在 `m_publishedModes`
+  历史里，被判为「我们自己的回显」）→ 跳过 → 回落到 State 0x9 → **盖章 0x9**。
+  17:11:54.310 `Persisted ... 0x9 (native=true); the live display value was 0x9` 即此。
+  修复=`OnStartComposition` 的 NATIVE 断言加 0x8 守卫（与 `ApplyCompositionScriptEvidence`
+  的假名守卫同形）：当前 State 是 `FULLSHAPE && !NATIVE` 时不加 NATIVE。
+- **根因 2（LCID 被当成 conversion mode 盖章）**：17:11:54.448 `Thread conversion mode changed:
+  0x409` + `The IME set its conversion mode to 0x409 right after the session start; re-applying the
+  remembered 0x9`——微软拼音在 profile 重激活后把 **0x401/0x409 交替发布**（`PROFILE_REACTIVATE_GUARD_MS`
+  的注释已记录），0x409 是 en-US 的 LCID，低 4 位恰好 = NATIVE|FULLSHAPE（中全角）。
+  `MaybeReassertRememberedMode` 纠正了显示，但 `StampRememberedConversionModeFromLive` 读 thread
+  隔间拿到 0x409、不在 published 历史 → **盖章 0x409**；17:11:54.627
+  `Persisted ... 0x409 (native=true); the live display value was 0x9`，随后每次 enable 都
+  `Published ... conversion=0x409`，低 4 位显示成中全角。修复=盖章与禁用捕获路径都加
+  `IsConversionModeValue()`：值带有 TF_CONVERSIONMODE 之外的位就跳过该源，回落到 context 隔间。
+  掩码 `CONVERSION_MODE_MASK = 0x1BF`（ALPHANUMERIC|NATIVE|KATAKANA|HIRAGANA(0x4，SDK 头文件缺)|
+  FULLSHAPE|ROMAN|CHARCODE|SOFTKEYBOARD|FIXED）。
+- **离线**：构建 EXIT 0（`[4/4] Linking CXX shared library SimpleIME.dll`，7 条既有警告）；
+  DLL md5 `FDF50AF933103974E44F43291E0393A7`，已部署 MO2（旧版备份
+  `SimpleIME.dll.bak-20261017-STARTCOMPOSITION`）；changelog 追加两条 Fixed。
+- **待实机判据**：英全角下打一个全角字符再关闭控制台 → `Persisted the last confirmed conversion
+  mode 0x8`（不再是 0x9/0x409）；重开 → `Published ... conversion=0x8`，语言栏保持「英 全角」。
+  日志中不应再出现 `Composition script evidence` 之外的 `0x9` 跳变，也不应出现
+  `Persisted ... 0x409`。
+
+### 发布 3.1.8.1-beta（同日）
+
+- **版本号**：`CMakeLists.txt` 的 `project(... VERSION 3.1.8.1)`（四段）；`PROJECT_VERSION_PRERELEASE`
+  保持 `beta` → `PROJECT_VERSION_DISPLAY = 3.1.8.1-beta`。CommonLibSSE 侧输出
+  `Parsing commonlibsse_plugin_version 3.1.8.1` / `Setting tweak version to 1`，即插件元数据也拿到
+  四段版本。
+- **资源版本**：`cmake/version.rc.in` 的 `FILEVERSION`/`PRODUCTVERSION` 第四段由写死的 `0` 改为
+  `@PROJECT_VERSION_TWEAK@`；`CMakeLists.txt` 在 `project()` 后补
+  `if (NOT PROJECT_VERSION_TWEAK) set(PROJECT_VERSION_TWEAK 0) endif()`，避免以后回到三段版本时
+  RC 语法错误。构建后实测 DLL `FileVersion`/`ProductVersion` = `3.1.8.1-beta`，数值 3.1.8.1。
+- **changelog**：新建 `docs/changelog-3.1.8.1-beta.md`（7 条 Fixed = 第 55 轮的全部修复）；
+  `docs/changelog-3.1.8-beta.md` 用 `git checkout` 恢复成 `v3.1.8-beta` tag 时的内容——那 7 条
+  修复发生在 tag 之后，不该出现在已发布的 3.1.8 里。
+- **nexus**：`nexus/main.bbcode`、`nexus/summary.bbcode` 的 `v3.1.8-beta` 改为 `v3.1.8.1-beta`。
+  两个文件含非 UTF-8 字节（`read` 工具报 invalid UTF-8），只能用 Latin-1（代码页 28591）做
+  字节级往返替换，不能用 `edit`。
+- **构建坑**：必须走 CMake preset（`cmake --preset release-clangcl-ninja-vcpkg` +
+  `cmake --build --preset build-release-clangcl-ninja-vcpkg`）。`-DUNICODE -D_UNICODE`、
+  `/permissive-` 等来自 preset 的 `PROJECT_*_FLAGS` 环境变量；直接 `cmake -B` 只拿到
+  `/DWIN32 /D_WINDOWS /EHsc`，编译报 `TCHAR`/`LOGFONTW` 类型错误。另外 preset 不含 fontforge
+  与 lucide 源目录，需要追加 `-DFONTFORGE_EXECUTABLE=` 与 `-DFETCHCONTENT_SOURCE_DIR_LUCIDE=`
+  （指向 RelWithDebInfo 构建目录的 `_deps/lucide-src`，避免联网重下）。
+- **产物**：`dist/SimpleIME-3.1.8.1-beta-Release.7z`（1,428,735 字节，与 3.1.7 包量级一致，
+  7z magic 正常）；DLL md5 `4350077E28C81173CA2C25FE936558CB`。
+- **待实机**：日语用户复测三项——微软 IME Shift 切半角后 `send code 0x61` 且重开保持 0x0；
+  Google 半角直打不出现 `WM_CHAR ... dropped`；全角英数不出现 `Composition script evidence
+  ... 0x8 -> 0x9` 且 `Persisted 0x8`。
+
+## 3.1.8.1-beta 实机复测（2026-10-17 晚）
+
+用户装上 3.1.8.1-beta 后反馈三条：Shift + Caps 切半角后仍输入全角；Alt + ` 不触发；
+Google 日本語入力 半角英数仍然不行。日志 `dev/ime-user-log-3181.txt`（pastebin NW1RJxcr，
+3081 行）。
+
+- **line 2999 / 3040 对照**：20:33:40.139 提交 `'あああ'`（3×`send code 0x3042`）正确；
+  20:33:43.072 提交 `'ａａａ'`（3×`send code 0xff41`）全角。中间 20:33:40.822 `WM_KEYDOWN
+  vk=0x10`（Shift）→ 20:33:40.906 **IME 自己发布** `Thread conversion mode changed: 0x8`
+  + `Context/Global 0x8` + `Mirrored conversion mode 0x8`。插件只是跟随，**不是转发 bug**。
+  Google 日本語入力 的键位语义：Caps Lock = 半角英数（20:29:57 / 20:30:01 两次实测
+  `Thread conversion mode changed: 0x0` → 组字 `first=0x61` → 提交 `'ああaa'` 正确），
+  裸 Shift = 全角英数（0x8）。用户 20:31:32–20:31:33 连按 8 次 Caps（`vk=0x14` 连发）后
+  20:31:35 按 Shift，最终被 Shift 切成全角。
+- **Google 半角直打真根因**：20:30:21.660–20:30:22.710 共 11 次
+  `ImeWnd WM_CHAR 0x61 dropped (IN_COMPOSING=false, IN_CAND_CHOOSING=true)`。上一轮把
+  `ClearComposing()` 提到 `OnEndComposition` 开头是对的，但 **`BeginUIElement`
+  （`src/tsf/TextStore.cpp:1103`）在 `GetCandidateInterface` 之前就设
+  `IN_CAND_CHOOSING`**；Google 日本語入力 在提交后仍会调用 `BeginUIElement`，接口获取失败
+  （所以没有 `Candidate UI element ... registered` 日志），标志被设且永不清理。`ImeWnd`
+  的丢弃条件把 `IN_CAND_CHOOSING` 也当成组字回声，于是每个半角字母都被丢。
+- **修复 A** `src/ImeWnd.cpp:844`：丢弃条件由
+  `HasAny(IN_COMPOSING, IN_CAND_CHOOSING)` 改为 `Has(IN_COMPOSING)`。`IN_CAND_CHOOSING`
+  单独为 true 表示组字已结束、只剩候选 UI 元素挂着，此时的 WM_CHAR 是用户新输入，不是回声；
+  组字期间的候选选择仍被 `IN_COMPOSING` 挡住。
+- **修复 B** `src/tsf/TextStore.cpp` `BeginUIElement`：`State::Set(IN_CAND_CHOOSING)` 移到
+  `GetCandidateInterface` 成功之后，接口失败不再留下永不清理的标志。
+- **版本**：3.1.8.2-beta（`CMakeLists.txt` `VERSION 3.1.8.2`）；新建
+  `docs/changelog-3.1.8.2-beta.md`（2 条 Fixed + 1 条 Notes 说明 Shift 语义）。
+- **构建**：RelWithDebInfo 增量 `[1144/1145] Linking CXX shared library SimpleIME.dll`，
+  DLL md5 `30DA8EA08194B69DB5263FC0B6DCE051`，部署 MO2（备份
+  `SimpleIME.dll.bak-20261017-CANDGATE`）；Release 包走 `build\_release_3182.cmd`。
+- **待实机**：Google 日本語入力 半角英数逐字符进入游戏（日志不再出现
+  `IN_CAND_CHOOSING=true` 的 dropped，改为 `send code 0x61/0x74/...`）；Shift 全角问题需要
+  用户确认是否接受「Caps Lock = 半角、Shift = 全角」的 IME 原生语义。
+
+### 3.1.8.2-beta 未提交代码审查（2026-10-17 晚）
+
+用户要求对未提交改动做一轮审查。范围 11 个文件；结论：主要逻辑正确，另发现三处需修 + 一处待
+发布时更新。
+
+- **P1（已修）**：`src/ime/ImeManager.cpp` 的 `switchEnglishLayoutOnDisable = true` 分支没有
+  re-assert 保护——`state.Clear(IME_DISABLED)` 在 `ActivateLanguageProfile` 之前，且该分支
+  不调用 `SetSessionImeEnabled(true)`，`m_restoreTargetMode` 没冻结、`MaybeReassertRememberedMode`
+  没武装，profile 重激活后 IME 发布的默认模式（英全角会话常见 0x9）会直接进 State。修复：
+  在该分支的 `ActivateLanguageProfile` 之前补 `(void)m_imeWnd->SetSessionImeEnabled(true)`，
+  与默认分支同序（先武装、后清 IME_DISABLED）。
+- **P2（已修）**：`src/tsf/TextService.cpp` 的 `CONVERSION_MODE_MASK` 补
+  `TF_CONVERSIONMODE_NOCONVERSION`（0x0100）与 `TF_CONVERSIONMODE_EUDC`（0x0200），避免带这些
+  位的合法模式被 `IsConversionModeValue` 误拦。**`TF_CONVERSIONMODE_SYMBOL`（0x0400）刻意不加**
+  ——`0x409`/`0x401` 都带该位，加了会让 LCID 通过，正好破坏本轮修复。注释已写明原因。
+- **P3（已修）**：`SetSessionImeEnabled(false)` 不再更新 `m_lastMirroredMode`——disable 时
+  `conversionMode` 还是 ALPHANUMERIC 占位值，写进镜像目标没有意义；赋值移进 `enabled` 分支，
+  与 `RecordPublishedConversionMode` 并列。
+- **P4（未修，待发布时处理）**：`nexus/main.bbcode`、`nexus/summary.bbcode` 仍是
+  `v3.1.8.1-beta`，3.1.8.2 发布时需再走一次 Latin-1 字节替换。
+- **顺带修**：`TextService.cpp` 里 `m_reassertArmed = false` 的注释还写着「The flattening
+  below」——disable 路径已不 flatten，改成「nothing may re-assert the remembered mode」；
+  `include/utils/Utils.cpp:736` 的 host 心跳判定由 `HasAny(IN_COMPOSING, IN_CAND_CHOOSING)`
+  改为 `Has(IN_COMPOSING)`，与 `ImeWnd` 的丢弃条件一致，避免候选缓存残留让
+  `COMPOSING_PROPERTY` 一直活着。
+- **重新打包**：`build\_release_3182.cmd` 全量重建 + cpack，产物覆盖
+  `dist/SimpleIME-3.1.8.2-beta-Release.7z`。

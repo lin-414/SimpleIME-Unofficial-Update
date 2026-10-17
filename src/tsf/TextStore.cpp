@@ -42,10 +42,24 @@ auto ApplyCompositionScriptEvidence(const TextService &service, const std::wstri
     {
         return;
     }
-    auto &state = Ime::Core::State::GetInstance();
+    auto       &state  = Ime::Core::State::GetInstance();
+    const auto  before = state.GetConversionMode().RawValue();
     if (evidence.native)
     {
-        state.AddConversionModeFlag(Ime::Core::State::ConversionMode::Flags::NATIVE);
+        // KanaOrHan only proves "not half-width alphanumeric" — it does NOT
+        // prove the IME has switched to kana. In 全角英数 the composition
+        // preview carries full-width romaji and conversion candidates are
+        // kana, so a kana sighting used to add NATIVE on top of 0x8 and turn
+        // the display into 0x9 (「Ａ」 → 「あ」) while the user was still
+        // typing full-width alphanumerics (in-game report, 2026-10-17:
+        // 「在英全角状态下输入时会错误的翻转成中全角」). A real kana switch is
+        // published by the IME itself through UpdateConversionMode, so the
+        // full-width-alphanumeric state is left untouched here.
+        const auto &mode = state.GetConversionMode();
+        if (!(mode.IsFullShape() && !mode.IsNative()))
+        {
+            state.AddConversionModeFlag(Ime::Core::State::ConversionMode::Flags::NATIVE);
+        }
     }
     else
     {
@@ -61,6 +75,18 @@ auto ApplyCompositionScriptEvidence(const TextService &service, const std::wstri
         {
             state.ClearConversionModeFlag(Ime::Core::State::ConversionMode::Flags::FULLSHAPE);
         }
+    }
+    const auto after = state.GetConversionMode().RawValue();
+    if (before != after)
+    {
+        logger::debug(
+            "Composition script evidence (native={}, fullShapeKnown={}, fullShape={}) moved the conversion mode {:#x} -> {:#x}",
+            evidence.native,
+            evidence.fullShapeKnown,
+            evidence.fullShape,
+            before,
+            after
+        );
     }
 }
 } // namespace
@@ -962,7 +988,17 @@ auto TextStore::OnStartComposition(ITfCompositionView *pComposition, BOOL *pfOk)
     // ApplyCompositionScriptEvidence).
     if (PRIMARYLANGID(m_pTextService->GetInputLanguageId()) != LANG_JAPANESE)
     {
-        State::GetInstance().AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+        // A composition proves "native mode" for a Chinese TIP — except in
+        // 全角英数, where the IME composes too (the same shape that used to flip
+        // Japanese Ａ into あ). Adding NATIVE there turned 0x8 into 0x9 at the
+        // first keystroke, the commit stamped 0x9 as the remembered mode, and
+        // the next console open came back in 中 全角 (in-game report,
+        // 2026-10-17). A real 中/英 switch is published by the IME itself.
+        const auto &mode = State::GetInstance().GetConversionMode();
+        if (!(mode.IsFullShape() && !mode.IsNative()))
+        {
+            State::GetInstance().AddConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+        }
     }
     return S_OK;
 }
@@ -990,6 +1026,15 @@ auto TextStore::OnEndComposition(ITfCompositionView * /*pComposition*/) -> HRESU
     // writes the final text BEFORE ending the composition, so this only matters
     // for the reverse order.
     m_fCompositionActive = false;
+    // Composition over: clear the flags HERE, not at the end of the function.
+    // The commit callback below (SendUiString), the mode stamp and the
+    // candidate-UI close can each fail or re-enter, and a flag left standing
+    // makes HandleCharMessage drop every WM_CHAR as a composition echo —
+    // Google 日本語入力's half-width alphanumeric mode types straight through
+    // WM_CHAR with no composition at all, so the whole mode went silent until
+    // the IME was switched (in-game report, 2026-10-17: "test" and "a" were
+    // dropped one keystroke at a time after a Japanese commit).
+    State::GetInstance().ClearComposing();
     // Composition sinks fire OUTSIDE the TSF document lock (unlike the
     // ITextStoreACP methods inside OnLockGranted), so the editor/candidate
     // mutations below must take the service lock themselves — the render
@@ -1041,7 +1086,6 @@ auto TextStore::OnEndComposition(ITfCompositionView * /*pComposition*/) -> HRESU
             m_pendingChangeFlags |= DirtyFlag::CandidateList;
         }
     }
-    State::GetInstance().ClearComposing();
     return S_OK;
 }
 
@@ -1056,9 +1100,15 @@ auto TextStore::BeginUIElement(DWORD dwUIElementId, BOOL *pbShow) -> HRESULT
     *pbShow              = TRUE;
     m_currentCandidateUi = nullptr;
     m_currentUiElementId = TF_INVALID_UIELEMENTID;
-    State::GetInstance().Set(State::IN_CAND_CHOOSING);
     if (SUCCEEDED(GetCandidateInterface(dwUIElementId, &m_currentCandidateUi)))
     {
+        // Only claim the candidate state once the interface is actually ours.
+        // Google 日本語入力 calls BeginUIElement on its way out of a composition
+        // and the interface lookup fails there; setting the bit before the
+        // lookup left IN_CAND_CHOOSING standing for the rest of the session,
+        // which the WM_CHAR gate then read as "composition echo" and dropped
+        // every 半角英数 keystroke (in-game report, 2026-10-17).
+        State::GetInstance().Set(State::IN_CAND_CHOOSING);
         m_currentUiElementId = dwUIElementId;
         // Pull the initial list NOW. The TIP is free to register the element
         // with its content already in place and fire no content-bearing

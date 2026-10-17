@@ -841,7 +841,15 @@ auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
     // the committed text. Characters emitted during an active
     // composition belong to the IME; drop them, the composition's own
     // OnEndComposition callback delivers the committed string.
-    if (State::GetInstance().HasAny(State::IN_COMPOSING, State::IN_CAND_CHOOSING))
+    //
+    // IN_COMPOSING is the only correct gate. IN_CAND_CHOOSING alone means
+    // the composition is already over and only the candidate UI element is
+    // still registered — Google 日本語入力 keeps that element alive across
+    // commits, so the bit stands for the rest of the session. Gating on it
+    // dropped every half-width alphanumeric keystroke the TIP sent through
+    // WM_CHAR without composing (in-game report, 2026-10-17: the log showed
+    // `IN_COMPOSING=false, IN_CAND_CHOOSING=true` on every dropped letter).
+    if (State::GetInstance().Has(State::IN_COMPOSING))
     {
         // The IME consumed the key at the message level (these echoes
         // never even carry the composition's keys — the TIP eats them
@@ -849,7 +857,11 @@ auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
         // forwarding it would double-type it into Meridian's DOM
         // field. The host's own leak of the composition keystrokes is
         // compensated in the DOM by the bridge's strip pass.
-        logger::debug("ImeWnd WM_CHAR {:#x} dropped (composition active)", wParam);
+        logger::debug(
+            "ImeWnd WM_CHAR {:#x} dropped (IN_COMPOSING={}, IN_CAND_CHOOSING={})",
+            wParam,
+            state.Has(State::IN_COMPOSING),
+            state.Has(State::IN_CAND_CHOOSING));
         return 0;
     }
 
@@ -877,10 +889,21 @@ auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
     // (Chinese/Japanese) mode the IME consumes letters upstream — they
     // never produce a WM_CHAR here. IMEs that publish no mode
     // compartment (WeChat IME) are still tracked this way.
+    //
+    // A half-width letter reaching this point also proves the TIP is in
+    // half-width alphanumeric mode: an IME in 全角英数 composes (or sends
+    // 0xFF01-0xFF5E), never an ASCII WM_CHAR. Clearing NATIVE alone left
+    // FULLSHAPE behind, so the mode was stamped as 0x8 (全角英数) and the next
+    // session restored 全角 — the console reopened in full-width although the
+    // user had typed half-width (in-game report, 2026-10-17: Microsoft IME's
+    // Shift toggle writes only open/close, never the conversion mode, so this
+    // branch is its only evidence). Both bits must go.
     if ((wcharCode >= L'a' && wcharCode <= L'z') || (wcharCode >= L'A' && wcharCode <= L'Z'))
     {
-        logger::debug("ImeWnd WM_CHAR {:c} passed through raw — clearing NATIVE conversion mode", wParam);
-        State::GetInstance().ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+        logger::debug("ImeWnd WM_CHAR {:c} passed through raw — clearing NATIVE and FULLSHAPE conversion modes", wParam);
+        auto &conversionState = State::GetInstance();
+        conversionState.ClearConversionModeFlag(State::ConversionMode::Flags::NATIVE);
+        conversionState.ClearConversionModeFlag(State::ConversionMode::Flags::FULLSHAPE);
     }
 
     // The direct keys(arrow keys, etc.) are not sent via WM_CHAR messages

@@ -733,7 +733,11 @@ void PublishCompositionState()
     // 窗口属性表查找，代价可以忽略。
     g_imeAwareHost.store(GetPropW(hwnd, PropertyName(IME_AWARE_PROPERTY)) != nullptr, std::memory_order_release);
 
-    const bool composing = Core::State::GetInstance().HasAny(Core::State::IN_COMPOSING, Core::State::IN_CAND_CHOOSING);
+    // Only an active composition counts: IN_CAND_CHOOSING alone means the
+    // composition is over and just the candidate UI element is still cached
+    // (Google 日本語入力 keeps one for the whole session), and treating that as
+    // "still composing" kept the host's heartbeat property alive forever.
+    const bool composing = Core::State::GetInstance().Has(Core::State::IN_COMPOSING);
     if (composing)
     {
         // 心跳：MarkCompositionActive 已经打过，这里只是维持新鲜度。

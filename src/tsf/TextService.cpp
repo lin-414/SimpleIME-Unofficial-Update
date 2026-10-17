@@ -40,6 +40,34 @@ constexpr ULONG MODE_REASSERT_WINDOW_MS = 250;
 /// toggle still refreshes the language bar.
 constexpr ULONGLONG PROFILE_REACTIVATE_GUARD_MS = 800;
 
+/// The only bits a conversion mode may carry.
+///
+/// Chinese IMEs also publish their host language id through the conversion
+/// compartment: Microsoft Pinyin alternates 0x401/0x409 while it re-initialises
+/// after a profile activation, and 0x409 (en-US) reads as NATIVE|FULLSHAPE in
+/// its low nibble. Stamping that as the remembered mode is how a console session
+/// came back in 中 全角 while the user had left it in 英 全角 (in-game report,
+/// 2026-10-17). A value with any bit outside TF_CONVERSIONMODE is not a mode and
+/// must not be stamped; the context compartment, which carries the real value,
+/// is then used instead.
+///
+/// TF_CONVERSIONMODE_SYMBOL (0x0400) is deliberately absent: an LCID such as
+/// 0x409 carries that bit, and accepting it would let the very value this check
+/// exists to reject through.
+constexpr ULONG CONVERSION_MODE_MASK =
+    TF_CONVERSIONMODE_ALPHANUMERIC | TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_KATAKANA |
+    0x0004U /* TF_CONVERSIONMODE_HIRAGANA, missing from some SDK headers */ |
+    TF_CONVERSIONMODE_FULLSHAPE | TF_CONVERSIONMODE_ROMAN | TF_CONVERSIONMODE_CHARCODE |
+    TF_CONVERSIONMODE_SOFTKEYBOARD | TF_CONVERSIONMODE_NOCONVERSION | TF_CONVERSIONMODE_EUDC |
+    TF_CONVERSIONMODE_FIXED;
+
+/// True when `value` could be a conversion mode at all.
+constexpr auto IsConversionModeValue(const ULONG value) -> bool
+{
+    return (value & ~CONVERSION_MODE_MASK) == 0;
+}
+
+
 /// Publish `value` through a compartment only when it does not already hold it.
 ///
 /// The compartment sinks fire synchronously from inside SetValue, so a redundant
@@ -262,6 +290,17 @@ void TextService::UpdateConversionMode()
 
 void TextService::UpdateConversionMode(const ULONG conversionMode)
 {
+    // While the IME is disabled nothing may move the display. The disable path
+    // used to flatten the conversion mode to 0x0 (ALPHANUMERIC) through
+    // SetConversionMode, whose sink fires synchronously, and some Chinese IMEs
+    // answer that write by republishing NATIVE (0x1). Letting either through
+    // flipped the language bar from 「英 半角」 to 「中 半角」 right as the
+    // console closed, and the persisted "last confirmed mode" then disagreed
+    // with what the next session showed (in-game report, 2026-10-17).
+    if (State::GetInstance().ImeDisabled())
+    {
+        return;
+    }
     // Every observation of a published mode counts, our own mirror echo
     // included: the counter answers "did anything publish during this tap",
     // and the echo of the IME's own value is that same publication.
@@ -462,6 +501,7 @@ void TextService::StampRememberedConversionModeFromLive() const
     ULONG      live          = 0;
     const auto readPublished = [this](const CComPtr<TsfCompartment> &compartment, ULONG &out) -> bool {
         return compartment != nullptr && SUCCEEDED(compartment->GetValue(out)) &&
+               IsConversionModeValue(out) &&
                !Ime::ConversionMemory::IsSelfPublishedValue(static_cast<std::uint32_t>(out), m_publishedModes.data(), m_publishedModeCount);
     };
     if (readPublished(m_contextConversionModeCompartment, live))
@@ -584,11 +624,13 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
         // back English on the next enable. GetValue fails on a compartment that
         // was never written, so fall back through thread level to State.
         ULONG live = 0;
-        if (m_contextConversionModeCompartment != nullptr && SUCCEEDED(m_contextConversionModeCompartment->GetValue(live)))
+        if (m_contextConversionModeCompartment != nullptr && SUCCEEDED(m_contextConversionModeCompartment->GetValue(live)) &&
+            IsConversionModeValue(live))
         {
             m_savedSessionConversionMode = live;
         }
-        else if (m_conversionModeCompartment != nullptr && SUCCEEDED(m_conversionModeCompartment->GetValue(live)))
+        else if (m_conversionModeCompartment != nullptr && SUCCEEDED(m_conversionModeCompartment->GetValue(live)) &&
+                 IsConversionModeValue(live))
         {
             m_savedSessionConversionMode = live;
         }
@@ -600,9 +642,11 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
     }
     if (!enabled)
     {
-        // The flattening below is our own write, not the IME's: never let the
-        // session-start re-assert fight it (a fast open/close without typing
-        // would otherwise put the mode straight back).
+        // The session is over, so nothing may re-assert the remembered mode
+        // behind the user's back: a fast open/close without typing would
+        // otherwise put the mode straight back. The disable path no longer
+        // writes the conversion compartment at all (see below), so this is
+        // purely about the re-assert window.
         m_reassertArmed = false;
     }
 
@@ -616,30 +660,59 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
     // IME on state" line). That echo re-wrote all three channels and posted a
     // profile re-activation at EVERY session start — the exact hammer the
     // disable path avoids, and one that could land after a disable.
-    m_lastMirroredMode = conversionMode;
-    RecordPublishedConversionMode(conversionMode);
+    //
+    // Disable leaves the mirror target alone: it publishes no conversion mode,
+    // and `conversionMode` still holds the ALPHANUMERIC placeholder there.
+    if (enabled)
+    {
+        m_lastMirroredMode = conversionMode;
+        RecordPublishedConversionMode(conversionMode);
+    }
 
     // Publishing an unchanged value is not free: the sinks fire synchronously
     // from inside SetValue. A session start can run several times per session
     // (five enables in one logged session — window activations and menu
     // toggles), and each pass used to re-publish the same mode. hr=0x1 below
     // means "already there, skipped".
-    const HRESULT openCloseHr      = SetCompartmentIfDifferent(m_globalOpenCloseCompartment, openClose);
-    const HRESULT conversionModeHr = SetCompartmentIfDifferent(m_globalConversionModeCompartment, conversionMode);
+    const HRESULT openCloseHr = SetCompartmentIfDifferent(m_globalOpenCloseCompartment, openClose);
+
+    // The disable path deliberately does NOT touch the conversion mode: writing
+    // 0x0 (ALPHANUMERIC) to flatten it made some Chinese IMEs republish NATIVE
+    // (0x1), so the system language bar flipped 「英 半角」→「中 半角」 exactly as
+    // the console closed, and the mode remembered for the next session no
+    // longer matched the IME. The next enable re-publishes the remembered mode
+    // verbatim, so nothing has to be flattened here (in-game report, 2026-10-17).
+    HRESULT conversionModeHr = S_FALSE;
+    if (enabled)
+    {
+        conversionModeHr = SetCompartmentIfDifferent(m_globalConversionModeCompartment, conversionMode);
+    }
 
     // Mirror into this thread's own compartments: the language bar's 中/英 state
     // reads them (their sinks refresh State), so the overlay must not go stale
     // relative to what was just published.
     ToogleKeyboard(enabled);
-    SetConversionMode(conversionMode);
+    if (enabled)
+    {
+        SetConversionMode(conversionMode);
+    }
 
-    logger::info(
-        "Published the IME {} state through the global compartments (open/close hr={:#x}, conversion hr={:#x}, conversion={:#x})",
-        enabled ? "on" : "off",
-        static_cast<uint32_t>(openCloseHr),
-        static_cast<uint32_t>(conversionModeHr),
-        conversionMode
-    );
+    if (enabled)
+    {
+        logger::info(
+            "Published the IME on state through the global compartments (open/close hr={:#x}, conversion hr={:#x}, conversion={:#x})",
+            static_cast<uint32_t>(openCloseHr),
+            static_cast<uint32_t>(conversionModeHr),
+            conversionMode
+        );
+    }
+    else
+    {
+        logger::info(
+            "Published the IME off state through the global compartments (open/close hr={:#x}); the conversion mode is left to the IME",
+            static_cast<uint32_t>(openCloseHr)
+        );
+    }
     return SUCCEEDED(openCloseHr) && SUCCEEDED(conversionModeHr);
 }
 

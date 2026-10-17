@@ -12,10 +12,16 @@ endif ()
 
 project(
     SimpleIME
-    VERSION 3.1.8
+    VERSION 3.1.8.2
     DESCRIPTION "Simple IME support for Skyrim"
     LANGUAGES CXX
 )
+# PROJECT_VERSION_TWEAK is only populated for four-part versions. Default it so
+# the numeric FILEVERSION/PRODUCTVERSION resource block stays valid if the
+# project ever goes back to a three-part version.
+if (NOT PROJECT_VERSION_TWEAK)
+    set(PROJECT_VERSION_TWEAK 0)
+endif ()
 # Pre-release label appended to the human-readable version string.
 # Leave empty for stable releases (e.g. set(PROJECT_VERSION_PRERELEASE "")).
 # The numeric FILEVERSION resource field always uses PROJECT_VERSION (2.0.0).
