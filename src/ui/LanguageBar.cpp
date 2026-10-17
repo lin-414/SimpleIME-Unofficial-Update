@@ -121,6 +121,18 @@ auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangPr
             ImGuiEx::M3::AlignedLabel(cModeName);
             ImGuiEx::M3::SameLine(0.F, M3Spec::dp<8>());
         }
+        // Width is a separate dimension for Chinese IMEs (Shift+Space toggles it
+        // without touching 中/英), so it gets its own label instead of replacing
+        // the mode glyph — with a rule between them, because 「中 全角」 read as
+        // one phrase. Japanese returns "" here: its glyph already says it.
+        const auto shapeName = GetConversionShapeNameShort(activeLangProfile.langid, conversionMode);
+        if (!shapeName.empty())
+        {
+            ImGuiEx::M3::AlignedLabel("|", M3Spec::ColorRole::outlineVariant);
+            ImGuiEx::M3::SameLine(0.F, M3Spec::dp<8>());
+            ImGuiEx::M3::AlignedLabel(shapeName);
+            ImGuiEx::M3::SameLine(0.F, M3Spec::dp<8>());
+        }
 
         // The toolbar itself is the container: the language entry renders
         // transparent at rest (hover and press supply the state layers) with
