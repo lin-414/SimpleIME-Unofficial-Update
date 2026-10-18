@@ -2460,3 +2460,40 @@ Google 日本語入力 半角英数仍然不行。日志 `dev/ime-user-log-3181.
   `COMPOSING_PROPERTY` 一直活着。
 - **重新打包**：`build\_release_3182.cmd` 全量重建 + cpack，产物覆盖
   `dist/SimpleIME-3.1.8.2-beta-Release.7z`。
+
+## 3.1.8.3-beta：Google 日本語入力 的 ひらがな 模式值（2026-10-18）
+
+用户（日语，Google 日本語入力）反馈 3.1.8.2-beta 后「Japanese Google Input does not
+remember the previous input mode」，并说明之前的 Alt + ` 其实是自定义映射到 Direct Input
+（不是半角英数），Direct Input 现在能正常输入。日志 `dev/ime-user-log-google-memory.txt`
+（pastebin gBjd5Fwd，345 行，`SimpleIME(3.1.8.2)`）。
+
+- **Direct Input 路径确认正常**：16:15:38–16:15:45 连续 ASCII `a` 走
+  `ImeWnd WM_CHAR a passed through raw — clearing NATIVE and FULLSHAPE conversion modes` +
+  `send code 0x61`；16:15:52.829 `Persisted ... 0x0 (native=false) ... live display value was
+  0x0`；16:15:53.183 重开 `Published ... conversion=0x0`。**打了字符再关闭，模式是记得的**。
+- **发现的问题**：16:16:01.265 从 0x0 打「あ」时
+  `Composition script evidence (native=true, fullShapeKnown=false, fullShape=false) moved the
+  conversion mode 0x0 -> 0x1`——KanaOrHan 证据只加 NATIVE，不加 FULLSHAPE，State 停在
+  **0x1（NATIVE 无 FULLSHAPE）**，而日文 IME 的 ひらがな 是 **0x9（NATIVE|FULLSHAPE）**。
+  16:16:12.841 `Persisted ... 0x1 (native=true)`，下次重开就带着 0x1 回去——Google 日本語入力
+  不把这个值当成 ひらがな。
+- **修复**：`src/tsf/TextStore.cpp` 的 `ApplyCompositionScriptEvidence`，在 `evidence.native`
+  且 `!evidence.fullShapeKnown`（即 KanaOrHan）时同时置 FULLSHAPE。该函数只对日文运行
+  （`ShouldInferFromComposition` 仅 `LANG_JAPANESE_PRIMARY` 为 true），中文路径不受影响。
+- **已知限制（无法修）**：Google 日本語入力 切 Direct Input / 半角英数时**只写 open/close
+  隔间，不发布 conversion mode**。插件只能从第一颗走到 WM_CHAR 的字符推断当前模式，所以
+  「切过去后一个字都没打就关闭控制台」时，记住的仍是上一个模式。已在 changelog Notes 里写明。
+- **补充：open/close 也要记（2026-10-18）**：上面那条「无法修」只对「没打字」成立；用户随后
+  指出「上次停在 Direct Input 时重开总是回到 かな」，这一半是可修的。`SetSessionImeEnabled`
+  在 enable 时固定写 `openClose = 1`，而对日文 IME 来说 open/close 位就是 かな/英数 开关
+  （`Thread keyboard open/close changed: 0/1`），固定写 1 会把上次停在英数/Direct Input 的
+  会话强制切回 かな。修复：disable 时先读 context 隔间、再读 thread 隔间捕获 live open/close
+  （`m_savedSessionOpenClose` / `m_hasSavedSessionOpenClose`），enable 时用它写回 global
+  隔间并传给 `ToogleKeyboard(openClose != 0)`；只有从未观察过开关时才回落 1。
+- **版本**：3.1.8.3-beta（`CMakeLists.txt` `VERSION 3.1.8.3`）；新建
+  `docs/changelog-3.1.8.3-beta.md`；打包脚本 `build\_release_3183.cmd`。
+- **待实机**：Direct Input 打几个字符 → 关闭 → 重开，确认恢复 0x0；ひらがな 打几个字符 →
+  关闭 → 重开，确认恢复 0x9（日志 `Composition script evidence ... 0x0 -> 0x9`、
+  `Persisted 0x9`、`Published conversion=0x9`）；另外 かな → 切 Direct Input（不打字）→
+  关闭 → 重开，确认仍停在 Direct Input（`ToogleKeyboard(false)` / open/close=0）。

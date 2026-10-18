@@ -585,6 +585,7 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
     // without touching the session's language profile — which is what used to
     // leave the taskbar showing ENG after the game exited.
     ULONG conversionMode = static_cast<ULONG>(State::ConversionMode::Flags::ALPHANUMERIC);
+    ULONG openClose      = enabled ? 1U : 0U;
     if (enabled)
     {
         // Put the mode back verbatim. Recomposing "NATIVE" from the state we just
@@ -610,6 +611,16 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
             conversionMode = static_cast<ULONG>(state.GetConversionMode().RawValue() | static_cast<ULONG>(State::ConversionMode::Flags::NATIVE));
         }
         m_hasSavedSessionConversionMode = false;
+        // Open/close is the かな/英数 switch for a Japanese IME: restoring a
+        // fixed "open" turned 英数/Direct Input back into かな on every session
+        // start, which is the "Google 日本語入力 does not remember the previous
+        // input mode" report (2026-10-18). The TIP writes the bit itself on a
+        // Shift/Caps toggle, so the captured value is where the user left it.
+        if (m_hasSavedSessionOpenClose)
+        {
+            openClose                  = m_savedSessionOpenClose;
+            m_hasSavedSessionOpenClose = false;
+        }
         // Session start: freeze the target and arm the one-shot re-assert for a
         // TIP that overwrites its own mode right after this write.
         m_restoreTargetMode  = conversionMode;
@@ -642,6 +653,29 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
     }
     if (!enabled)
     {
+        // Capture the live open/close BEFORE writing 0 (that write is the
+        // "IME off" signal). For a Japanese IME this bit is the かな/英数
+        // switch; the TIP writes it itself on a Shift/Caps toggle, so the
+        // captured value is where the user actually left the IME.
+        if (!m_hasSavedSessionOpenClose)
+        {
+            ULONG liveOpenClose = 1;
+            if (m_contextOpenCloseCompartment != nullptr &&
+                SUCCEEDED(m_contextOpenCloseCompartment->GetValue(liveOpenClose)))
+            {
+                m_savedSessionOpenClose = liveOpenClose;
+            }
+            else if (m_keyboardOpenCloseCompartment != nullptr &&
+                     SUCCEEDED(m_keyboardOpenCloseCompartment->GetValue(liveOpenClose)))
+            {
+                m_savedSessionOpenClose = liveOpenClose;
+            }
+            else
+            {
+                m_savedSessionOpenClose = 1;
+            }
+            m_hasSavedSessionOpenClose = true;
+        }
         // The session is over, so nothing may re-assert the remembered mode
         // behind the user's back: a fast open/close without typing would
         // otherwise put the mode straight back. The disable path no longer
@@ -649,8 +683,6 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
         // purely about the re-assert window.
         m_reassertArmed = false;
     }
-
-    const ULONG openClose = enabled ? 1U : 0U;
 
     // Must be set BEFORE the writes below: the sinks fire synchronously from
     // inside SetValue, so a guard assigned after them still holds the previous
@@ -690,8 +722,10 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
 
     // Mirror into this thread's own compartments: the language bar's 中/英 state
     // reads them (their sinks refresh State), so the overlay must not go stale
-    // relative to what was just published.
-    ToogleKeyboard(enabled);
+    // relative to what was just published. The open/close value is the captured
+    // one on a re-enable — a Japanese IME treats it as the かな/英数 switch, so
+    // writing a fixed 1 turned 英数 back into かな.
+    ToogleKeyboard(openClose != 0);
     if (enabled)
     {
         SetConversionMode(conversionMode);

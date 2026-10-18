@@ -476,6 +476,15 @@ private:
     /// State::GetRememberedConversionMode (see StampRememberedConversionModeFromLive).
     ULONG                     m_savedSessionConversionMode       = 0;
     bool                      m_hasSavedSessionConversionMode    = false;
+    /// Open/close captured on the first disable of a cycle. For a Japanese IME
+    /// this bit IS the かな/英数 switch (open = かな, closed = 英数/Direct
+    /// Input), so restoring a fixed "open" forced かな back even when the user
+    /// had left the IME in 英数 — the reported "Google 日本語入力 does not
+    /// remember the previous input mode" (2026-10-18). The IME writes the bit
+    /// itself on a Shift/Caps toggle, so the value is real; the default only
+    /// covers a session that never saw a toggle.
+    ULONG                     m_savedSessionOpenClose            = 1;
+    bool                      m_hasSavedSessionOpenClose         = false;
     /// Session-start restore target + its one-shot re-assert window: a TIP that
     /// re-initialises on the new document focus writes its own default into the
     /// compartment right after our restore, and that write must not decide the

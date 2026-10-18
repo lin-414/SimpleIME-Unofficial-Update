@@ -59,6 +59,15 @@ auto ApplyCompositionScriptEvidence(const TextService &service, const std::wstri
         if (!(mode.IsFullShape() && !mode.IsNative()))
         {
             state.AddConversionModeFlag(Ime::Core::State::ConversionMode::Flags::NATIVE);
+            // KanaOrHan is full-width kana, and a Japanese IME's ひらがな state
+            // is NATIVE|FULLSHAPE. Leaving FULLSHAPE out stamped 0x1, which
+            // Google 日本語入力 does not treat as ひらがな: closing the console
+            // there and reopening it brought back a mode that did not match what
+            // the user had left (in-game report, 2026-10-18).
+            if (!evidence.fullShapeKnown)
+            {
+                state.AddConversionModeFlag(Ime::Core::State::ConversionMode::Flags::FULLSHAPE);
+            }
         }
     }
     else
