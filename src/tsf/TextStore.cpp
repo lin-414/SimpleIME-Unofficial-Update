@@ -11,6 +11,7 @@
 #include <InputScope.h>
 #include "atlcomcli_shim.h"
 #include <atomic>
+#include <ctffunc.h>
 #include <olectl.h>
 #include <string>
 #include <string_view>
@@ -1190,10 +1191,62 @@ auto TextStore::EndUIElement(DWORD dwUIElementId) -> HRESULT
 
 auto TextStore::CommitCandidate(UINT index) const -> bool
 {
-    if ((m_currentCandidateUi != nullptr) && SUCCEEDED(m_currentCandidateUi->SetSelection(index)))
+    if (m_currentCandidateUi == nullptr)
+    {
+        return false;
+    }
+    // The UI list is page-relative; SetSelection takes a GLOBAL candidate index
+    // (see the comment in DoUpdateUIElement). Without the page offset a click on
+    // page 2 selected the wrong entry.
+    const DWORD globalIndex = m_pTextService->GetCandidateUiWrite().FirstIndex() + index;
+    if (SUCCEEDED(m_currentCandidateUi->SetSelection(globalIndex)))
     {
         return SUCCEEDED(m_currentCandidateUi->Finalize());
     }
+    return false;
+}
+
+auto TextStore::ChangeCandidatePage(const int delta) const -> bool
+{
+    if (m_currentCandidateUi == nullptr || delta == 0)
+    {
+        return false;
+    }
+    const UINT   vk     = delta > 0 ? VK_NEXT : VK_PRIOR;
+    const LPARAM lParam = 0;
+
+    // Preferred: the TIP's own integration hook for host-drawn candidate UIs
+    // (Win8+). This is exactly the question "does the TIP want this key", and
+    // it does not involve the TSF message pump (see ImeWnd::Run's comment on
+    // why the pump is banned here).
+    CComPtr<ITfIntegratableCandidateListUIElement> integratable;
+    if (SUCCEEDED(m_currentCandidateUi->QueryInterface(IID_PPV_ARGS(&integratable))) && integratable != nullptr)
+    {
+        BOOL eaten = FALSE;
+        if (SUCCEEDED(integratable->OnKeyDown(vk, lParam, &eaten)) && eaten != FALSE)
+        {
+            logger::debug("Candidate page change forwarded to the TIP via ITfIntegratableCandidateListUIElement (vk={:#x})", vk);
+            return true;
+        }
+    }
+
+    // Fallback: route the key through ITfKeystrokeMgr, the documented way for a
+    // client to hand a keystroke to the active text service.
+    auto keystrokeMgr = TsfSupport::GetSingleton().GetKeystrokeMgr();
+    if (keystrokeMgr != nullptr)
+    {
+        BOOL eaten = FALSE;
+        if (SUCCEEDED(keystrokeMgr->TestKeyDown(vk, lParam, &eaten)) && eaten != FALSE)
+        {
+            if (SUCCEEDED(keystrokeMgr->KeyDown(vk, lParam, &eaten)) && eaten != FALSE)
+            {
+                logger::debug("Candidate page change forwarded to the TIP via ITfKeystrokeMgr (vk={:#x})", vk);
+                return true;
+            }
+        }
+    }
+
+    logger::debug("Candidate page change (vk={:#x}) was not consumed by the TIP", vk);
     return false;
 }
 
@@ -1251,8 +1304,11 @@ auto TextStore::GetCandInfo(ITfCandidateListUIElementBehavior *pCandidateList, C
         {
             return E_FAIL;
         }
-        candidateInfo.pageStart = candidateIdxPerPage[currentPage];
-        candidateInfo.pageEnd   = currentPage < pageCount - 1 ? candidateIdxPerPage[currentPage + 1] : count;
+        candidateInfo.pageStart   = candidateIdxPerPage[currentPage];
+        candidateInfo.pageEnd     = currentPage < pageCount - 1 ? candidateIdxPerPage[currentPage + 1] : count;
+        candidateInfo.pageCount   = pageCount;
+        candidateInfo.currentPage = currentPage;
+        candidateInfo.totalCount  = count;
         return S_OK;
     }
 
@@ -1354,6 +1410,9 @@ auto TextStore::DoUpdateUIElement() -> HRESULT
             }
             candidateUi.Close();
             candidateUi.SetFirstIndex(info.pageStart);
+            // Page geometry for the "‹ 1/5 ›" control. pageEnd - pageStart is
+            // the TIP's own page size (the last page may be shorter).
+            candidateUi.SetPageInfo(info.pageEnd - info.pageStart, info.currentPage, info.pageCount, info.totalCount);
             candidateUi.Reserve(info.pageEnd - info.pageStart);
             for (UINT index = info.pageStart, j = 0; index < info.pageEnd; ++j, ++index)
             {

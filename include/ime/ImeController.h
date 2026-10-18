@@ -71,6 +71,10 @@ public:
     /// through the ErrorNotifier. SUCCESS here means the task was dispatched.
     auto CommitCandidate(DWORD index) const -> IImeModule::Result;
     auto SetConversionMode(DWORD conversionMode) const -> void;
+    /// Ask the IME to move its candidate window by `delta` pages (+1 next, -1
+    /// previous). Dispatched to the IME thread; the request itself is
+    /// best-effort (a TIP may refuse the forwarded key).
+    auto ChangeCandidatePage(int delta) const -> void;
 
     //////////////////////////////////////////////////
 

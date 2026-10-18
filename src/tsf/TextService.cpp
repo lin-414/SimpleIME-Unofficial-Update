@@ -9,6 +9,7 @@
 #include "utils/CompositionScriptLogic.h"
 #include "utils/ConversionMemoryLogic.h"
 
+#include <algorithm>
 #include <format>
 #include <string>
 #include <string_view>
@@ -865,5 +866,43 @@ auto TextService::ProcessImeMessage(HWND /*hWnd*/, UINT /*uMsg*/, WPARAM /*wPara
     // TextService if TSF is disabled or fails to initialize. Therefore, within the
     // TSF-enabled service, we assume UIElement support is guaranteed.
     return false;
+}
+
+auto TextService::MoveCandidateSelection(const int delta) -> bool
+{
+    if (delta == 0)
+    {
+        return false;
+    }
+    const std::scoped_lock lock(m_mutex);
+    const auto             count = m_candidateUi.CandidateList().size();
+    if (count == 0)
+    {
+        return false;
+    }
+    const auto current = static_cast<long>(std::min<DWORD>(m_candidateUi.Selection(), static_cast<DWORD>(count - 1)));
+    const auto clamped = std::clamp(current + delta, 0L, static_cast<long>(count - 1));
+    if (clamped == current)
+    {
+        return false;
+    }
+    m_candidateUi.SetSelection(static_cast<DWORD>(clamped));
+    MarkDirty(DirtyFlag::CandidateSelection);
+    return true;
+}
+
+auto TextService::CommitSelectedCandidate() -> bool
+{
+    DWORD index = 0;
+    {
+        const std::scoped_lock lock(m_mutex);
+        const auto             count = m_candidateUi.CandidateList().size();
+        if (count == 0)
+        {
+            return false;
+        }
+        index = std::min<DWORD>(m_candidateUi.Selection(), static_cast<DWORD>(count - 1));
+    }
+    return m_textStore->CommitCandidate(index);
 }
 } // namespace Tsf

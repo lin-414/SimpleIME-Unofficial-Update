@@ -110,6 +110,19 @@ auto ImeController::SetConversionMode(DWORD conversionMode) const -> void
     });
 }
 
+auto ImeController::ChangeCandidatePage(int delta) const -> void
+{
+    if (!IsReady()) return;
+
+    PostToImeThread([this, delta] -> void {
+        ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
+        if (IsModEnabled() && imeWnd != nullptr)
+        {
+            imeWnd->ChangeCandidatePage(delta);
+        }
+    });
+}
+
 void ImeController::EnableIme(bool enable) const
 {
     if (!IsReady()) return;

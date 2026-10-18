@@ -79,6 +79,39 @@ public:
         }
     }
 
+    //! Must call from IME thread. Ask the IME to move its candidate window by
+    //! `delta` pages (+1 next, -1 previous). Best-effort: a TIP may refuse.
+    //! @see ImeController::ChangeCandidatePage
+    void ChangeCandidatePage(const int delta) const
+    {
+        if (m_textService)
+        {
+            m_textService->ChangeCandidatePage(delta);
+        }
+    }
+
+    //! Must call from IME thread. Move the highlighted candidate by `delta`
+    //! (+1 next, -1 previous) inside the current page. The TSF keyboard channel
+    //! is intentionally disabled (see ImeWnd::Run), so this is applied to the
+    //! cached candidate list locally.
+    void MoveCandidateSelection(const int delta) const
+    {
+        if (m_textService)
+        {
+            m_textService->MoveCandidateSelection(delta);
+        }
+    }
+
+    //! Commit the candidate currently highlighted in the self-drawn list.
+    //! Must call from IME thread.
+    void CommitSelectedCandidate() const
+    {
+        if (m_textService)
+        {
+            m_textService->CommitSelectedCandidate();
+        }
+    }
+
     /**
      * Must call from IME thread. Put the user's active input method into its
      * English state (or back into its native state) without changing the

@@ -228,7 +228,119 @@ auto Imm32TextService::CommitCandidate(DWORD index) -> bool
         return false;
     }
 
-    return ImmNotifyIME(hImc, NI_SELECTCANDIDATESTR, 0, index) != FALSE;
+    // The UI list is page-relative; NI_SELECTCANDIDATESTR takes an index into
+    // the WHOLE candidate table (dwSelection is global — see DoUpdateCandidateList).
+    const DWORD globalIndex = m_candidateUi.FirstIndex() + index;
+    return ImmNotifyIME(hImc, NI_SELECTCANDIDATESTR, 0, globalIndex) != FALSE;
+}
+
+auto Imm32TextService::ChangeCandidatePage(int delta) -> bool
+{
+    if (delta == 0)
+    {
+        return false;
+    }
+    AcquiredHimc hImc(m_imeHwnd);
+    if (!hImc)
+    {
+        return false;
+    }
+
+    // Read the whole candidate table to get the current page window; Imm32 has
+    // no "next page" API, so the page start has to be computed here.
+    DWORD bufLen = ImmGetCandidateListW(hImc, 0, nullptr, 0);
+    if (bufLen == 0)
+    {
+        return false;
+    }
+    HGLOBAL hGlobal = GlobalAlloc(LPTR, bufLen);
+    if (hGlobal == nullptr)
+    {
+        return false;
+    }
+    auto *candidateList = static_cast<LPCANDIDATELIST>(GlobalLock(hGlobal));
+    if (candidateList == nullptr)
+    {
+        GlobalFree(hGlobal);
+        return false;
+    }
+
+    bool changed = false;
+    if (ImmGetCandidateListW(hImc, 0, candidateList, bufLen) > 0 && candidateList->dwPageSize > 0 && candidateList->dwCount > 0)
+    {
+        const DWORD pageSize  = candidateList->dwPageSize;
+        const DWORD total     = candidateList->dwCount;
+        const DWORD pageStart = candidateList->dwPageStart;
+        DWORD       newStart  = pageStart;
+        if (delta > 0)
+        {
+            // Advance only when a full next page exists. Clamping to
+            // total - 1 would strand the page window on the last candidate
+            // (and break single-page lists), because dwPageStart is a page
+            // start, not a candidate index.
+            if (pageStart + pageSize < total)
+            {
+                newStart = pageStart + pageSize;
+            }
+        }
+        else if (delta < 0 && pageStart >= pageSize)
+        {
+            newStart = pageStart - pageSize;
+        }
+        if (newStart != pageStart)
+        {
+            // Move the IME's own page window. The IME normally answers with an
+            // IMN_CANDIDATECHANGE notification; the explicit re-read below
+            // covers IMEs that stay silent.
+            changed = ImmNotifyIME(hImc, NI_SETCANDIDATE_PAGESTART, 0, newStart) != FALSE;
+        }
+    }
+    GlobalUnlock(hGlobal);
+    GlobalFree(hGlobal);
+
+    if (changed)
+    {
+        ChangeCandidateAt(hImc);
+    }
+    return changed;
+}
+
+auto Imm32TextService::MoveCandidateSelection(int delta) -> bool
+{
+    if (delta == 0)
+    {
+        return false;
+    }
+    const std::scoped_lock lock(m_mutex);
+    const auto             count = m_candidateUi.CandidateList().size();
+    if (count == 0)
+    {
+        return false;
+    }
+    const auto current = static_cast<long>(std::min<DWORD>(m_candidateUi.Selection(), static_cast<DWORD>(count - 1)));
+    const auto clamped = std::clamp(current + delta, 0L, static_cast<long>(count - 1));
+    if (clamped == current)
+    {
+        return false;
+    }
+    m_candidateUi.SetSelection(static_cast<DWORD>(clamped));
+    MarkDirty(DirtyFlag::CandidateSelection);
+    return true;
+}
+
+auto Imm32TextService::CommitSelectedCandidate() -> bool
+{
+    DWORD index = 0;
+    {
+        const std::scoped_lock lock(m_mutex);
+        const auto             count = m_candidateUi.CandidateList().size();
+        if (count == 0)
+        {
+            return false;
+        }
+        index = std::min<DWORD>(m_candidateUi.Selection(), static_cast<DWORD>(count - 1));
+    }
+    return CommitCandidate(index);
 }
 
 auto Imm32TextService::SetConversionMode(DWORD conversionMode) -> bool
@@ -438,6 +550,21 @@ void Imm32TextService::DoUpdateCandidateList(LPCANDIDATELIST lpCandList)
     m_candidateUi.SetSelection(lpCandList->dwSelection > lpCandList->dwPageStart
                                    ? static_cast<DWORD>(lpCandList->dwSelection - lpCandList->dwPageStart)
                                    : 0);
+    // Imm32 always returns the WHOLE candidate table (dwCount entries) plus a
+    // window into the current page. Remember the page geometry: the UI renders
+    // a "‹ 1/5 ›" control from it and the commit path maps a page-relative
+    // click back to the table index through FirstIndex.
+    m_candidateUi.SetFirstIndex(lpCandList->dwPageStart);
+    if (lpCandList->dwPageSize > 0)
+    {
+        const DWORD pageCount = (lpCandList->dwCount + lpCandList->dwPageSize - 1) / lpCandList->dwPageSize;
+        m_candidateUi.SetPageInfo(
+            lpCandList->dwPageSize,
+            lpCandList->dwPageStart / lpCandList->dwPageSize,
+            pageCount,
+            lpCandList->dwCount
+        );
+    }
     MarkDirty(DirtyFlag::CandidateList);
 }
 

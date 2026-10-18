@@ -101,8 +101,11 @@ struct AdviseSinkCache
 
 struct CandidateInfo
 {
-    DWORD pageStart = 0;
-    UINT  pageEnd   = 0;
+    DWORD pageStart   = 0;
+    UINT  pageEnd     = 0;
+    UINT  pageCount   = 0;
+    UINT  currentPage = 0;
+    UINT  totalCount  = 0;
 };
 
 class TextService;
@@ -136,6 +139,11 @@ public:
     [[nodiscard]] auto ClearFocus() const -> HRESULT;
     [[nodiscard]] auto TerminateComposition() const -> HRESULT;
     [[nodiscard]] auto CommitCandidate(UINT index) const -> bool;
+
+    /// Forward a PageUp/PageDown keystroke to the TIP so it moves its own
+    /// candidate window. Returns true when the TIP consumed the key (a page
+    /// change will arrive as TF_CLUIE_CURRENTPAGE via UpdateUIElement).
+    [[nodiscard]] auto ChangeCandidatePage(int delta) const -> bool;
 
     auto STDMETHODCALLTYPE AddRef() -> ULONG override;
     auto STDMETHODCALLTYPE Release() -> ULONG override;
@@ -346,6 +354,12 @@ public:
     auto SetSessionImeEnabled(bool enabled) -> bool override;
 
     auto CommitCandidate(DWORD index) -> bool override { return m_textStore->CommitCandidate(index); }
+
+    auto ChangeCandidatePage(int delta) -> bool override { return m_textStore->ChangeCandidatePage(delta); }
+
+    auto MoveCandidateSelection(int delta) -> bool override;
+
+    auto CommitSelectedCandidate() -> bool override;
 
     auto SetConversionMode(DWORD conversionMode) -> bool override;
 

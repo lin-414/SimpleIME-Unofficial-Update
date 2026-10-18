@@ -2497,3 +2497,27 @@ remember the previous input mode」，并说明之前的 Alt + ` 其实是自定
   关闭 → 重开，确认恢复 0x9（日志 `Composition script evidence ... 0x0 -> 0x9`、
   `Persisted 0x9`、`Published conversion=0x9`）；另外 かな → 切 Direct Input（不打字）→
   关闭 → 重开，确认仍停在 Direct Input（`ToogleKeyboard(false)` / open/close=0）。
+
+
+## 3.2.0-beta：候选框翻页 + 上下键选候选 + 空格/回车提交（2026-10-18）
+
+用户反馈输入 d 只有 9 个候选、无法翻页，要求左右箭头翻候选；实测后确定为：
+
+- **翻页控件**：`CandidateUi` 增加 `SetPageInfo(pageSize, currentPage, pageCount, totalCount)`；
+  `ImeWindow::DrawCandidatePageControl` 在候选行尾画 `‹` / `›`（不显示页码，按用户要求），
+  点击 → `ImeController::ChangeCandidatePage(±1)` → IME 线程 `ITextService::ChangeCandidatePage`。
+  TSF 后端经 `ITfIntegratableCandidateListUIElement::OnKeyDown(VK_NEXT/VK_PRIOR)` 转发，
+  失败回退 `ITfKeystrokeMgr::TestKeyDown/KeyDown`；Imm32 后端读整表后
+  `NI_SETCANDIDATE_PAGESTART`。PageUp/PageDown 同样拦截转发。
+- **高亮导航**：TSF 键盘通道被有意禁用（`ImeWnd::Run` 注释，KB4564002），TIP 收不到方向键，
+  因此 `MoveCandidateSelection` 在缓存 `CandidateUi` 上本地移动 Selection；实测键位为
+  **↑↓**（↑=左移、↓=右移），**←→** 留给 TIP 移动拼音光标。空格 / 回车 → `CommitSelectedCandidate()`
+  提交高亮项（不再提交 TIP 的旧选择）。
+- **提交索引修复**：`CommitCandidate` 统一 `FirstIndex() + index` 换算全局下标（TSF/Imm32）。
+- **Review 修复（d74c4d9f）**：Imm32 末页/单页 PageDown 页起点不再钳到 `total - 1`；
+  禁用箭头不派发翻页；Enter 提交高亮项；页码按用户要求不恢复。
+- **版本**：`CMakeLists.txt` `VERSION 3.1.8.3 → 3.2.0`（display 3.2.0-beta）；
+  `docs/changelog-3.2.0-beta.md`；产物 `dist/SimpleIME-3.2.0-beta-Release.7z`
+  （DLL FileVersion 3.2.0-beta，1,431,343 字节）。
+- **发版**：main 提交 2798b0e/41c455b + 本次候选翻页改动；tag `v3.2.0-beta`；
+  GitHub Release 手动 `gh release create`（tag push 不触发 CI 的老坑）。

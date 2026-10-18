@@ -700,6 +700,59 @@ void ImeWnd::ReclaimImeFocus(HWND hWnd)
 
 void ImeWnd::HandleKeyDown(UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    // PageUp/PageDown while the candidate list is up: hand the key to the IME
+    // so it moves its own candidate window (the ImGui window only mirrors the
+    // TIP's page). Keys the TIP consumed itself never reach this handler — in
+    // that case the TIP has already paged and its UIElement update refreshes
+    // us through DoUpdateUIElement.
+    if ((wParam == VK_PRIOR || wParam == VK_NEXT) && State::GetInstance().HasAny(State::IN_CAND_CHOOSING))
+    {
+        if (m_textService != nullptr)
+        {
+            m_textService->ChangeCandidatePage(wParam == VK_NEXT ? 1 : -1);
+        }
+        return;
+    }
+    // Up/Down while the candidate list is up: move the highlight locally.
+    // The TSF keyboard channel is deliberately disabled (see Run() above), so
+    // the TIP never sees these keys; navigation has to happen on our cached
+    // candidate list or the highlight would never move. Left/Right stay free
+    // for the TIP's own caret movement inside the pinyin string (in-game
+    // report, 2026-10-18: the physical keys that reach this handler as
+    // VK_UP/VK_DOWN are what the user expects to walk the list, while
+    // VK_LEFT/VK_RIGHT move the pinyin caret).
+    if ((wParam == VK_UP || wParam == VK_DOWN) && State::GetInstance().HasAny(State::IN_CAND_CHOOSING))
+    {
+        if (m_textService != nullptr)
+        {
+            m_textService->MoveCandidateSelection(wParam == VK_DOWN ? 1 : -1);
+        }
+        return;
+    }
+    // Space while the candidate list is up commits the highlighted entry — the
+    // standard IME meaning of Space. The highlight is moved locally (see
+    // above), so the commit resolves it from the cached list; the TIP never
+    // sees the key.
+    if (wParam == VK_SPACE && State::GetInstance().HasAny(State::IN_CAND_CHOOSING))
+    {
+        if (m_textService != nullptr)
+        {
+            m_textService->CommitSelectedCandidate();
+        }
+        return;
+    }
+    // Enter commits the highlighted entry as well. The TIP's own selection is
+    // not updated by the local highlight move, so letting Enter through to the
+    // TIP would commit a different candidate than the one under the green
+    // highlight.
+    if (wParam == VK_RETURN && State::GetInstance().HasAny(State::IN_CAND_CHOOSING))
+    {
+        if (m_textService != nullptr)
+        {
+            m_textService->CommitSelectedCandidate();
+        }
+        return;
+    }
     if (wParam == VK_SHIFT)
     {
         m_shiftTapArmed      = true;

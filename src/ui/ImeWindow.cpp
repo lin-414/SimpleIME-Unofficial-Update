@@ -147,6 +147,76 @@ void CommitClickedCandidate(const std::size_t clicked, const std::size_t candida
     }
 }
 
+//! Paints the hover background and the ‹/› triangle for the arrow button that
+//! was just submitted (reads ImGui::GetItemRectMin/Max, so call it right after
+//! the InvisibleButton).
+void DrawPageArrowVisual(const ImGuiDir dir, const float size, const bool enabled)
+{
+    auto        &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
+    const auto  &colors   = m3Styles.Colors();
+    const ImVec2 itemMin  = ImGui::GetItemRectMin();
+    const ImVec2 itemMax  = ImGui::GetItemRectMax();
+    if (enabled && ImGui::IsItemHovered())
+    {
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            itemMin, itemMax, ImGui::ColorConvertFloat4ToU32(colors[ImGuiEx::M3::Spec::ColorRole::surfaceContainerHigh]), size * 0.5F
+        );
+    }
+    const ImU32  color  = ImGui::ColorConvertFloat4ToU32(colors[enabled ? ImGuiEx::M3::Spec::ColorRole::onSurfaceVariant : ImGuiEx::M3::Spec::ColorRole::outline]);
+    const ImVec2 center((itemMin.x + itemMax.x) * 0.5F, (itemMin.y + itemMax.y) * 0.5F);
+    const float  r = size * 0.16F;
+    if (dir == ImGuiDir_Left)
+    {
+        ImGui::GetWindowDrawList()->AddTriangleFilled(
+            {center.x - r, center.y}, {center.x + r * 0.7F, center.y - r}, {center.x + r * 0.7F, center.y + r}, color
+        );
+    }
+    else
+    {
+        ImGui::GetWindowDrawList()->AddTriangleFilled(
+            {center.x + r, center.y}, {center.x - r * 0.7F, center.y - r}, {center.x - r * 0.7F, center.y + r}, color
+        );
+    }
+}
+
+//! "‹ ›" — one-line page control at the current cursor. Returns the
+//! requested page delta (-1/+1) or 0 when nothing was clicked. Hidden for
+//! single-page lists so the common case stays unchanged. The arrows carry no
+//! page counter: the user asked for the arrows only (2026-10-18).
+auto DrawCandidatePageControl(const CandidateUi &candidateUi, const float arrowSize) -> int
+{
+    const DWORD pageCount   = candidateUi.PageCount();
+    const DWORD currentPage = candidateUi.CurrentPage();
+    if (pageCount <= 1)
+    {
+        return 0;
+    }
+
+    auto        &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
+    const float  arrowGap = m3Styles.GetPixels(ImGuiEx::M3::Spec::dp<2>());
+
+    int delta = 0;
+
+    ImGui::PushID("##PrevCandidatePage");
+    if (ImGui::InvisibleButton("##PageArrow", ImVec2(arrowSize, arrowSize)) && currentPage > 0)
+    {
+        delta = -1;
+    }
+    DrawPageArrowVisual(ImGuiDir_Left, arrowSize, currentPage > 0);
+    ImGui::PopID();
+
+    ImGui::SameLine(0.F, arrowGap);
+    ImGui::PushID("##NextCandidatePage");
+    if (ImGui::InvisibleButton("##PageArrow", ImVec2(arrowSize, arrowSize)) && currentPage + 1 < pageCount)
+    {
+        delta = 1;
+    }
+    DrawPageArrowVisual(ImGuiDir_Right, arrowSize, currentPage + 1 < pageCount);
+    ImGui::PopID();
+
+    return delta;
+}
+
 void DrawCandidates(const CandidateUi &candidateUi)
 {
     using size_type = CandidateUi::size_type;
@@ -195,6 +265,14 @@ void DrawCandidates(const CandidateUi &candidateUi)
             index++;
         }
         CommitClickedCandidate(clicked, candidateList.size());
+        if (candidateUi.PageCount() > 1)
+        {
+            ImGui::SameLine(0.F, gap * 1.5F);
+            if (const int delta = DrawCandidatePageControl(candidateUi, ImGui::GetTextLineHeight() + padY * 2.F); delta != 0)
+            {
+                ImeController::GetInstance()->ChangeCandidatePage(delta);
+            }
+        }
     }
 }
 
@@ -250,6 +328,14 @@ auto DrawVerticalCandidates(const CandidateUi &candidateUi) -> void
             index++;
         }
         CommitClickedCandidate(clicked, candidateList.size());
+        if (candidateUi.PageCount() > 1)
+        {
+            ImGui::Dummy(ImVec2(0.F, m3Styles.GetPixels(ImGuiEx::M3::Spec::dp<4>())));
+            if (const int delta = DrawCandidatePageControl(candidateUi, m3Styles.GetPixels(ImGuiEx::M3::Spec::dp<32>())); delta != 0)
+            {
+                ImeController::GetInstance()->ChangeCandidatePage(delta);
+            }
+        }
     }
 }
 

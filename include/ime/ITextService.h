@@ -145,6 +145,51 @@ public:
     virtual auto SetConversionMode(DWORD conversionMode) -> bool = 0;
 
     /**
+     * @brief Ask the active IME to move its candidate window by `delta` pages.
+     *
+     * The ImGui candidate window mirrors the TIP's own candidate UI: the TIP
+     * owns the paging state, so a page change must be requested from it rather
+     * than simulated locally. The TSF backend forwards the PageUp/PageDown
+     * keystroke to the TIP (ITfIntegratableCandidateListUIElement::OnKeyDown,
+     * falling back to ITfKeystrokeMgr); the Imm32 backend notifies the input
+     * context (NI_SETCANDIDATE_PAGESTART).
+     *
+     * Runs on the IME thread. Returns true when the IME accepted the request;
+     * a false return means no page change may be assumed.
+     *
+     * @param delta +1 for the next page, -1 for the previous page.
+     */
+    virtual auto ChangeCandidatePage([[maybe_unused]] int delta) -> bool { return false; }
+
+    /**
+     * @brief Move the highlighted candidate inside the current page.
+     *
+     * The self-drawn candidate list has no TSF keyboard channel (ImeWnd's
+     * message loop deliberately stays a plain PeekMessage loop — see
+     * ImeWnd::Run), so arrow-key navigation is applied to the cached
+     * CandidateUi here instead of being forwarded to the TIP. Commit paths
+     * (click / Space / Enter) resolve the highlighted index through the same
+     * cache.
+     *
+     * Runs on the IME thread. Returns true when the selection moved.
+     *
+     * @param delta +1 for the next candidate, -1 for the previous one.
+     */
+    virtual auto MoveCandidateSelection([[maybe_unused]] int delta) -> bool { return false; }
+
+    /**
+     * @brief Commit the candidate currently highlighted in the self-drawn list.
+     *
+     * The standard IME meaning of Space while a candidate list is up: pick the
+     * highlighted entry. The highlight is moved locally by
+     * MoveCandidateSelection, so the commit has to resolve it from the same
+     * cache rather than from the TIP.
+     *
+     * Runs on the IME thread. Returns true when a commit was initiated.
+     */
+    virtual auto CommitSelectedCandidate() -> bool { return false; }
+
+    /**
      * @brief Re-read the active conversion mode from the IME into State.
      *
      * Called when an input processor activates (profile switch) so the UI
@@ -235,6 +280,12 @@ public:
     auto CommitCandidate(DWORD index) -> bool override;
 
     auto SetConversionMode(DWORD conversionMode) -> bool override;
+
+    auto ChangeCandidatePage(int delta) -> bool override;
+
+    auto MoveCandidateSelection(int delta) -> bool override;
+
+    auto CommitSelectedCandidate() -> bool override;
 
     /// See ITextService::StampRememberedConversionModeFromLive. There are no
     /// compartments on this backend: the live mode is the input context's own
