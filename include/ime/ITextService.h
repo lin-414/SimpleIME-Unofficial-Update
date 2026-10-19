@@ -190,6 +190,19 @@ public:
     virtual auto CommitSelectedCandidate() -> bool { return false; }
 
     /**
+     * @brief Forward one physical key to the active IME (TSF keystroke channel).
+     *
+     * While a composition owns the keyboard the engine's input stream is muted
+     * (Hooks::InputSuppression) AND the TSF keyboard channel is disabled by
+     * design (ImeWnd::Run), so the keys the IME itself edits with — Left/Right
+     * moving the pinyin caret, Backspace deleting a pinyin letter — would
+     * otherwise reach nobody. This hands exactly those keys to the TIP.
+     *
+     * Runs on the IME thread. Returns true when the TIP consumed the key.
+     */
+    virtual auto ForwardKeyToTip([[maybe_unused]] UINT vk, [[maybe_unused]] LPARAM lParam) -> bool { return false; }
+
+    /**
      * @brief Re-read the active conversion mode from the IME into State.
      *
      * Called when an input processor activates (profile switch) so the UI

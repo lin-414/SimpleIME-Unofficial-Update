@@ -927,6 +927,16 @@ void ToolWindow::DrawMenuInputStatus(Settings &settings)
                 settings.input.pauseGameWhileSettingsOpen,
                 SupportingMeasure()
             );
+            Panels::RowDivider();
+            // Not a bridge either: it is a pure input-stream switch, recognised
+            // every frame from the live text-entry count.
+            (void)Panels::SettingsToggleRow(
+                "##SuppressInputWhileTyping",
+                Translate("Settings.Behaviour.SuppressInputWhileTyping"),
+                Translate("Settings.Behaviour.SuppressInputWhileTypingToolTip"),
+                settings.input.suppressInputWhileTyping,
+                SupportingMeasure()
+            );
         }
         Panels::EndSettingsCard();
     }

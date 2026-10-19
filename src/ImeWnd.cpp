@@ -2,6 +2,7 @@
 
 #include "configs/CustomMessage.h"
 #include "core/State.h"
+#include "hooks/InputSuppression.h"
 #include "hooks/MeridianBridge.h"
 #include "hooks/PrismaBridge.h"
 #include "i18n/translator_manager.h"
@@ -700,6 +701,20 @@ void ImeWnd::ReclaimImeFocus(HWND hWnd)
 
 void ImeWnd::HandleKeyDown(UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    // While the engine stream is muted (a composition owns the keyboard) the
+    // game never sees these keys either. The TSF keyboard channel is disabled
+    // by design (see Run() above), so the TIP's own editing keys — Left/Right
+    // moving the pinyin caret, Backspace deleting a pinyin letter — have to be
+    // handed to it here, or they reach nobody.
+    if (Hooks::InputSuppression::IsSuppressing() && State::GetInstance().HasAny(State::IN_COMPOSING) &&
+        (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_BACK))
+    {
+        if (m_textService != nullptr)
+        {
+            m_textService->ForwardKeyToTip(static_cast<UINT>(wParam), lParam);
+        }
+        return;
+    }
     // PageUp/PageDown while the candidate list is up: hand the key to the IME
     // so it moves its own candidate window (the ImGui window only mirrors the
     // TIP's page). Keys the TIP consumed itself never reach this handler — in

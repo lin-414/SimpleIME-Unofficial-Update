@@ -905,4 +905,19 @@ auto TextService::CommitSelectedCandidate() -> bool
     }
     return m_textStore->CommitCandidate(index);
 }
+
+auto TextService::ForwardKeyToTip(const UINT vk, const LPARAM lParam) -> bool
+{
+    auto keystrokeMgr = TsfSupport::GetSingleton().GetKeystrokeMgr();
+    if (keystrokeMgr == nullptr)
+    {
+        return false;
+    }
+    BOOL eaten = FALSE;
+    if (SUCCEEDED(keystrokeMgr->TestKeyDown(vk, lParam, &eaten)) && eaten != FALSE)
+    {
+        return SUCCEEDED(keystrokeMgr->KeyDown(vk, lParam, &eaten)) && eaten != FALSE;
+    }
+    return false;
+}
 } // namespace Tsf

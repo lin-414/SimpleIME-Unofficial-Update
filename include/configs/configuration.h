@@ -70,6 +70,13 @@ struct Configuration
         /// is up, and yielded while a mod surface owns the keyboard (see
         /// ToolWindowMenu::SyncSettingsWindowPause).
         bool        pauseGameWhileSettingsOpen;
+        /// Mute the engine's input stream while a text entry owns the keyboard:
+        /// BSInputDeviceManager::PollInputDevices is not called at all, so the
+        /// frame generates no InputEvent and PgUp/PgDn & other plugins' hotkeys
+        /// cannot fire mid-typing. Stands in for the external "Typing Mode" mod.
+        /// The IME keeps receiving keys through ImeWnd's Win32 focus. On by
+        /// default: without it every hotkey in the load order fires while typing.
+        bool        suppressInputWhileTyping;
         /// Runtime cache, NOT a preference: the last 中/英 (native) state observed
         /// in-game, stamped by the mod on every config save. Seeds the next
         /// session's first text-field entry — IMEs like WeChat publish no
@@ -134,7 +141,7 @@ constexpr auto GetDefaultConfiguration() -> Configuration
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true, .lastConversionMode = -1}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = "", .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .suppressInputWhileTyping = true, .lastNativeConversion = true, .lastConversionMode = -1}
     };
 }
 

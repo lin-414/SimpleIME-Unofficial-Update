@@ -361,6 +361,8 @@ public:
 
     auto CommitSelectedCandidate() -> bool override;
 
+    auto ForwardKeyToTip(UINT vk, LPARAM lParam) -> bool override;
+
     auto SetConversionMode(DWORD conversionMode) -> bool override;
 
     /// Re-read the conversion mode from the compartments into State. Called when

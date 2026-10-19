@@ -68,6 +68,7 @@ constexpr auto KEY_PRISMA_AVOIDANCE       = "prisma_avoidance";
 constexpr auto KEY_SKSEMF_SUPPORT         = "skse_menu_framework_support";
 constexpr auto KEY_IMGUI_SURFACE_INPUT    = "imgui_surface_input";
 constexpr auto KEY_PAUSE_FOR_SETTINGS     = "pause_game_while_settings_open";
+constexpr auto KEY_SUPPRESS_INPUT         = "suppress_input_while_typing";
 constexpr auto KEY_LAST_NATIVE_CONVERSION = "last_native_conversion";
 constexpr auto KEY_LAST_CONVERSION_MODE   = "last_conversion_mode";
 
@@ -144,6 +145,12 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         " ImGui 界面），设置窗开着时它们会被关闭；若此时正由某个模组界面持有文本输入",
         " （SKSE Menu Framework 文本框、原生 ImGui 输入框等），本 Mod 会先让出暂停。",
     };
+    const Comments suppressInputComment = {
+        " 输入时屏蔽游戏输入流",
+        " 开启后，文本输入框拥有键盘期间不生成任何游戏输入事件(键盘/鼠标/手柄)，",
+        " PgUp/PgDn 等按键不会触发其它模组的快捷键。IME 通过 ImeWnd 接收按键，不受影响。",
+        " 这是外部 Typing Mode 模组的内置等价物；默认开启。",
+    };
     const Comments lastNativeConversionComment = {
         " 运行时缓存，非用户配置：游戏内最后观察到的 中/英 输入状态(true=中文)",
         " 由 Mod 在每次保存配置时自动更新，用于下次启动游戏时语言栏的初始显示。",
@@ -208,6 +215,7 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         {KEY_SKSEMF_SUPPORT,       {configuration.input.skseMenuFrameworkSupport, skseMenuFrameworkSupportComment}},
         {KEY_IMGUI_SURFACE_INPUT,  {configuration.input.imguiSurfaceInput, imguiSurfaceInputComment}},
         {KEY_PAUSE_FOR_SETTINGS,   {configuration.input.pauseGameWhileSettingsOpen, pauseForSettingsComment}},
+        {KEY_SUPPRESS_INPUT,       {configuration.input.suppressInputWhileTyping, suppressInputComment}},
         {KEY_LAST_NATIVE_CONVERSION, {configuration.input.lastNativeConversion, lastNativeConversionComment}},
         {KEY_LAST_CONVERSION_MODE, {configuration.input.lastConversionMode, lastConversionModeComment}},
     };
@@ -342,6 +350,7 @@ auto ParseConfigurationFromToml(toml::value &rawToml, std::vector<std::string> *
         apply(input, KEY_SKSEMF_SUPPORT, config.input.skseMenuFrameworkSupport);
         apply(input, KEY_IMGUI_SURFACE_INPUT, config.input.imguiSurfaceInput);
         apply(input, KEY_PAUSE_FOR_SETTINGS, config.input.pauseGameWhileSettingsOpen);
+        apply(input, KEY_SUPPRESS_INPUT, config.input.suppressInputWhileTyping);
         apply(input, KEY_LAST_NATIVE_CONVERSION, config.input.lastNativeConversion);
         apply(input, KEY_LAST_CONVERSION_MODE, config.input.lastConversionMode);
     }

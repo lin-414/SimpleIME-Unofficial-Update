@@ -101,6 +101,11 @@ imgui_surface_input = true
 # （SKSE Menu Framework 文本框、原生 ImGui 输入框等），本 Mod 会先让出暂停，
 # 避免把对方界面直接按死。
 pause_game_while_settings_open = false
+# 文本输入框拥有键盘时屏蔽游戏输入流
+# 开启后，打字期间不生成任何游戏输入事件(键盘/鼠标/手柄)，PgUp/PgDn 等按键不会触发
+# 其它模组的快捷键；IME 通过 ImeWnd 接收按键，不受影响。这是外部 Typing Mode 模组的
+# 内置等价物，默认开启。
+suppress_input_while_typing = true
 # 运行时缓存，非用户配置：游戏内最后观察到的 中/英 输入状态(true=中文)
 # 由 Mod 在每次保存配置时自动更新，用于下次启动游戏时语言栏的初始显示。
 # 微信等输入法不通过系统接口公布中/英状态，没有这个缓存时首次进入输入框无法预判。

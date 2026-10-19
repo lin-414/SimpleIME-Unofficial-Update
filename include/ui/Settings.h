@@ -164,6 +164,12 @@ struct Settings
         /// is live. Yields while a mod surface owns the keyboard — see
         /// ToolWindowMenu::SyncSettingsWindowPause.
         bool                  pauseGameWhileSettingsOpen;
+        /// Mute the engine's input stream while a text entry owns the keyboard
+        /// (BSInputDeviceManager::PollInputDevices skipped → no InputEvent, so
+        /// other plugins' hotkeys cannot fire mid-typing). Read on the game
+        /// thread by the input hook every frame; written only by the settings
+        /// UI/config load. Aligned bool, same no-tear tolerance as keepImeOpen.
+        bool                  suppressInputWhileTyping;
         /// Runtime cache: the last in-game observed native (中) conversion
         /// state. Stamped from State on every config save (game/render thread,
         /// aligned bool — same no-tear tolerance doctrine as above) and seeded
@@ -201,7 +207,7 @@ inline auto GetDefaultSettings() -> Settings
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,
                                           .autoToggleLanguageBar = true},
-        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .lastNativeConversion = true, .lastConversionMode = -1}
+        .input = {.enableUnicodePaste = true, .keepImeOpen = false, .posUpdatePolicy = Settings::WindowPosUpdatePolicy::BASED_ON_CARET, .meridianSupport = true, .prismaAvoidance = true, .skseMenuFrameworkSupport = true, .imguiSurfaceInput = true, .pauseGameWhileSettingsOpen = false, .suppressInputWhileTyping = true, .lastNativeConversion = true, .lastConversionMode = -1}
     };
 }
 

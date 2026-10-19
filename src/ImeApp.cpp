@@ -10,6 +10,7 @@
 #include "core/State.h"
 #include "hook.h"
 #include "hooks/HdrOverlay.h"
+#include "hooks/InputSuppression.h"
 #include "hooks/MeridianBridge.h"
 #include "hooks/NirnLabBridge.h"
 #include "hooks/PrismaBridge.h"
@@ -756,6 +757,7 @@ auto ImeApp::SaveSettings() -> bool
 void ImeApp::InstallHooks()
 {
     Hooks::Scaleform::Install();
+    Hooks::InputSuppression::Install();
     // The present hook is the fallback frame driver for Meridian sessions
     // (see PresentHook) — safe to install once at startup next to the others.
     if (g_PresentHook == nullptr)
@@ -777,6 +779,7 @@ void ImeApp::InstallHooks()
 void ImeApp::UninstallHooks()
 {
     Hooks::Scaleform::Uninstall();
+    Hooks::InputSuppression::Uninstall();
     // NOTE: the present hook is intentionally NOT uninstalled — the detour
     // cannot be safely removed during teardown (render thread), and the
     // trampoline holding Original() must stay alive for the engine's present
@@ -914,6 +917,38 @@ auto ImeApp::MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> 
     }
     switch (uMsg)
     {
+        case WM_KEYDOWN: {
+            // While a composition owns the keyboard the engine stream is muted
+            // (Hooks::InputSuppression). If the game window still holds the
+            // Win32 focus — focus procurement failed, or a menu reclaimed it —
+            // the muted stream would swallow the very keys the candidate list
+            // and the TIP need. Hand them to ImeWnd, whose WM_KEYDOWN handler
+            // drives the candidate list and forwards the TIP's editing keys.
+            if (!Hooks::InputSuppression::IsSuppressing())
+            {
+                break;
+            }
+            switch (wParam)
+            {
+                case VK_PRIOR:
+                case VK_NEXT:
+                case VK_UP:
+                case VK_DOWN:
+                case VK_LEFT:
+                case VK_RIGHT:
+                case VK_BACK:
+                case VK_SPACE:
+                case VK_RETURN:
+                    if (const HWND imeHwnd = app.GetImeWnd().GetHWND(); imeHwnd != nullptr)
+                    {
+                        PostMessageW(imeHwnd, uMsg, wParam, lParam);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            break;
+        }
         case WM_KILLFOCUS:
         case WM_SETFOCUS:
             // PROBE(2026-10-12 SKSEMF session death): the focus timeline of the

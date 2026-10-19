@@ -353,6 +353,7 @@ auto ConvertConfigurationToSettings(const Configuration &config) -> Settings
     settings.input.skseMenuFrameworkSupport = config.input.skseMenuFrameworkSupport;
     settings.input.imguiSurfaceInput        = config.input.imguiSurfaceInput;
     settings.input.pauseGameWhileSettingsOpen = config.input.pauseGameWhileSettingsOpen;
+    settings.input.suppressInputWhileTyping  = config.input.suppressInputWhileTyping;
     settings.input.lastNativeConversion     = config.input.lastNativeConversion;
     settings.input.lastConversionMode       = config.input.lastConversionMode;
 
@@ -432,6 +433,7 @@ auto ConvertSettingsToConfiguration(const Settings &settings) -> Configuration
     configuration.input.skseMenuFrameworkSupport = settings.input.skseMenuFrameworkSupport;
     configuration.input.imguiSurfaceInput        = settings.input.imguiSurfaceInput;
     configuration.input.pauseGameWhileSettingsOpen = settings.input.pauseGameWhileSettingsOpen;
+    configuration.input.suppressInputWhileTyping  = settings.input.suppressInputWhileTyping;
     configuration.input.lastNativeConversion     = settings.input.lastNativeConversion;
     configuration.input.lastConversionMode       = settings.input.lastConversionMode;
 
