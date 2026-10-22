@@ -117,4 +117,55 @@ inline bool ShouldNeutralizeAscii(
     // closes the keyboard (KEYBOARD_OPEN=false) and returns above.
     return conversionNative || inputProcessorActive;
 }
+
+/// Whether the host's WantTextInput means a field is really waiting for text.
+///
+/// ImGui keeps WantTextInput set for a frame or two around a field's whole
+/// lifecycle — including the frame the field deactivates on — so the flag alone
+/// can be true while no item holds focus at all. Acting on that residue costs a
+/// full IME enable/disable cycle (focus grab, then the release that hands the
+/// focus back), which the user sees as the candidate bar flashing for ~30 ms and
+/// then nothing happening: in-game 2026-10-21, right after an Enter commit, three
+/// sessions of 31/31/32 ms began with the host reporting NO active item
+/// (beginActiveId=0x0) while a real field session in the same log always carried
+/// one. Only a session that started on a live field id is a field the IME can
+/// type into.
+///
+/// A host that does not export GetActiveId cannot answer the question, so
+/// `hostExportsActiveId == false` keeps the flag-only behaviour.
+inline bool ShouldStartSession(const bool rawWants, const bool hostExportsActiveId, const std::uint32_t hostActiveId)
+{
+    if (!rawWants)
+    {
+        return false;
+    }
+    if (!hostExportsActiveId)
+    {
+        return true;
+    }
+    return hostActiveId != 0U;
+}
+
+/// How long a session outlives the host's want.
+///
+/// In the shapes that open a NUMERIC field the host reports WantTextInput for a
+/// single frame: on, then off, while the item stays hovered and the pointer stays
+/// valid — in-game 2026-10-22 the ring shows "+0 a=<id> w=0 | +31 a=<id> w=1 |
+/// +78 a=0 w=0" with 0 mouse presses and 0 returns in between. Ending the session
+/// on that frame releases the text-entry lease and disables the IME one frame
+/// after it was enabled, so the field never gets a chance to stay open and the
+/// user only sees the candidate bar blink.
+///
+/// A hangover keeps the session — and the lease, and the IME — alive across those
+/// single-frame gaps. It costs nothing when the host is honest: a real field keeps
+/// the want set for as long as it is open, and a field that closes for good ends
+/// the session one hangover later (then everything settles at once).
+inline bool ShouldHoldSession(const bool wantThisFrame, const int msSinceWant, const int hangoverMs = 250)
+{
+    if (wantThisFrame)
+    {
+        return true;
+    }
+    return msSinceWant >= 0 && msSinceWant < hangoverMs;
+}
 } // namespace Hooks::SkseMenuFrameworkBridgeLogic

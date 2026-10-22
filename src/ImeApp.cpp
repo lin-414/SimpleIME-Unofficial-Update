@@ -10,6 +10,7 @@
 #include "core/State.h"
 #include "hook.h"
 #include "hooks/HdrOverlay.h"
+#include "hooks/InputDispatchHook.h"
 #include "hooks/InputSuppression.h"
 #include "hooks/MeridianBridge.h"
 #include "hooks/NirnLabBridge.h"
@@ -758,6 +759,10 @@ void ImeApp::InstallHooks()
 {
     Hooks::Scaleform::Install();
     Hooks::InputSuppression::Install();
+    // The single detour on the engine's input dispatch (see the class comment):
+    // needed by every self-drawn ImGui host, not just SKSE Menu Framework, so it
+    // is installed here rather than from SkseMenuFrameworkBridge::Install.
+    Hooks::InputDispatchHook::Install();
     // The present hook is the fallback frame driver for Meridian sessions
     // (see PresentHook) — safe to install once at startup next to the others.
     if (g_PresentHook == nullptr)
@@ -924,7 +929,14 @@ auto ImeApp::MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> 
             // the muted stream would swallow the very keys the candidate list
             // and the TIP need. Hand them to ImeWnd, whose WM_KEYDOWN handler
             // drives the candidate list and forwards the TIP's editing keys.
-            if (!Hooks::InputSuppression::IsSuppressing())
+            //
+            // Composing without suppression active means the mute is not
+            // actually in force (its Poll hook is off, or the engine produced
+            // the key before the collapse landed). The keys still belong to the
+            // IME, and its own Enter/backspace would now reach nobody, so the
+            // composition flag alone is enough to reroute them.
+            const bool composing = Core::State::GetInstance().Has(Core::State::IN_COMPOSING);
+            if (!Hooks::InputSuppression::IsSuppressing() && !composing)
             {
                 break;
             }

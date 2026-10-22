@@ -130,3 +130,52 @@ TEST(SkseMenuFrameworkInjection, non_ascii_needs_a_valid_scalar)
     EXPECT_FALSE(ShouldInjectCodepoint(0x110000, true)); // out of range
     EXPECT_FALSE(ShouldInjectCodepoint(0x0000, true));
 }
+
+TEST(SkseMenuFrameworkSessionStart, needs_the_host_to_want_text)
+{
+    EXPECT_FALSE(ShouldStartSession(false, true, 0x1234));
+    EXPECT_FALSE(ShouldStartSession(false, true, 0));
+    EXPECT_FALSE(ShouldStartSession(false, false, 0x1234));
+    EXPECT_TRUE(ShouldStartSession(true, true, 0x1234));
+}
+
+TEST(SkseMenuFrameworkSessionStart, refuses_a_want_without_an_active_item)
+{
+    // The 2026-10-21 shape: right after an Enter commit the host still reports
+    // WantTextInput for a frame or two while no item holds focus. Starting a
+    // session there only grabs the focus and flashes the candidate bar.
+    EXPECT_FALSE(ShouldStartSession(true, true, 0));
+}
+
+TEST(SkseMenuFrameworkSessionStart, a_want_of_one_frame_still_opens_a_session)
+{
+    // The 2026-10-22 field shape is want-on for exactly one frame. Refusing it
+    // left the user unable to type at all, so the frame is enough.
+    EXPECT_TRUE(ShouldHoldSession(true, -1));
+    EXPECT_TRUE(ShouldHoldSession(true, 5000));
+}
+
+TEST(SkseMenuFrameworkSessionStart, a_session_outlives_the_want_for_one_hangover)
+{
+    // Gaps shorter than the hangover keep the lease and the IME alive; that is
+    // what gives a numeric field time to actually open.
+    EXPECT_TRUE(ShouldHoldSession(false, 0));
+    EXPECT_TRUE(ShouldHoldSession(false, 100));
+    EXPECT_TRUE(ShouldHoldSession(false, 249));
+    EXPECT_FALSE(ShouldHoldSession(false, 250));
+    EXPECT_FALSE(ShouldHoldSession(false, 1000));
+    // Never wanted: no session, and no hangover to invent one from.
+    EXPECT_FALSE(ShouldHoldSession(false, -1));
+    // The window is a parameter, not a constant baked into the call site.
+    EXPECT_FALSE(ShouldHoldSession(false, 80, 50));
+    EXPECT_TRUE(ShouldHoldSession(false, 80, 200));
+}
+
+TEST(SkseMenuFrameworkSessionStart, host_without_get_active_id_keeps_the_old_behaviour)
+{
+    // Nothing to ask: the flag alone decides, exactly as before the gate.
+    EXPECT_TRUE(ShouldStartSession(true, false, 0));
+    EXPECT_TRUE(ShouldStartSession(true, false, 0xDEADBEEF));
+    // Still no session when the host does not even want text.
+    EXPECT_FALSE(ShouldStartSession(false, false, 0));
+}

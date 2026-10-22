@@ -8,7 +8,10 @@
 #include "core/State.h"
 #include "hook.h"
 #include "hooks/Hooks.hpp"
+#include "hooks/InputDispatchHook.h"
+#include "hooks/InputDispatchLogic.h"
 #include "hooks/MeridianBridge.h"
+#include "hooks/SkseMenuFrameworkBridge.h"
 #include "ime/ImeController.h"
 #include "log.h"
 #include "utils/Utils.h"
@@ -82,6 +85,35 @@ std::chrono::steady_clock::time_point g_lastDisableTime{};
 // then nothing responds" until the user re-clicked the field). Committed
 // by CommitPendingTextEntryEnable from the game thread's frame poll.
 std::atomic<bool> g_pendingTextEntryEnable{false};
+
+/// Steady-clock ms at which the current enable was deferred because the OS still
+/// reported a pointer button or Enter physically down; 0 when none is in flight.
+///
+/// The focus move happens at the worst possible moment for a field that is
+/// opening: the game window loses the focus, the host's WndProc clears ImGui's
+/// key/mouse state, and the engine's next poll replays the still-held button as a
+/// *fresh* press — a replayed Enter validates the InputText and a replayed mouse
+/// press counts as "clicked outside the field", so the temporary numeric field a
+/// mod menu opens from a Drag/Slider dies in the frame it appeared (in-game
+/// 2026-10-21: the first Ctrl+click on a value field only flashed, the second
+/// worked). Waiting for the OS to report the button released costs ~100 ms and
+/// keeps the focus move from replaying anything at all.
+std::atomic<std::int64_t> g_focusGrabDeferSinceMs{0};
+
+/// Ceiling on that wait: a long drag, or a key the user holds for its own
+/// reasons, must not keep the IME off for good.
+constexpr int kMaxFocusGrabDeferMs = 600;
+
+/// One-shot release of the deferral once kMaxFocusGrabDeferMs expires: the frame
+/// poll arms it, the next EnableIme consumes it and skips its own check, so a
+/// stuck button cannot bounce the enable between the two guards.
+std::atomic<bool> g_focusGrabDeferBypassOnce{false};
+
+auto NowMs() -> std::int64_t
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 class SKSE_AllowTextInputFnHandler final : public RE::GFxFunctionHandler
 {
@@ -267,8 +299,11 @@ void SKSE_AllowTextInputFnHandler::OnTextEntryCountChanged(std::uint8_t entryCou
     else if (entryCount == 0)
     {
         // The churn the debounce defers against resolved to "closed": the
-        // deferred enable must not fire.
+        // deferred enable must not fire. A focus-grab deferral in flight belongs
+        // to that same aborted enable, so it is dropped with it.
         g_pendingTextEntryEnable.store(false, std::memory_order_release);
+        g_focusGrabDeferSinceMs.store(0, std::memory_order_release);
+        g_focusGrabDeferBypassOnce.store(false, std::memory_order_release);
         g_lastDisableTime = std::chrono::steady_clock::now();
         imeManager->SyncImeStateIfDirty();
         imeManager->EnableIme(false);
@@ -333,6 +368,39 @@ void ResetTextEntryCountCache()
     SKSE_AllowTextInputFnHandler::SyncBaseline();
 }
 
+auto ConsumeFocusGrabDeferBypass() -> bool
+{
+    return g_focusGrabDeferBypassOnce.exchange(false, std::memory_order_acq_rel);
+}
+
+auto ShouldDeferEnableForFocusGrab() -> bool
+{
+    const auto deferredSinceMs = g_focusGrabDeferSinceMs.load(std::memory_order_acquire);
+    const auto buttonDown      = Hooks::InputDispatchHook::FocusGrabBlockerDown();
+    if (deferredSinceMs == 0)
+    {
+        // First look: only a physically held button starts the deferral.
+        return buttonDown;
+    }
+    return InputDispatchLogic::ShouldDeferFocusGrab(
+        buttonDown,
+        static_cast<int>(NowMs() - deferredSinceMs),
+        kMaxFocusGrabDeferMs
+    );
+}
+
+void DeferTextEntryEnableForFocusGrab()
+{
+    g_pendingTextEntryEnable.store(true, std::memory_order_release);
+    std::int64_t expected = 0;
+    (void)g_focusGrabDeferSinceMs.compare_exchange_strong(
+        expected,
+        NowMs(),
+        std::memory_order_acq_rel,
+        std::memory_order_acquire
+    );
+}
+
 void CommitPendingTextEntryEnable()
 {
     // Game thread, every frame: commit an enable that landed inside the
@@ -341,6 +409,25 @@ void CommitPendingTextEntryEnable()
     // the enable runs (respecting every gate inside EnableIme — Prisma
     // avoidance, keepImeOpen, state dedup); if the churn ended closed the
     // latch was already cleared by the disable transition.
+    //
+    // A focus-grab deferral rides the same latch: the enable waits until the OS
+    // reports the held button released (or the ceiling expires), then runs.
+    if (g_focusGrabDeferSinceMs.load(std::memory_order_acquire) != 0)
+    {
+        if (ShouldDeferEnableForFocusGrab())
+        {
+            return;
+        }
+        const auto sinceMs = g_focusGrabDeferSinceMs.exchange(0, std::memory_order_acq_rel);
+        // Let the resuming enable through exactly once even though the ceiling
+        // (not the button) is what released it.
+        g_focusGrabDeferBypassOnce.store(true, std::memory_order_release);
+        logger::info(
+            "Focus-grab deferral over after {} ms (ceiling {} ms); resuming the deferred IME enable — the replay scrub still covers a button that is somehow still down",
+            static_cast<int>(NowMs() - sinceMs),
+            kMaxFocusGrabDeferMs
+        );
+    }
     if (!g_pendingTextEntryEnable.load(std::memory_order_acquire))
     {
         return;
@@ -351,6 +438,17 @@ void CommitPendingTextEntryEnable()
     }
     if (!g_pendingTextEntryEnable.exchange(false, std::memory_order_acq_rel))
     {
+        return;
+    }
+    // A deferral can outlive the field that asked for it: on an ImGui host the
+    // text-entry counter stays claimed for a frame after the field closes, so
+    // HasTextEntry() still reads "open" while the session that wanted the enable
+    // is already over. Enabling then lights the candidate bar and the next
+    // disable takes it away a millisecond later — in-game 2026-10-22: enable at
+    // .344, disable at .345, while the field itself died at .318.
+    if (Ime::Skyrim::IsExternalImGuiSurface() && !Hooks::SkseMenuFrameworkBridge::SessionActive())
+    {
+        logger::info("Deferred IME enable dropped: the ImGui text session that asked for it already ended");
         return;
     }
     auto *controlMap = Ime::ControlMap::GetSingleton();

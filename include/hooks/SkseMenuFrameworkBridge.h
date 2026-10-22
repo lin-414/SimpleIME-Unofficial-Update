@@ -17,7 +17,8 @@ namespace Hooks::SkseMenuFrameworkBridge
 /// (SKSE kDataLoaded, like MeridianBridge::Install).
 void Install();
 /// Release the text-entry lease and reset session state (the input-dispatch
-/// detour itself is never removed — it degrades to a passthrough).
+/// detour it feeds is owned by Hooks::InputDispatchHook and is never removed —
+/// it degrades to a passthrough).
 void Uninstall();
 
 /// Install-time outcome, updated again by the Tick retry (atomics; readable
@@ -66,10 +67,11 @@ void OnTextEntryCountHealed();
 /// field's deactivation).
 void ForceEndSession();
 
-/// Input-dispatch hook body (DispatchInputEventHookData thunk): while a
-/// framework text session is active and the user's IME is in a composition
-/// mode, zero the printable-ASCII CharEvents the game generates from
-/// DirectInput — they are composition echoes that would otherwise land in the
-/// ImGui field next to the committed CJK text.
+/// Filter run by the shared input-dispatch detour (Hooks::InputDispatchHook) on
+/// every polled batch: while a framework text session is active and the user's
+/// IME is in a composition mode, zero the printable-ASCII CharEvents the game
+/// generates from DirectInput — they are composition echoes that would otherwise
+/// land in the ImGui field next to the committed CJK text. It also counts the
+/// session's mouse/return/escape presses, which the session-end log reports.
 void NeutralizeRawAscii(RE::InputEvent *const *events);
 } // namespace Hooks::SkseMenuFrameworkBridge

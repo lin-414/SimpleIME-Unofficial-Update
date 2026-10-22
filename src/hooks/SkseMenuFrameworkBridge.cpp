@@ -49,6 +49,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -334,10 +335,8 @@ std::atomic<bool>              s_apiReady{false};
 std::atomic<bool>              s_sessionActive{false};
 std::atomic<bool>              s_leaseHeld{false};
 std::atomic<std::uint64_t>     s_lastFrameworkEventMs{0};
-std::atomic<bool>              s_hookInstalled{false};
 std::mutex                     s_pendingMutex;
 std::deque<char16_t>           s_pending;
-std::unique_ptr<DispatchInputEventHookData> s_inputHook; ///< never uninstalled; passthrough while no session
 
 // ---- native text-entry lease ------------------------------------------
 // IMPORTANT: go through the engine's AllowTextInput (the address our own
@@ -388,6 +387,12 @@ constexpr std::uint64_t TRANSITION_GRACE_MS = 250;
 
 std::atomic<std::uint64_t> s_sessionBeginMs{0};
 std::atomic<bool>          s_imeDisabledAtBegin{false};
+/// Framework frames (kAfterRender) seen since startup, and the count when the
+/// current session began. The delta tells a session that "died because the host
+/// stopped submitting the field" (a handful of frames, last one seconds ago) from
+/// one whose ActiveId was cleared while the host kept rendering normally.
+std::atomic<std::uint64_t> s_frameCount{0};
+std::atomic<std::uint64_t> s_sessionBeginFrame{0};
 /// PROBE(2026-10-12 pause/freeze session death): mouse presses the engine
 /// delivered while the session owned the keyboard. A field that dies in the
 /// same frame as a press is the framework's "release focus when we click
@@ -635,6 +640,20 @@ void RestoreHostMousePosAfterFrame()
         return;
     }
     if (GameWindowFocused())
+    {
+        return;
+    }
+    // A live session keeps the position we just injected. While the game window
+    // is unfocused its backend stops refreshing MousePos, so restoring "no
+    // position" here leaves the host judging every later press against an
+    // invalid cursor: InputText's "a click outside released the field" rule then
+    // fires for presses it should ignore, and the field dies one or two frames
+    // after the focus grab (in-game 2026-10-21: 47 ms session, beginActiveId
+    // live, endActiveId=0, mousePosValid=false, zero mouse presses — nothing but
+    // the position was wrong). The value always describes where the user really
+    // clicked (only press frames write it) and ImGui draws its own cursor only
+    // with io.MouseDrawCursor, so keeping it costs no visible artifact.
+    if (s_sessionActive.load(std::memory_order_acquire))
     {
         return;
     }
@@ -971,6 +990,7 @@ void BeginTextInput()
     s_sessionMousePresses.store(0, std::memory_order_relaxed);
     s_sessionReturnPresses.store(0, std::memory_order_relaxed);
     s_sessionEscapePresses.store(0, std::memory_order_relaxed);
+    s_sessionBeginFrame.store(s_frameCount.load(std::memory_order_relaxed), std::memory_order_relaxed);
     s_sessionFieldId.store(HostActiveId(), std::memory_order_relaxed);
     s_mousePressPending.store(false, std::memory_order_relaxed);
     s_injectedForPress.store(false, std::memory_order_relaxed);
@@ -1012,10 +1032,98 @@ void EndTextInput()
         GamePauseCounter(),
         HostMousePosValid(),
         GameWindowFocused(),
-        HostActiveId() == fieldId,
+        fieldId != 0U && HostActiveId() == fieldId,
         HostActiveId(),
         HostHoveredId()
     );
+    // A field that flashes and dies needs a different fix depending on WHY:
+    //   * the host kept submitting frames but the field's ActiveId was cleared
+    //     (a click/Enter reached ImGui) -> scrub the replayed input;
+    //   * the host stopped submitting the field (no frames, or frames without it)
+    //     -> nothing in the input layer can save it.
+    // Frame delta + last-frame age separate the two.
+    const auto heldMs = GetTickCount64() - s_sessionBeginMs.load(std::memory_order_relaxed);
+    if (heldMs < 200)
+    {
+        const auto now           = GetTickCount64();
+        const auto lastEventMs   = s_lastFrameworkEventMs.load(std::memory_order_relaxed);
+        const auto framesInSession = s_frameCount.load(std::memory_order_relaxed) - s_sessionBeginFrame.load(std::memory_order_relaxed);
+        logger::info(
+            "Short text session probe: {} framework frame(s) in {} ms, last framework event {} ms ago, beginActiveId={:#x} endActiveId={:#x} mousePosValid={} hoveredId={:#x}",
+            framesInSession,
+            heldMs,
+            lastEventMs == 0 ? 0 : now - lastEventMs,
+            fieldId,
+            HostActiveId(),
+            HostMousePosValid(),
+            HostHoveredId()
+        );
+    }
+}
+
+// ---- host frame ring (diagnostics) -------------------------------------
+// One sample per frame-poll. A session that dies in one or two frames leaves no
+// trace of WHY in the session-end line — that line only carries the final state,
+// and "begin id live, end id dead" is consistent with a click closing the field,
+// a window that stopped being submitted, and a host that never opened a field at
+// all. Keeping the last few frames separates them.
+struct HostFrameSample
+{
+    std::uint64_t ms;
+    unsigned int  activeId;
+    unsigned int  hoveredId;
+    bool          posValid;
+    bool          want;
+};
+constexpr int   kHostFrameRing      = 16;
+HostFrameSample s_hostFrameRing[kHostFrameRing]{};
+int             s_hostFrameRingPos   = 0;
+int             s_hostFrameRingCount = 0;
+
+void PushHostFrameSample(const bool want)
+{
+    auto &slot      = s_hostFrameRing[s_hostFrameRingPos];
+    slot.ms         = GetTickCount64();
+    slot.activeId   = HostActiveId();
+    slot.hoveredId  = HostHoveredId();
+    slot.posValid   = HostMousePosValid();
+    slot.want       = want;
+    s_hostFrameRingPos = (s_hostFrameRingPos + 1) % kHostFrameRing;
+    if (s_hostFrameRingCount < kHostFrameRing)
+    {
+        ++s_hostFrameRingCount;
+    }
+}
+
+/// Dump the ring oldest-first, compactly: "+<ms> a=<activeId> h=<hoveredId>
+/// p=<posValid> w=<want>". Every ms value is an offset from the oldest sample.
+void DumpHostFrameRing(const char *why)
+{
+    if (s_hostFrameRingCount == 0)
+    {
+        return;
+    }
+    const int   first = (s_hostFrameRingPos - s_hostFrameRingCount + kHostFrameRing) % kHostFrameRing;
+    const auto  base  = s_hostFrameRing[first].ms;
+    std::string line;
+    line.reserve(64 + 40 * static_cast<std::size_t>(s_hostFrameRingCount));
+    for (int i = 0; i < s_hostFrameRingCount; ++i)
+    {
+        const auto &s = s_hostFrameRing[(first + i) % kHostFrameRing];
+        char buf[128];
+        std::snprintf(
+            buf,
+            sizeof(buf),
+            " | +%llums a=%#x h=%#x p=%d w=%d",
+            static_cast<unsigned long long>(s.ms - base),
+            s.activeId,
+            s.hoveredId,
+            s.posValid ? 1 : 0,
+            s.want ? 1 : 0
+        );
+        line += buf;
+    }
+    logger::info("Host frame ring ({}):{}", why, line);
 }
 
 void UpdateTextInputState()
@@ -1029,13 +1137,65 @@ void UpdateTextInputState()
     {
         return;
     }
-    const bool wants = *reinterpret_cast<const volatile bool *>(reinterpret_cast<const std::uint8_t *>(io) + IMGUI_IO_WANT_TEXT_INPUT_OFFSET);
-    const bool previous = s_sessionActive.exchange(wants, std::memory_order_acq_rel);
-    if (wants == previous)
+    const bool rawWants = *reinterpret_cast<const volatile bool *>(reinterpret_cast<const std::uint8_t *>(io) + IMGUI_IO_WANT_TEXT_INPUT_OFFSET);
+    // Only a want with a live item behind it is a field the IME can type into:
+    // after a commit the host keeps WantTextInput set for a frame or two with no
+    // active item, and starting a session on that residue grabs the focus for
+    // nothing (2026-10-21: three 31 ms sessions, beginActiveId=0x0, right after
+    // an Enter). Filtering here rather than inside BeginTextInput keeps the
+    // edge detection below honest.
+    // ...and it has to persist, and it has to be the SAME item: the host reports
+    // a want for single-frame events that open no lasting field, which is how a
+    // 31 ms session with a live begin id and a dead end id happens (see
+    // IsStableWant). Both counters are touched from this callback thread only.
+    static unsigned int  s_lastWantActiveId = 0;
+    static int           s_wantStreak       = 0;
+    static std::uint64_t s_lastWantMs       = 0;
+    const unsigned int  activeId           = HostActiveId();
+    const bool          wantThisFrame =
+        SkseMenuFrameworkBridgeLogic::ShouldStartSession(rawWants, s_api.getActiveId != nullptr, activeId);
+    const int streakBefore = s_wantStreak;
+    if (!wantThisFrame)
+    {
+        s_lastWantActiveId = 0;
+        s_wantStreak       = 0;
+    }
+    else if (activeId == s_lastWantActiveId)
+    {
+        if (s_wantStreak < 8)
+        {
+            ++s_wantStreak; // diagnostics only: how many frames this want has run
+        }
+    }
+    else
+    {
+        s_lastWantActiveId = activeId;
+        s_wantStreak       = 1;
+    }
+    // A want of one frame still opens a session; the hangover is what keeps it
+    // alive long enough for the lease and the IME to do their work (see
+    // ShouldHoldSession).
+    const auto nowMs = GetTickCount64();
+    if (wantThisFrame)
+    {
+        s_lastWantMs = nowMs;
+    }
+    const bool holds = SkseMenuFrameworkBridgeLogic::ShouldHoldSession(
+        wantThisFrame,
+        s_lastWantMs == 0 ? -1 : static_cast<int>(nowMs - s_lastWantMs));
+    // Sample every frame, and dump when a short-lived want ends: that is the
+    // shape a session we refused to start would have left no other trace of.
+    PushHostFrameSample(wantThisFrame);
+    if (!wantThisFrame && streakBefore > 0 && streakBefore <= 3)
+    {
+        DumpHostFrameRing("a want that did not last");
+    }
+    const bool previous = s_sessionActive.exchange(holds, std::memory_order_acq_rel);
+    if (holds == previous)
     {
         return;
     }
-    if (wants)
+    if (holds)
     {
         BeginTextInput();
     }
@@ -1172,6 +1332,7 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
     }
     if (eventType == EVENT_AFTER_RENDER)
     {
+        s_frameCount.fetch_add(1, std::memory_order_relaxed);
         // ImGui's InputText wrote this frame's OS-IME caret into
         // PlatformImeData during widget submission — read it here, after the
         // frame, where it is guaranteed current for the next session check.
@@ -1238,13 +1399,6 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
     UpdateHostMousePosition();
     TraceHostFieldFocus("before the frame");
     UpdateTextInputState();
-}
-
-// ---- input-dispatch thunk (ASCII neutralization) -----------------------
-void DispatchInputEventThunk(RE::BSTEventSource<RE::InputEvent *> *dispatcher, RE::InputEvent **events)
-{
-    NeutralizeRawAscii(events);
-    s_inputHook->Original(dispatcher, events);
 }
 
 // ---- detection ----------------------------------------------------------
@@ -1319,19 +1473,10 @@ bool TryResolve()
     // calibration/click fallbacks above take over.
     InstallPlatformImeDataHook(s_api.getIo());
 
-    // Install the raw-ASCII filter only when the framework is actually present
-    // (the detour is inert outside a session, but there is no reason to take
-    // it for users without the framework at all). Same single-threaded-install
-    // invariant as the other HookData users: this runs on the main thread at
-    // kDataLoaded (or the game thread in Tick) before a session can exist.
-    if (!s_hookInstalled.exchange(true, std::memory_order_acq_rel))
-    {
-        s_inputHook = std::make_unique<DispatchInputEventHookData>(&DispatchInputEventThunk);
-        if (s_inputHook->GetAddress() == 0)
-        {
-            logger::error("SKSE Menu Framework input filter resolved to address 0; the ASCII filter is inert");
-        }
-    }
+    // The raw-ASCII filter itself is not installed here: the detour on the
+    // dispatch call is shared with every self-drawn ImGui host (see
+    // Hooks::InputDispatchHook, installed at startup) and calls
+    // NeutralizeRawAscii from its thunk. Nothing else to do on this side.
 
     s_apiReady.store(true, std::memory_order_release);
     s_state = SupportState::Active;

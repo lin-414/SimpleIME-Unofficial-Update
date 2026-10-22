@@ -21,6 +21,18 @@ void ResetTextEntryCountCache();
 /// re-enable debounce window and was deferred (not dropped). The final stable
 /// state wins: still-open counter -> enable; closed -> nothing.
 void CommitPendingTextEntryEnable();
+/// Whether the IME enable in flight has to wait before it moves the Win32 focus to
+/// our IME window. Moving the focus replays whatever the user still holds into the
+/// host's ImGui field (Enter validates it, a mouse press counts as "clicked
+/// outside"), which closes the temporary numeric field a Drag/Slider just opened.
+/// The held state comes from the OS, never from the engine's input stream.
+[[nodiscard]] auto ShouldDeferEnableForFocusGrab() -> bool;
+/// Latch the currently requested IME enable until the OS reports the button
+/// released. The game thread's frame poll (CommitPendingTextEntryEnable) commits it.
+void DeferTextEntryEnableForFocusGrab();
+/// Consume the one-shot release the frame poll arms when the deferral ceiling
+/// expires, so the resuming enable is not deferred again by its own guard.
+[[nodiscard]] auto ConsumeFocusGrabDeferBypass() -> bool;
 } // namespace Scaleform
 
 } // namespace Hooks

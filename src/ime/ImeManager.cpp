@@ -3,8 +3,10 @@
 #include "FakeDirectInputDevice.h"
 #include "ImeWnd.hpp"
 #include "RE/ControlMap.h"
+#include "hooks/InputDispatchHook.h"
 #include "hooks/MeridianBridge.h"
 #include "hooks/PrismaBridge.h"
+#include "hooks/ScaleformHook.h"
 #include "imguiex/ErrorNotifier.h"
 #include "log.h"
 
@@ -119,11 +121,48 @@ auto ImeManager::EnableIme(bool enable) -> Result
     // Do nothing if caller want to disable IME.
     if (enable)
     {
+        // Wait out a physically held button first. The focus move itself is what
+        // breaks the field that is opening: the game window loses the focus, the
+        // host's WndProc clears ImGui's key/mouse state, and the engine replays the
+        // still-held button as a fresh press — a replayed Enter validates the
+        // InputText and a replayed mouse press counts as "clicked outside the
+        // field". The temporary numeric field a mod menu opens from a Drag/Slider
+        // then dies in the frame it appeared (in-game 2026-10-21: the first
+        // Ctrl+click on a value field only flashed, the second one worked).
+        //
+        // The held state MUST come from the OS: after the IME window owns the Win32
+        // focus DirectInput stops reporting releases, so the engine's own held-key
+        // set goes stale and a gate built on it churns forever (measured in-game:
+        // stuck at 3-4 keys for a whole menu session). A release comes after ~100 ms
+        // of click, or at the end of a drag; the ceiling keeps a long drag from
+        // holding the IME off.
+        if (!Hooks::Scaleform::ConsumeFocusGrabDeferBypass() && Hooks::Scaleform::ShouldDeferEnableForFocusGrab())
+        {
+            Hooks::Scaleform::DeferTextEntryEnableForFocusGrab();
+            logger::info(
+                "IME enable deferred: a pointer button or Enter is still physically down; moving the focus now would replay it into the host's ImGui field and close the field it just opened"
+            );
+            return Result::SUCCESS;
+        }
         if (const auto result = TryFocusIme(); IImeModule::IsFailed(result))
         {
             ErrorNotifier::GetInstance().Error("Can't focus to IME thread. IME can't work!");
             return result;
         }
+        // Focus-grab hazard, handled at the dispatch layer instead of by waiting
+        // for the keyboard to go idle. Moving the Win32 focus to our IME window
+        // makes the game window's WndProc call ImGui's ClearInputKeys() and
+        // ClearInputMouse(), and the engine's next DirectInput poll re-delivers
+        // whatever the user still holds as *fresh* presses: a replayed Enter
+        // validates an InputText and a replayed mouse press counts as "clicked
+        // outside the field". Either one closes the temporary numeric field a mod
+        // menu opens from a Drag/Slider in the frame it appeared (the field only
+        // flashes). Waiting for "no key held" cannot fix that — the game window
+        // has lost the focus, so DirectInput stops reporting releases and the
+        // held set never drains (observed in-game 2026-10-21: stuck at 3-4 keys,
+        // the IME churned through defer/force pairs). The dispatch hook scrubs
+        // those replays for a short window after this timestamp instead.
+        Hooks::InputDispatchHook::NoteFocusMoved();
     }
 
     auto &state = State::GetInstance();
@@ -278,6 +317,14 @@ auto ImeManager::DoDisable() -> bool
     // symmetric, otherwise the hidden 0x0 ImeWnd keeps the keyboard
     // focus and the game never receives WM_CHAR again ("keyboard stuck").
     Focus(m_gameHwnd);
+    // Same replay hazard in the returning direction: the game window's WndProc
+    // clears the host's ImGui mouse state on WM_SETFOCUS-adjacent frames, and the
+    // engine re-delivers the still-held buttons as new presses. Left alone, the
+    // host keeps believing a button is down after the user released it, and the
+    // NEXT click on a mod menu field reads as "clicked outside the field" — the
+    // field then flashes once and only the click after it works (in-game
+    // 2026-10-21: after an Enter commit, the first Ctrl+click always flashed).
+    Hooks::InputDispatchHook::NoteFocusMoved();
 
     // The system input method (e.g. WeChat/Microsoft Pinyin) follows the
     // Win32 focus back to the game window and intercepts WASD/keys there,

@@ -768,6 +768,20 @@ void ImeWnd::HandleKeyDown(UINT uMsg, WPARAM wParam, LPARAM lParam)
         }
         return;
     }
+    // Composing with no candidate list up (the TIP has none, or its list was
+    // paged away): there is no highlight to resolve here, so the TIP has to end
+    // the composition itself. Enter no longer reaches it any other way — the
+    // engine stream carries no copy (Hooks::InputDispatchHook zeroes a
+    // composition's Enter for the self-drawn ImGui hosts) — and dropping this
+    // key would leave the pinyin sitting there with nothing to commit it.
+    if (wParam == VK_RETURN && State::GetInstance().HasAny(State::IN_COMPOSING))
+    {
+        if (m_textService != nullptr)
+        {
+            m_textService->ForwardKeyToTip(static_cast<UINT>(wParam), lParam);
+        }
+        return;
+    }
     if (wParam == VK_SHIFT)
     {
         m_shiftTapArmed      = true;
