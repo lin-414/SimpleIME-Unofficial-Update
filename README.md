@@ -175,9 +175,14 @@ the usual workaround for the old behavior and is no longer needed.
 
 ### Localization
 
-- Four new UI languages — **German, Japanese, Korean, Russian** — joining the bundled
-  English and Chinese, so six complete translations ship in every package. More can be
-  added by dropping a `translate_<name>.toml` into `interface/SimpleIME/`.
+- The UI language **follows the system language** by default: an install that has not
+  pinned a language renders its settings in the OS UI language whenever that language
+  ships. Pin one in *Settings → Display & Theme → Language* — the first entry,
+  *Follow system*, switches back — or via `[appearance] language`. The config keeps the
+  value `auto`, so a later system-language change is picked up on the next launch.
+- Six complete UI translations ship in every package — **English, Chinese, Japanese,
+  Korean, Russian, German**. More can be added by dropping a `translate_<name>.toml`
+  into `interface/SimpleIME/`.
 
 ### Engine & build
 
