@@ -92,6 +92,10 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
     const Comments enableModComment = {" 是否启用 Mod 功能"};
     const Comments logLevelComment  = {R"( "trace", "debug", "info", "warn", "error", "critical", "off")"};
     const Comments zoomComment      = {" UI缩放倍率，有效值为 0.5 - 2.0, 请使用 0.25 的整数倍", " 可以指定为负数，表示应用当前显示器的缩放倍率"};
+    const Comments languageComment  = {
+        " 界面语言：auto = 跟随系统语言(默认)；也可写 english / chinese / japanese / korean / russian / german",
+        " 把 translate_<name>.toml 放进 interface\\SimpleIME\\ 即可扩展",
+    };
     const Comments fixInconsistentTextEntryCountComment = {
         " 罕见的修复开关，打开时: 如果鼠标不可见，但依然存在激活的输入框, Mod 会主动禁用 IME 输入. 因为鼠标不可见通常意味着当前处于正常游戏阶段",
         " 但是如果第三方 Menu 存在激活的输入框，但禁用了鼠标(例如某些极简 UI)，此开关可能会错误的禁用 IME，需要关闭此开关来修复这个问题",
@@ -197,7 +201,7 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
     sourceColor.as_integer_fmt().fmt = toml::integer_format::hex;
     const toml::table appearance{
         {KEY_ZOOM,                     {configuration.appearance.zoom, zoomComment}                                                    },
-        {KEY_LANGUAGE,                 configuration.appearance.language                                                               },
+        {KEY_LANGUAGE,                 {configuration.appearance.language, languageComment}                                             },
         {KEY_THEME_STYLE,              {configuration.appearance.themeStyle, {R"( 主题样式，默认 "default" 固定配色; 在主题构建器自定义主题颜色后自动变为 "material")"}}},
         {KEY_THEME_SOURCE_COLOR,       sourceColor                                                                                     },
         {KEY_THEME_DARK_MODE,          configuration.appearance.themeDarkMode                                                          },

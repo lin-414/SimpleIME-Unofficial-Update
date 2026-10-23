@@ -20,6 +20,7 @@
 #include "toml/toml.hpp"
 #include "ui/Settings.h"
 #include "ui/panels/PanelWidgets.h"
+#include "utils/LanguagePreference.h"
 
 #include <imgui.h>
 
@@ -227,6 +228,15 @@ auto HctPickerPopup(const char *strId, AppearancePanel::HctCache &hctCache) -> b
     return applied;
 }
 
+//! Per-key English fallback: Translator::Translate returns the KEY when the
+//! active file predates the key, so a third-party translation would render new
+//! UI copy as "Settings.Appearance.LanguageAuto".
+auto TranslateOr(const std::string_view key, const std::string_view english) -> std::string_view
+{
+    const auto translated = Translate(key);
+    return translated == key ? english : translated;
+}
+
 //! Reads the top-level `LanguageName` key a translation file uses to declare
 //! its own native display name (e.g. 中文 / 한국어) for the Languages dropdown.
 //! An empty result means "not declared" — the caller falls back to the
@@ -274,6 +284,9 @@ AppearancePanel::AppearancePanel()
 {
     const auto translateDir = utils::GetInterfacePath() / SIMPLE_IME;
     i18n::ScanLanguages(translateDir, m_translateLanguages);
+    //! "auto" is reserved for the follow-system entry drawn before the scanned
+    //! list; a user-supplied translate_auto.toml must not duplicate it.
+    std::erase(m_translateLanguages, std::string{LanguagePreference::kAutoLanguage});
     for (const auto &language : m_translateLanguages)
     {
         if (auto name = ReadNativeLanguageName(translateDir, language); !name.empty())
@@ -751,8 +764,25 @@ void AppearancePanel::DrawLanguagesCombo(Settings::Appearance &appearance) const
         return language;
     };
 
-    const std::string preview{displayName(appearance.language)};
-    bool   clicked = false;
+    //! "auto" is not a scanned language, so it needs its own preview: show what
+    //! it currently resolves to, otherwise the chip would read a bare "auto".
+    const bool  autoSelected = appearance.language == LanguagePreference::kAutoLanguage;
+    std::string preview;
+    if (autoSelected)
+    {
+        const auto resolved = LanguagePreference::Resolve(
+            LanguagePreference::kAutoLanguage, LanguagePreference::GetSystemLocaleName(), "english"
+        );
+        preview = std::format(
+            "{} ({})", TranslateOr("Settings.Appearance.LanguageAuto", "Follow system"), displayName(resolved)
+        );
+    }
+    else
+    {
+        preview = std::string{displayName(appearance.language)};
+    }
+
+    bool clicked = false;
     // The combo reserves its exact width so the title never runs under the chip.
     UI::Panels::SettingsComboRow(
         "##LanguagesCombo",
@@ -760,6 +790,20 @@ void AppearancePanel::DrawLanguagesCombo(Settings::Appearance &appearance) const
         {},
         preview,
         [&] {
+            // Fixed ID: reusing the loop index here would collide with the
+            // scanned list's own PushID(idx) entries.
+            ImGui::PushID("##LanguageAuto");
+            if (UI::Panels::ComboOption(TranslateOr("Settings.Appearance.LanguageAuto", "Follow system"), autoSelected))
+            {
+                appearance.language = std::string{LanguagePreference::kAutoLanguage};
+                clicked             = true;
+            }
+            if (autoSelected)
+            {
+                ImGui::SetItemDefaultFocus();
+            }
+            ImGui::PopID();
+
             int32_t idx = 0;
             for (const auto &language : m_translateLanguages)
             {
@@ -782,7 +826,9 @@ void AppearancePanel::DrawLanguagesCombo(Settings::Appearance &appearance) const
 
     if (clicked)
     {
-        i18n::UpdateTranslator(appearance.language, "english", utils::GetPluginInterfaceDir());
+        // Resolves "auto" against the live OS locale; the stored value stays the
+        // sentinel so a later system-language change still applies (LanguagePreference.h).
+        LanguagePreference::LoadForConfigured(appearance.language, utils::GetPluginInterfaceDir());
     }
 }
 } // namespace Ime

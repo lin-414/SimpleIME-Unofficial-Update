@@ -8,6 +8,7 @@
 #include "log.h"
 #include "menu/MenuNames.h"
 #include "path_utils.h"
+#include "utils/LanguagePreference.h"
 #include "utils/Utils.h"
 
 namespace Ime::UI
@@ -79,7 +80,9 @@ void HandleRequestAndSyncOverlayState(Settings::RuntimeData &runtimeData)
 ImeOverlay::ImeOverlay(std::string_view language)
 {
     i18n::SetTranslator(&m_translator);
-    i18n::UpdateTranslator(language, "english", utils::GetPluginInterfaceDir());
+    //! "auto" resolves against the OS UI locale HERE, at the only moment the
+    //! translator is built; the config keeps the sentinel (utils/LanguagePreference.h).
+    LanguagePreference::LoadForConfigured(language, utils::GetPluginInterfaceDir());
 }
 
 ImeOverlay::~ImeOverlay()

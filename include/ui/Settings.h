@@ -200,9 +200,11 @@ inline auto GetDefaultSettings() -> Settings
         .switchEnglishLayoutOnDisable  = false,
         .logging                       = {.level = spdlog::level::info, .flushLevel = spdlog::level::info},
         .resources                     = {.translationDir = "Data/interface/SimpleIME", .fontPathList = {}},
+        // language = "auto" follows the OS UI language at load time; any other value
+        // names a translate_<name>.toml file explicitly (utils/LanguagePreference.h).
         .appearance =
             {.schemeConfig          = ImGuiEx::M3::GetDefaultSchemeConfig(false), // default theme: light
-                                          .language              = "english",
+                                          .language              = "auto",
                                           .zoom                  = -1.0F,
                                           .errorDisplayDuration  = 10,
                                           .verticalCandidateList = false,

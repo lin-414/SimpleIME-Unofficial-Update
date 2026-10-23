@@ -51,8 +51,9 @@ fonts = []
 zoom = -1.0
 # 主题深色模式，默认 false (亮色)；删除此键同样使用亮色默认
 theme_dark_mode = false
-# 界面语言，自带 english / chinese / japanese / korean；把 translate_<name>.toml 放进 interface\SimpleIME\ 即可扩展
-language = "english"
+# 界面语言，auto = 跟随系统语言(默认)；也可写 english / chinese / japanese / korean / russian / german
+# 把 translate_<name>.toml 放进 interface\SimpleIME\ 即可扩展
+language = "auto"
 # 主题样式，默认 "default" 固定配色; 在主题构建器自定义主题颜色后自动变为 "material"
 # 想恢复默认主题时删除此键或改回 "default"
 theme_style = "default"
