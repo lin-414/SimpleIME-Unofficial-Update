@@ -379,6 +379,7 @@ const Comments languageComment = {
 
 - **不改 `extern/JamieMods` 子模块**。它是 fork 出来的子模块（`.gitmodules` 里钉着分支/commit），任何改动都要连带 bump 指针；而 `UpdateTranslator(language, fallback, dir)` 已经够用。这一条是选择「在外面解析」而不是「给 i18n 加 auto 支持」的**决定性理由**。
 - **不做运行期热跟随**：不挂系统语言变更通知，不每帧查询。
+- **不做升级迁移**（已定）：分发的 `interface/SimpleIME/SimpleIME.toml` 出厂即为 `auto`，新安装开箱跟随系统；已有配置保持原值（3.2.x 每次保存写入的 `english` 属于用户既有状态），升级不会在用户不知情时改界面语言——要切换只需在设置里点一次「跟随系统」。
 - **不改 `ImeWnd` / `LanguageBar`**：它们不消费 `appearance.language`。
 - **不改读路径的合法性校验**：`ConfigSerializerTest` 的随机字符串往返依赖「原样透传」；未知值由 `UpdateTranslator` 的 fallback 兜底（今天的既有行为）。
 - **不动 `dist/` 下的产物**：`dist/SimpleIME/...`、`dist/_CPack_Packages/...` 是安装/打包输出，改 `contrib/` 后重新 install 会覆盖。

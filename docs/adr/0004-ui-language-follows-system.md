@@ -82,6 +82,11 @@ does for a missing file.
   key would render the raw key (`Translator::Translate` returns the key when it
   misses), so the panel uses a local `TranslateOr()` giving a per-key English
   fallback. Bundled files all ship the key.
+- **No migration, by decision.** The packaged `interface/SimpleIME/SimpleIME.toml`
+  (installed from `contrib/config/SimpleIME.toml`) ships `language = "auto"`, so a new
+  install follows the system out of the box. An existing config keeps whatever value it
+  has — including the `english` that every 3.2.x save wrote — so upgrading never changes
+  anyone's UI language behind their back; switching is one click on *Follow system*.
 - `zh-TW` resolves to `chinese` (only one Chinese file ships). Documented and
   pinned by `test/LanguagePreferenceLogicTest.cpp`; fixing it means adding a
   traditional-Chinese translation and updating that test.
