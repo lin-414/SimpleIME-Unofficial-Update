@@ -1,11 +1,13 @@
-﻿#include "tsf/InputMethodManager.h"
+#include "tsf/InputMethodManager.h"
 
 #include "WCharUtils.h"
 #include "core/State.h"
 #include "imguiex/ErrorNotifier.h"
 #include "log.h"
+#include "utils/InputMethodIdentity.h"
 
 #include <Shlwapi.h>
+#include <algorithm>
 #include <future>
 #include <msctf.h>
 #include <stdexcept>
@@ -39,6 +41,47 @@ auto GetProfileCachedIndex(const std::vector<Ime::LangProfile> &langProfiles, co
         return static_cast<std::uint32_t>(std::ranges::distance(langProfiles.begin(), it));
     }
     return UINT32_MAX;
+}
+
+/// Stable identity of an enumerated profile, for matching against the user's
+/// configured default input method (utils/InputMethodIdentity.h). A TIP is
+/// identified by (clsid, guidProfile, langid) — the triple TSF itself registers
+/// under; keyboard layouts all share GUID_NULL and their KLID is not derivable
+/// from an HKL, so they cannot be persisted yet (P2).
+auto ToIdentity(const Ime::LangProfile &langProfile) -> Ime::InputMethodIdentity::Identity
+{
+    using Kind = Ime::InputMethodIdentity::Identity::Kind;
+
+    Ime::InputMethodIdentity::Identity identity;
+    identity.desc = langProfile.desc;
+    if (langProfile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    {
+        identity.kind    = Kind::Tip;
+        identity.clsid   = WCharUtils::ToString(Ime::ToStringFromGUID2(langProfile.clsid));
+        identity.profile = WCharUtils::ToString(Ime::ToStringFromGUID2(langProfile.guidProfile));
+        identity.langid  = langProfile.langid;
+        return identity;
+    }
+    identity.kind = Kind::Keyboard;
+    return identity;
+}
+
+/// Case-insensitive helpers for the lenient display-name match below. Only
+/// ASCII is folded, so UTF-8 sequences (中文名) pass through untouched.
+auto ToLowerText(const std::string_view text) -> std::string
+{
+    std::string lowered{text};
+    for (auto &c : lowered)
+    {
+        c = Ime::InputMethodIdentity::Detail::AsciiLower(c);
+    }
+    return lowered;
+}
+
+auto ContainsNoCase(const std::string_view haystack, const std::string_view needle) -> bool
+{
+    if (needle.empty()) return false;
+    return ToLowerText(haystack).find(ToLowerText(needle)) != std::string::npos;
 }
 
 template <std::size_t SIZE>
@@ -211,7 +254,17 @@ auto Ime::InputMethodManager::RefreshProfiles() -> bool
             {
                 localeDisplayNameStr = WCharUtils::ToString(localeName);
             }
-            logger::info("Load installed ime: {} {}", localeDisplayNameStr, desc);
+            // The trailing identity string is what [core] default_input_method
+            // expects — users copy it straight out of the log.
+            const std::string identityText =
+                profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR
+                    ? InputMethodIdentity::FormatFromTip(
+                          WCharUtils::ToString(ToStringFromGUID2(profile.clsid)),
+                          WCharUtils::ToString(ToStringFromGUID2(profile.guidProfile)),
+                          profile.langid
+                      )
+                    : std::string{"<keyboard layout, not selectable yet>"};
+            logger::info("Load installed ime: {} {} ({})", localeDisplayNameStr, desc, identityText);
             m_langProfiles.emplace_back(
                 std::move(localeDisplayNameStr),
                 std::move(desc),
@@ -277,6 +330,16 @@ auto Ime::InputMethodManager::ActivateProfile(const GUID &guidProfile) -> HRESUL
         return E_INVALIDARG;
     }
 
+    return ActivateProfile(m_langProfiles[index]);
+}
+
+auto Ime::InputMethodManager::ActivateProfileByIndex(std::uint32_t index) -> HRESULT
+{
+    if (index >= m_langProfiles.size())
+    {
+        logger::warn("ActivateProfileByIndex({}) is out of range ({} profiles)", index, m_langProfiles.size());
+        return E_INVALIDARG;
+    }
     return ActivateProfile(m_langProfiles[index]);
 }
 
@@ -398,6 +461,191 @@ auto Ime::InputMethodManager::ActivatePreferredImeProfile() -> HRESULT
     }
     logger::debug("No non-English TIP found in the profile list; keeping the current input method");
     return E_FAIL;
+}
+
+auto Ime::InputMethodManager::GetSelectableChoices() const -> std::vector<InputMethodChoice>
+{
+    std::vector<InputMethodChoice> choices;
+    for (const auto &langProfile : m_langProfiles)
+    {
+        // Only a TIP composes text, so only a TIP is worth offering here.
+        if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue;
+
+        const auto      identity = ToIdentity(langProfile);
+        InputMethodChoice choice;
+        choice.identity = InputMethodIdentity::FormatFromTip(identity.clsid, identity.profile, identity.langid);
+        choice.name     = langProfile.desc;
+
+        // The same profile can be reported twice (one entry per registered
+        // language for a multi-language TIP once the langid suffix differs is
+        // fine, but an exact duplicate would show as two identical rows).
+        const auto duplicate = std::ranges::any_of(choices, [&choice](const InputMethodChoice &existing) -> bool {
+            return InputMethodIdentity::Detail::SameText(existing.identity, choice.identity);
+        });
+        if (duplicate) continue;
+        choices.push_back(std::move(choice));
+    }
+
+    std::ranges::stable_sort(choices, [](const InputMethodChoice &lhs, const InputMethodChoice &rhs) -> bool { return lhs.name < rhs.name; });
+    return choices;
+}
+
+auto Ime::InputMethodManager::ShouldApplyConfiguredProfile() const -> bool
+{
+    return m_reapplyOnEnable || m_pendingApply;
+}
+
+auto Ime::InputMethodManager::SetConfiguredProfile(std::string configuredProfile, const bool reapplyOnEnable) -> void
+{
+    // A changed pick owes one apply even when the policy is "game start only":
+    // the user just chose it and expects it to stick right away.
+    m_pendingApply       = m_pendingApply || configuredProfile != m_configuredProfile;
+    m_configuredProfile  = std::move(configuredProfile);
+    m_reapplyOnEnable    = reapplyOnEnable;
+    m_configuredIdentity = InputMethodIdentity::Parse(m_configuredProfile);
+
+    using Kind = InputMethodIdentity::Identity::Kind;
+    switch (m_configuredIdentity.kind)
+    {
+        case Kind::Unset:
+            logger::info("Default input method: not configured, the system input method is left alone");
+            break;
+        case Kind::Unknown:
+            logger::warn(
+                "Default input method '{}' cannot be parsed; ignoring it (expected 'tip:<clsid>/<guid>[/<langid>]' or a display name)",
+                m_configuredProfile
+            );
+            break;
+        case Kind::Keyboard:
+            // Parsed, but a KLID cannot be derived from an HKL yet (P2); warn so a
+            // hand-written value does not silently do nothing.
+            logger::warn("Default input method '{}': keyboard layouts are not supported yet; ignoring it", m_configuredProfile);
+            break;
+        case Kind::Tip:
+        case Kind::Desc:
+            logger::info(
+                "Default input method set to '{}' ({})",
+                m_configuredProfile,
+                m_reapplyOnEnable ? "applied on every IME enable" : "applied on game start only"
+            );
+            break;
+    }
+}
+
+auto Ime::InputMethodManager::HasConfiguredProfile() const -> bool
+{
+    using Kind = InputMethodIdentity::Identity::Kind;
+    switch (m_configuredIdentity.kind)
+    {
+        case Kind::Tip:
+        case Kind::Desc:
+            return true;
+        default:
+            return false;
+    }
+}
+
+auto Ime::InputMethodManager::IsConfiguredProfileActive() const -> bool
+{
+    using Kind = InputMethodIdentity::Identity::Kind;
+    if (m_configuredIdentity.kind == Kind::Unset || m_configuredIdentity.kind == Kind::Unknown) return false;
+    // Read the cache directly: GetActiveLangProfile() returns the display-only
+    // DEFAULT_LANG_PROFILE stub when the index is stale, which would compare as
+    // a real (never matching) profile.
+    if (m_activatedProfile >= m_langProfiles.size()) return false;
+    return InputMethodIdentity::Matches(m_configuredIdentity, ToIdentity(m_langProfiles[m_activatedProfile]));
+}
+
+auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
+{
+    using Kind = InputMethodIdentity::Identity::Kind;
+    if (m_configuredIdentity.kind == Kind::Unset) return S_FALSE;
+    if (!HasConfiguredProfile())
+    {
+        logger::warn("Default input method '{}' is not usable; nothing to activate", m_configuredProfile);
+        return E_INVALIDARG;
+    }
+
+    const LangProfile *target = nullptr;
+    for (const auto &langProfile : m_langProfiles)
+    {
+        if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue; // only a TIP composes text
+        if (!InputMethodIdentity::Matches(m_configuredIdentity, ToIdentity(langProfile))) continue;
+        target = &langProfile;
+        break;
+    }
+
+    // A hand-written display name is matched loosely as a second pass, so
+    // default_input_method = "拼音" works without anyone having to dig an
+    // identity string out of the log.
+    if (target == nullptr && m_configuredIdentity.kind == Kind::Desc)
+    {
+        const auto wanted = InputMethodIdentity::Detail::Trim(m_configuredIdentity.desc);
+        std::size_t matches = 0;
+        std::string matchedNames;
+        for (const auto &langProfile : m_langProfiles)
+        {
+            if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue;
+            if (!ContainsNoCase(langProfile.desc, wanted)) continue;
+            if (target == nullptr) target = &langProfile;
+            ++matches;
+            if (matches <= 8)
+            {
+                if (!matchedNames.empty()) matchedNames += " | ";
+                matchedNames += langProfile.desc;
+            }
+        }
+        if (target != nullptr)
+        {
+            if (matches > 1)
+            {
+                logger::warn(
+                    "Default input method '{}' matches {} input methods ({}); using the first one — an exact 'tip:...' identity is unambiguous",
+                    m_configuredProfile,
+                    matches,
+                    matchedNames
+                );
+            }
+            else
+            {
+                logger::info("Default input method '{}' matched the display name '{}'", m_configuredProfile, target->desc);
+            }
+        }
+    }
+
+    if (target != nullptr)
+    {
+        logger::info("Activating the configured default input method '{}'", target->desc);
+        // ActivateProfile() itself skips the TSF call when this TIP is already
+        // active, so callers may call this unconditionally.
+        const auto hr = ActivateProfile(*target);
+        if (SUCCEEDED(hr))
+        {
+            m_pendingApply = false; // the change this flag covered just landed
+        }
+        return hr;
+    }
+
+    // Never fall back here: the caller decides (startup keeps the current
+    // profile, the enable path falls back to ActivatePreferredImeProfile()).
+    // Log every candidate so a wrong identity string is diagnosable in one run.
+    std::string candidates;
+    for (const auto &langProfile : m_langProfiles)
+    {
+        if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue;
+        const auto identity = ToIdentity(langProfile);
+        if (!candidates.empty()) candidates += " | ";
+        candidates += langProfile.desc;
+        candidates += " (";
+        candidates += InputMethodIdentity::FormatFromTip(identity.clsid, identity.profile, identity.langid);
+        candidates += ")";
+    }
+    logger::warn(
+        "Configured default input method '{}' is not installed/enabled for this process; keeping the current input method. Candidates: {}",
+        m_configuredProfile,
+        candidates.empty() ? std::string{"<none>"} : candidates
+    );
+    return E_INVALIDARG;
 }
 
 auto Ime::InputMethodManager::GetActiveLangProfile() -> const LangProfile &

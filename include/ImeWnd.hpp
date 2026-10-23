@@ -11,6 +11,9 @@
 
 #include "atlcomcli_shim.h"
 #include <atomic>
+#include <string>
+#include <utility>
+#include <vector>
 #include <windows.h>
 
 #pragma comment(lib, "d3d11.lib")
@@ -130,6 +133,19 @@ public:
     //! @see ImeController::ActivateLangProfile
     auto ActivateLanguageProfile(const GUID &guidProfile) const -> HRESULT;
 
+    //! Must call from IME thread. Activate by position in the profile list —
+    //! the only way to address a keyboard layout (they all share GUID_NULL).
+    auto ActivateLanguageProfileByIndex(const std::uint32_t index) const -> HRESULT
+    {
+        return m_inputMethodManager != nullptr ? m_inputMethodManager->ActivateProfileByIndex(index) : E_FAIL;
+    }
+
+    //! Index of the active profile in GetLangProfiles(), UINT32_MAX when unknown.
+    [[nodiscard]] auto GetActiveProfileIndex() const -> std::uint32_t
+    {
+        return m_inputMethodManager != nullptr ? m_inputMethodManager->GetActiveProfileIndex() : UINT32_MAX;
+    }
+
     //! Must call from IME thread.
     auto GetActiveLangProfile() const -> const LangProfile & { return m_inputMethodManager->GetActiveLangProfile(); }
 
@@ -141,6 +157,55 @@ public:
 
     //! Must call from IME thread. Activate the user's first non-English TIP (fallback when nothing was remembered).
     auto ActivatePreferredImeProfile() const -> HRESULT { return m_inputMethodManager->ActivatePreferredImeProfile(); }
+
+    //! Must call from IME thread. Remember the user's configured default input
+    //! method ([core] default_input_method). Takes a copy: Settings belongs to the
+    //! render thread, and a std::string must never be shared across threads here.
+    void SetConfiguredInputMethod(std::string configuredProfile, const bool reapplyOnEnable) const
+    {
+        if (m_inputMethodManager != nullptr)
+        {
+            m_inputMethodManager->SetConfiguredProfile(std::move(configuredProfile), reapplyOnEnable);
+        }
+    }
+
+    //! Whether the configured default input method should be selected right now:
+    //! always with the re-apply policy on, otherwise only once after the pick
+    //! changed in the settings window.
+    [[nodiscard]] auto ShouldApplyConfiguredInputMethod() const -> bool
+    {
+        return m_inputMethodManager != nullptr && m_inputMethodManager->ShouldApplyConfiguredProfile();
+    }
+
+    //! Whether a usable default input method is configured.
+    [[nodiscard]] auto HasConfiguredInputMethod() const -> bool
+    {
+        return m_inputMethodManager != nullptr && m_inputMethodManager->HasConfiguredProfile();
+    }
+
+    //! Whether the configured default input method already is the active one.
+    [[nodiscard]] auto IsConfiguredInputMethodActive() const -> bool
+    {
+        return m_inputMethodManager != nullptr && m_inputMethodManager->IsConfiguredProfileActive();
+    }
+
+    //! Must call from IME thread. Activate the configured default input method;
+    //! the caller owns the fallback decision (see ImeManager).
+    auto ActivateConfiguredInputMethod() const -> HRESULT
+    {
+        return m_inputMethodManager != nullptr ? m_inputMethodManager->ActivateConfiguredProfile() : E_FAIL;
+    }
+
+    //! Must call from IME thread. The selectable input methods for the
+    //! settings-window picker; `refresh` re-reads the TSF profile enumeration
+    //! first (once per settings-window open — the enumeration touches the
+    //! registry for every profile, so it is not free).
+    [[nodiscard]] auto GetSelectableInputMethods(const bool refresh) const -> std::vector<InputMethodChoice>
+    {
+        if (m_inputMethodManager == nullptr) return {};
+        if (refresh) (void)m_inputMethodManager->RefreshProfiles();
+        return m_inputMethodManager->GetSelectableChoices();
+    }
 
     auto GetHWND() const -> HWND { return m_hWnd; }
 

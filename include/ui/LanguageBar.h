@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 namespace Ime
@@ -16,7 +17,17 @@ class ToolWindow;
 
 namespace LanguageBar
 {
-auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles, bool interactive) -> void;
+/// @param activeProfileIndex index of the active profile inside @c langProfiles
+///        (UINT32_MAX when unknown). An index, not a GUID: keyboard layouts all
+///        share GUID_NULL, so a GUID cannot tell two of them apart.
+auto Draw(
+    bool &                       pinned,
+    bool &                       toolWindowShowing,
+    const LangProfile &          activeLangProfile,
+    const std::vector<LangProfile> &langProfiles,
+    std::uint32_t                activeProfileIndex,
+    bool                         interactive
+) -> void;
 }; // namespace LanguageBar
 } // namespace UI
 

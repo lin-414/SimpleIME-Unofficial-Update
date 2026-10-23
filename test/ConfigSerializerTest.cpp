@@ -22,6 +22,8 @@ TEST(ConfigSerializerTest, should_return_default_configuration_if_file_not_exist
     EXPECT_EQ(configuration.fixInconsistentTextEntryCount, defaultConfiguration.fixInconsistentTextEntryCount);
     EXPECT_EQ(configuration.autoToggleKeyboard, defaultConfiguration.autoToggleKeyboard);
     EXPECT_EQ(configuration.switchEnglishLayoutOnDisable, defaultConfiguration.switchEnglishLayoutOnDisable);
+    EXPECT_EQ(configuration.defaultInputMethod, defaultConfiguration.defaultInputMethod);
+    EXPECT_EQ(configuration.reapplyDefaultInputMethodOnEnable, defaultConfiguration.reapplyDefaultInputMethodOnEnable);
     EXPECT_EQ(configuration.forceDpiAwareness, defaultConfiguration.forceDpiAwareness);
     EXPECT_EQ(configuration.logging.level, defaultConfiguration.logging.level);
     EXPECT_EQ(configuration.logging.flushLevel, defaultConfiguration.logging.flushLevel);
@@ -60,6 +62,8 @@ TEST(ConfigSerializerTest, should_save_load_configuration)
     EXPECT_EQ(loadedConfig.fixInconsistentTextEntryCount, toSaveConfiguration.fixInconsistentTextEntryCount);
     EXPECT_EQ(loadedConfig.autoToggleKeyboard, toSaveConfiguration.autoToggleKeyboard);
     EXPECT_EQ(loadedConfig.switchEnglishLayoutOnDisable, toSaveConfiguration.switchEnglishLayoutOnDisable);
+    EXPECT_EQ(loadedConfig.defaultInputMethod, toSaveConfiguration.defaultInputMethod);
+    EXPECT_EQ(loadedConfig.reapplyDefaultInputMethodOnEnable, toSaveConfiguration.reapplyDefaultInputMethodOnEnable);
     EXPECT_EQ(loadedConfig.forceDpiAwareness, toSaveConfiguration.forceDpiAwareness);
     EXPECT_EQ(loadedConfig.logging.level, toSaveConfiguration.logging.level);
     EXPECT_EQ(loadedConfig.logging.flushLevel, toSaveConfiguration.logging.flushLevel);

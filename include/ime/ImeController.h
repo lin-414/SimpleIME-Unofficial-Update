@@ -2,10 +2,12 @@
 
 #include "IImeModule.h"
 #include "ime/ImeManager.h"
+#include "ime/InputMethodChoice.h"
 #include "ui/Settings.h"
 #include "ui/TaskQueue.h"
 
 #include <atomic>
+#include <mutex>
 
 namespace Ime
 {
@@ -67,6 +69,20 @@ public:
      * @param guidProfile the @c LangProfile guid
      */
     void ActivateLangProfile(const GUID &guidProfile) const;
+    /// Activate a profile by its position in the language bar's list. Keyboard
+    /// layouts all share GUID_NULL, so an index is the only unambiguous handle
+    /// for them (see InputMethodManager::ActivateProfileByIndex).
+    void ActivateLangProfileByIndex(std::uint32_t index) const;
+    /// Hand the user's [core] default_input_method to the IME thread's copy.
+    /// The value is captured by value: Settings stays render-thread-owned.
+    void SetDefaultInputMethod(std::string defaultInputMethod, bool reapplyOnEnable) const;
+    /// Ask the IME thread to re-enumerate the selectable input methods and
+    /// publish the result through @c GetInputMethodChoices. Dispatched, not
+    /// waited on: the settings window draws the previous snapshot meanwhile.
+    void RequestInputMethodChoices() const;
+    /// Thread-safe snapshot of the last enumeration (empty before the first
+    /// request completes, or when the process has no input method to offer).
+    [[nodiscard]] auto GetInputMethodChoices() const -> std::vector<InputMethodChoice>;
     /// The actual commit runs on the IME thread; a failure there is reported
     /// through the ErrorNotifier. SUCCESS here means the task was dispatched.
     auto CommitCandidate(DWORD index) const -> IImeModule::Result;
@@ -106,6 +122,11 @@ private:
     std::atomic_bool            m_fDirty      = false;
     std::atomic_bool            m_fEnabledMod = false;
     std::atomic_bool            m_fInited     = false;
+    /// Guards m_choices: written on the IME thread, read by the render thread
+    /// (and the game thread, should a bridge ever ask) — never shared otherwise.
+    mutable std::mutex          m_choicesMutex;
+    /// Mutable so the const request method can publish on the IME thread.
+    mutable std::vector<InputMethodChoice> m_choices; ///< guarded by m_choicesMutex
 
     auto DoEnableMod(bool enable) -> IImeModule::Result;
     auto DoEnableIme(bool enable, bool honorKeepImeOpen = true) const -> IImeModule::Result;

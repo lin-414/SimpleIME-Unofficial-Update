@@ -107,6 +107,17 @@ struct Configuration
     /// ENG and keeps showing it after the game exits, because no process
     /// restores another process's input locale.
     bool        switchEnglishLayoutOnDisable;
+    /// The input method to select on every game start and every time the IME is
+    /// enabled. Empty / "auto" / "system" / "none" keeps the old behavior (the
+    /// input method is never touched). Any other value is an identity string
+    /// parsed by utils/InputMethodIdentity.h — "tip:{CLSID}/{GUID}[/{langid}]"
+    /// selects that TIP, a plain name matches the profile's display name.
+    std::string defaultInputMethod;
+    /// Re-apply `defaultInputMethod` on every IME enable (default true). When
+    /// false it is only applied on game start (and on a settings reload), so a
+    /// profile the player picked from the language bar afterwards sticks.
+    /// Meaningless while `defaultInputMethod` is empty.
+    bool        reapplyDefaultInputMethodOnEnable;
     /// Declare per-monitor-v2 DPI awareness for the whole game process at load
     /// time. Skyrim ships DPI-unaware, so Windows bitmap-stretches the frame on
     /// scaled desktops and every in-game UI (SimpleIME's included) blurs.
@@ -128,6 +139,8 @@ constexpr auto GetDefaultConfiguration() -> Configuration
         .fixInconsistentTextEntryCount = true,
         .autoToggleKeyboard            = false,
         .switchEnglishLayoutOnDisable  = false,
+        .defaultInputMethod            = "",
+        .reapplyDefaultInputMethodOnEnable = true,
         .forceDpiAwareness             = true,
         .logging                       = {.level = "", .flushLevel = ""},
         .resources                     = {.translationDir = "", .fontPathList = {}},

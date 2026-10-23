@@ -25,18 +25,22 @@ namespace
 constexpr auto LANGUAGE_BAR              = "LanguageBar";
 constexpr auto LanguageProfilesMenuTitle = "##LanguageProfiles";
 
-void DrawInputMethodsCombo(const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles)
+void DrawInputMethodsCombo(const std::vector<LangProfile> &langProfiles, const uint32_t activeProfileIndex)
 {
+    // Selection and activation both go by INDEX. Comparing guidProfile was the
+    // old behavior and it could not tell two keyboard layouts apart: they all
+    // carry GUID_NULL, so every one of them rendered as "selected" and clicking
+    // any of them activated whichever came first in the list.
     uint32_t clickedIndex = UINT32_MAX;
-    uint32_t idx          = 0;
     if (ImGuiEx::M3::BeginMenu(LanguageProfilesMenuTitle, ImGui::GetItemRectMin(), ImGui::GetItemRectMax()))
     {
+        uint32_t idx = 0;
         for (const auto &langProfile : langProfiles)
         {
             ImGui::PushID(static_cast<int>(idx));
             ImGuiEx::M3::MenuItemConfiguration config{};
             config.supportingText = langProfile.desc;
-            const bool isSelected = IsEqualGUID(activeLangProfile.guidProfile, langProfile.guidProfile) == TRUE;
+            const bool isSelected = idx == activeProfileIndex;
             if (ImGuiEx::M3::MenuItem(langProfile.localeDisplayName, isSelected, config) && !isSelected)
             {
                 clickedIndex = idx;
@@ -52,14 +56,21 @@ void DrawInputMethodsCombo(const LangProfile &activeLangProfile, const std::vect
     }
     if (clickedIndex != UINT32_MAX)
     {
-        ImeController::GetInstance()->ActivateLangProfile(langProfiles[clickedIndex].guidProfile);
+        ImeController::GetInstance()->ActivateLangProfileByIndex(clickedIndex);
     }
 }
 } // namespace
 
 namespace UI::LanguageBar
 {
-auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles, bool interactive) -> void
+auto Draw(
+    bool &                          pinned,
+    bool &                          toolWindowShowing,
+    const LangProfile &             activeLangProfile,
+    const std::vector<LangProfile> &langProfiles,
+    const uint32_t                  activeProfileIndex,
+    bool                            interactive
+) -> void
 {
     // NOTE: deliberately NOT NoInputs while pinned. ImGui only ever receives
     // mouse input while a menu context is active (ImeMenu forwards Scaleform
@@ -147,7 +158,7 @@ auto Draw(bool &pinned, bool &toolWindowShowing, const LangProfile &activeLangPr
         {
             ImGui::OpenPopup(LanguageProfilesMenuTitle);
         }
-        DrawInputMethodsCombo(activeLangProfile, langProfiles);
+        DrawInputMethodsCombo(langProfiles, activeProfileIndex);
 
         ImGuiEx::M3::EndFloatingToolbar();
     }

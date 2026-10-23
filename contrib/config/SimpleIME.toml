@@ -21,6 +21,21 @@ auto_toggle_keyboard = false
 # 而且退出游戏后系统不会还原它。关闭时保持你当前的输入法不变，只把它置为英文/关闭态
 # (等价于自己按一下 Shift 切中英文)
 switch_english_layout_on_disable = false
+# 默认输入法 (默认空 = 不干预，保持你系统当前的输入法不变)
+# 填写后，每次进游戏、以及每次开启 IME 时，都会自动切到这个输入法。
+# 三种写法:
+#   1) 显示名，如 "微信输入法" 或 "拼音"：按名称模糊匹配(重名时取第一个并 WARN 列出候选)
+#   2) tip:{CLSID}/{GUID}[/{langid}]：最精确，例如
+#      tip:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}/{FA550B04-5AD7-411F-A5AC-CA038EC515D7}
+#   3) 留空：不干预
+# 不知道填什么? 运行 tools/list_input_methods.ps1：列出本机所有输入法(中文名 + 身份串)，
+# 还能用 -Name 或 -Select 直接写进本文件。填错只会让这个功能失效(WARN)，不影响正常打字。
+default_input_method = ""
+# 每次开启 IME 时是否都重新切到上面的默认输入法 (默认开启)
+# 开启: 只要 IME 被启用就确保是默认输入法(包括你在语言栏里手选过别的之后)
+# 关闭: 只在进游戏/重载配置时切一次，之后你在语言栏里选的输入法不会被抢回去
+# 默认输入法留空时本项无意义
+reapply_default_input_method_on_enable = true
 # 进程级 DPI 感知 (默认开启)
 # Skyrim 本体不声明 DPI 感知，在系统缩放非 100% 的屏幕上，整个游戏画面(包括本 Mod 的设置界面)
 # 会被系统拉伸渲染，导致字体普遍发虚。开启后 SimpleIME 在游戏创建窗口前将进程声明为 Per-Monitor-V2 感知，

@@ -11,6 +11,7 @@
 #include "i18n/translator_manager.h"
 #include "icons.h"
 #include "ime/ImeController.h"
+#include "ime/InputMethodChoice.h"
 #include "imguiex/ErrorNotifier.h"
 #include "imguiex/imguiex_enum_wrap.h"
 #include "imguiex/imguiex_m3.h"
@@ -872,6 +873,10 @@ void ToolWindow::DrawMenuInputStatus(Settings &settings)
         }
         Panels::EndSettingsCard();
 
+        // [core] default_input_method used to be a TOML-only string the user had
+        // to copy out of the log; the picker writes exactly the same identities.
+        Panels::SettingsSection(Translate("Settings.Behaviour.DefaultInputMethod"), "##DefaultInputMethodCard", [&] { DrawDefaultInputMethod(settings); });
+
         Panels::SettingsSection(Translate("Settings.Behaviour.Shortcut"), "##ShortcutCard", [&] {
             DrawShortcutSection(settings);
         });
@@ -1300,6 +1305,164 @@ void ToolWindow::DrawEnvironmentRows(const Settings &settings)
         Translate("Settings.Advanced.TsfFrameworkSupport"),
         settings.enableTsf ? std::string_view{"TSF"} : std::string_view{"Imm32"}
     );
+}
+
+//! "默认输入法" row: the input method the mod switches to on every game start
+//! and on every IME enable ([core] default_input_method). The list is enumerated
+//! on the IME thread, so the first frame after opening the window can still show
+//! only the stored value.
+void ToolWindow::DrawDefaultInputMethod(Settings &settings)
+{
+    using namespace ImGuiEx::M3;
+
+    if (!m_choicesRequested)
+    {
+        m_choicesRequested = true;
+        ImeController::GetInstance()->RequestInputMethodChoices();
+    }
+
+    const auto choices    = ImeController::GetInstance()->GetInputMethodChoices();
+    const bool configured = !InputMethodIdentity::IsUnset(settings.defaultInputMethod);
+    const auto selected   = FindChoiceIndex(choices, settings.defaultInputMethod);
+    const bool missing    = configured && selected == std::string::npos;
+
+    // A raw identity string would stretch the trailing chip past the row; the
+    // full value stays visible in the TOML and in the log.
+    const auto truncate = [](const std::string &text) -> std::string {
+        constexpr std::size_t kMaxBytes = 28;
+        if (text.size() <= kMaxBytes) return text;
+        std::size_t cut = kMaxBytes;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0U) == 0x80U)
+        {
+            --cut; // never split a UTF-8 sequence
+        }
+        return text.substr(0, cut) + "...";
+    };
+
+    std::string preview;
+    if (!configured)
+    {
+        preview = Translate("Settings.Behaviour.DefaultInputMethodFollowSystem");
+    }
+    else if (!missing)
+    {
+        preview = ChoiceLabel(choices, selected);
+    }
+    else
+    {
+        preview = truncate(settings.defaultInputMethod);
+    }
+
+    // While the value points at nothing the supporting copy is the only place
+    // that explains why the mod will not switch, so it speaks in the error tone.
+    const std::string_view supporting = missing ? Translate("Settings.Behaviour.DefaultInputMethodMissing")
+                                                 : Translate("Settings.Behaviour.DefaultInputMethodSupport");
+
+    const float padX   = Context::GetM3Styles().GetPixels(M3Spec::List::paddingX);
+    const float comboW = Panels::RowTrailingComboWidth(preview, ImGui::GetContentRegionAvail().x - padX * 2.0F);
+    const auto  row    = Panels::BeginPlainSettingsRow(
+        Translate("Settings.Behaviour.DefaultInputMethod"), supporting, comboW, Panels::ComboButtonHeight(), SupportingMeasure()
+    );
+    if (row)
+    {
+        Panels::RowTitle(row);
+        if (missing)
+        {
+            auto      &m3Styles = Context::GetM3Styles();
+            const auto lineTop  = row.contentY + row.titleHeight + m3Styles.GetPixels(M3Spec::dp<2>());
+            ImGui::SetCursorScreenPos({row.contentX, lineTop});
+            TextUnformatted<Spec::TextRole::BodySmall>(supporting, M3Spec::ColorRole::error, row.textWidth);
+        }
+        else if (!supporting.empty())
+        {
+            Panels::RowSupporting(row, supporting);
+        }
+
+        const bool open = Panels::BeginRowTrailingCombo(row, "##DefaultInputMethodCombo", preview);
+        if (open)
+        {
+            if (Panels::ComboOption(Translate("Settings.Behaviour.DefaultInputMethodFollowSystem"), !configured))
+            {
+                ApplyDefaultInputMethod(settings, std::string{});
+            }
+            for (std::size_t i = 0; i < choices.size(); ++i)
+            {
+                if (Panels::ComboOption(ChoiceLabel(choices, i), i == selected))
+                {
+                    ApplyDefaultInputMethod(settings, choices[i].identity);
+                }
+            }
+        }
+        Panels::EndRowTrailingCombo(open);
+        Panels::EndSettingsRow(row);
+    }
+
+    // Re-apply policy. On (default) the IME re-selects the configured method on
+    // every enable, which is also what overrides a profile the player picked from
+    // the language bar; off keeps that pick until the next game start. Greyed out
+    // while no default input method is configured — it would do nothing.
+    {
+        bool reapply = settings.reapplyDefaultInputMethodOnEnable;
+        ImGui::BeginDisabled(!configured);
+        if (Panels::SettingsToggleRow(
+                "##ReapplyDefaultInputMethod",
+                Translate("Settings.Behaviour.DefaultInputMethodReapply"),
+                Translate("Settings.Behaviour.DefaultInputMethodReapplySupport"),
+                reapply,
+                SupportingMeasure()
+            ))
+        {
+            ApplyDefaultInputMethodReapply(settings, reapply);
+        }
+        ImGui::EndDisabled();
+    }
+
+    // The enumeration touches the registry for every installed profile, so a
+    // re-read is an explicit request — offered only while something is missing
+    // (nothing installed yet, or the stored value points at an absent profile).
+    if (missing || choices.empty())
+    {
+        const std::string_view refreshLabel = Translate("Settings.Behaviour.DefaultInputMethodRefresh");
+        const float            linkW        = Panels::TextLinkWidth(refreshLabel);
+        if (const auto refreshRow = Panels::BeginPlainSettingsRow({}, {}, linkW, Panels::TextLinkHeight()); refreshRow)
+        {
+            if (Panels::RowTrailingTextLink(refreshRow, "##RefreshInputMethods", refreshLabel))
+            {
+                ImeController::GetInstance()->RequestInputMethodChoices();
+            }
+            SetItemToolTip(Translate("Settings.Behaviour.DefaultInputMethodRefreshToolTip"));
+            Panels::EndSettingsRow(refreshRow);
+        }
+    }
+}
+
+void ToolWindow::ApplyDefaultInputMethod(Settings &settings, std::string identity)
+{
+    if (settings.defaultInputMethod == identity)
+    {
+        return;
+    }
+    settings.defaultInputMethod = std::move(identity);
+    // Two hops on purpose: the IME thread keeps its own copy (a std::string must
+    // never be shared across threads here), and MarkDirty re-runs the enable
+    // decision so the change takes effect without waiting for the next game
+    // start. No immediate profile switch: that would yank the input method out
+    // from under whatever the user was typing.
+    ImeController::GetInstance()->SetDefaultInputMethod(settings.defaultInputMethod, settings.reapplyDefaultInputMethodOnEnable);
+    ImeController::GetInstance()->MarkDirty();
+}
+
+void ToolWindow::ApplyDefaultInputMethodReapply(Settings &settings, const bool reapply)
+{
+    if (settings.reapplyDefaultInputMethodOnEnable == reapply)
+    {
+        return;
+    }
+    settings.reapplyDefaultInputMethodOnEnable = reapply;
+    // Same two hops as ApplyDefaultInputMethod: the IME thread owns its copy, and
+    // MarkDirty re-runs the enable decision so the next enable honors the switch.
+    ImeController::GetInstance()->SetDefaultInputMethod(settings.defaultInputMethod, settings.reapplyDefaultInputMethodOnEnable);
+    ImeController::GetInstance()->MarkDirty();
 }
 
 void ToolWindow::DrawShortcutSection(Settings &settings)

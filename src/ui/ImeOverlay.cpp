@@ -90,7 +90,13 @@ ImeOverlay::~ImeOverlay()
     i18n::SetTranslator(nullptr);
 }
 
-auto ImeOverlay::Draw(const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles, Settings &settings, const bool shortcutPressed) -> void
+auto ImeOverlay::Draw(
+    const LangProfile &             activeLangProfile,
+    const std::vector<LangProfile> &langProfiles,
+    const std::uint32_t             activeProfileIndex,
+    Settings &                      settings,
+    const bool                      shortcutPressed
+) -> void
 {
     auto &runtimeData = settings.runtimeData;
     // The chord edge is evaluated once per frame in ImeWnd::Draw (swallow latch
@@ -150,7 +156,7 @@ auto ImeOverlay::Draw(const LangProfile &activeLangProfile, const std::vector<La
     {
         const bool interactive = GetTickCount64() - runtimeData.overlayShownAtMs >= kLanguageBarClickGraceMs;
         // May change runtimeData.toolWindowShowing, but apply it will be deferred to next frame.
-        LanguageBar::Draw(runtimeData.overlayPinned, runtimeData.toolWindowShowing, activeLangProfile, langProfiles, interactive);
+        LanguageBar::Draw(runtimeData.overlayPinned, runtimeData.toolWindowShowing, activeLangProfile, langProfiles, activeProfileIndex, interactive);
     }
 }
 } // namespace Ime::UI

@@ -245,6 +245,8 @@ auto ImeManager::DoEnable() -> bool
         {
             logger::debug("No input method to re-open and no non-English TIP available, keeping the current one");
         }
+        // The user's configured default input method wins over the heuristic above.
+        ApplyConfiguredInputMethod();
         return success;
     }
     // Same ordering as the branch above: arm the restore while the conversion
@@ -290,7 +292,36 @@ auto ImeManager::DoEnable() -> bool
             logger::debug("No input method remembered and no non-English TIP available, keeping the current one");
         }
     }
+    // The user's configured default input method wins over the heuristic above
+    // (and over the remembered profile restored above).
+    ApplyConfiguredInputMethod();
     return success;
+}
+
+void ImeManager::ApplyConfiguredInputMethod()
+{
+    if (m_imeWnd == nullptr || !m_imeWnd->HasConfiguredInputMethod())
+    {
+        return; // not configured: never touch the input method (the old behavior)
+    }
+    if (!m_imeWnd->ShouldApplyConfiguredInputMethod())
+    {
+        return; // game-start-only policy: keep whatever the language bar picked
+    }
+    if (m_imeWnd->IsConfiguredInputMethodActive())
+    {
+        return; // already selected: DoEnable is called on every forced sync
+    }
+    if (SUCCEEDED(m_imeWnd->ActivateConfiguredInputMethod()))
+    {
+        return;
+    }
+
+    // Unusable value (not installed / not enabled for this process). Keep the old
+    // heuristic so the session never ends up on a bare English keyboard: the
+    // manager logs the raw value, this is only the recovery.
+    logger::warn("Configured default input method is unavailable, falling back to the user's preferred IME");
+    (void)m_imeWnd->ActivatePreferredImeProfile();
 }
 
 /// The disable arm of EnableIme: abort the composition, clear TSF focus,

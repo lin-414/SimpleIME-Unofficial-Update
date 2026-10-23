@@ -44,6 +44,11 @@ private:
     /// The two arms of EnableIme, split by their seam comments.
     auto DoEnable() -> bool;
     auto DoDisable() -> bool;
+    /// Apply [core] default_input_method; called from both DoEnable arms. Skips
+    /// the TSF call when the configured input method is already active, because
+    /// DoEnable runs on every forced sync and frequent activate/deactivate makes
+    /// the input stack slow.
+    auto ApplyConfiguredInputMethod() -> void;
 
     auto IsShouldEnableIme() const -> bool;
     auto ForceEnglishKeyboardOnGameThread() const -> void;

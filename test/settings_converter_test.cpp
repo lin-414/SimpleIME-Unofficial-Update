@@ -396,6 +396,8 @@ TEST(ShippedConfigurationTest, shipped_toml_converts_to_default_settings)
     EXPECT_EQ(shipped.fixInconsistentTextEntryCount, expected.fixInconsistentTextEntryCount);
     EXPECT_EQ(shipped.autoToggleKeyboard, expected.autoToggleKeyboard);
     EXPECT_EQ(shipped.switchEnglishLayoutOnDisable, expected.switchEnglishLayoutOnDisable);
+    EXPECT_EQ(shipped.defaultInputMethod, expected.defaultInputMethod);
+    EXPECT_EQ(shipped.reapplyDefaultInputMethodOnEnable, expected.reapplyDefaultInputMethodOnEnable);
     EXPECT_EQ(shipped.forceDpiAwareness, expected.forceDpiAwareness);
 
     EXPECT_EQ(shipped.logging.level, expected.logging.level);

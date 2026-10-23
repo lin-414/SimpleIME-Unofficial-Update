@@ -503,10 +503,13 @@ void ImeWnd::Draw(Settings &settings)
 
         const auto &activeLang   = m_inputMethodManager->GetActiveLangProfile();
         const auto &langProfiles = m_inputMethodManager->GetLangProfiles();
+        // Passed alongside the reference on purpose: keyboard layouts all share
+        // GUID_NULL, so the bar can only tell them apart by position.
+        const auto activeProfileIndex = m_inputMethodManager->GetActiveProfileIndex();
 
         if (m_imeOverlay != nullptr)
         {
-            m_imeOverlay->Draw(activeLang, langProfiles, settings, shortcutPressed);
+            m_imeOverlay->Draw(activeLang, langProfiles, activeProfileIndex, settings, shortcutPressed);
             if (settings.runtimeData.overlayShowing)
             {
                 m_translatorLoadDebounceTimer.Poke();
@@ -1056,6 +1059,19 @@ void ImeWnd::OnCreated(Settings &settings)
     }
 
     ImeController::GetInstance()->Init(this, m_hWndParent, settings);
+
+    // Apply [core] default_input_method: select the user's input method now, before
+    // the game reads any keyboard input. No fallback on purpose — an unusable value
+    // leaves the system input method alone, and the IME-enable path still falls back
+    // to ActivatePreferredImeProfile().
+    SetConfiguredInputMethod(settings.defaultInputMethod, settings.reapplyDefaultInputMethodOnEnable);
+    if (HasConfiguredInputMethod() && SUCCEEDED(ActivateConfiguredInputMethod())
+        && GetActiveLangProfile().dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    {
+        // A profile activation only *selects* the input method; the IME itself is
+        // still open, so close it now instead of letting the first frames eat WASD.
+        (void)SetSessionImeEnabled(false);
+    }
 }
 
 auto ImeWnd::OnDestroy() -> LRESULT

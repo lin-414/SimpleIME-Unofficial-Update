@@ -122,6 +122,15 @@ struct Settings
     /// state moves), so the session input locale — and the taskbar's ENG
     /// indicator — is never touched.
     bool          switchEnglishLayoutOnDisable  = false;
+    /// Mirrors Configuration::defaultInputMethod: the input method to select on
+    /// every game start and every IME enable. Owned by the render thread only —
+    /// the IME thread keeps its own copy (InputMethodManager::m_configuredProfile)
+    /// because a std::string must never be shared across threads here.
+    std::string   defaultInputMethod;
+    /// Mirrors Configuration::reapplyDefaultInputMethodOnEnable: apply
+    /// `defaultInputMethod` on every IME enable (true) or only on game start /
+    /// settings reload (false), so a language-bar pick survives.
+    bool          reapplyDefaultInputMethodOnEnable = true;
 
     struct Logging
     {
@@ -198,6 +207,8 @@ inline auto GetDefaultSettings() -> Settings
         .forceDpiAwareness             = true,
         .autoToggleKeyboard            = false,
         .switchEnglishLayoutOnDisable  = false,
+        .defaultInputMethod            = "",
+        .reapplyDefaultInputMethodOnEnable = true,
         .logging                       = {.level = spdlog::level::info, .flushLevel = spdlog::level::info},
         .resources                     = {.translationDir = "Data/interface/SimpleIME", .fontPathList = {}},
         // language = "auto" follows the OS UI language at load time; any other value

@@ -53,6 +53,10 @@ private:
     /// Render thread only: same pattern as m_logCopiedAt, for the diagnostics
     /// copy row on the Advanced page.
     float m_diagCopiedAt = -1.0F;
+    /// Render thread only: the settings-window picker already asked the IME
+    /// thread for the input-method list. The window object is rebuilt on every
+    /// open (ImeOverlay), so this latch is per-open by construction.
+    bool m_choicesRequested = false;
 
 public:
     ToolWindow();
@@ -82,6 +86,12 @@ private:
     void        DrawMenuAdvanced(Settings &settings);
     void        DrawStatusCard(const Settings &settings) const;
     void        DrawShortcutSection(Settings &settings);
+    void        DrawDefaultInputMethod(Settings &settings);
+    /// Persist + hand the pick to the IME thread; shared by the combo and the
+    /// "follow system" entry.
+    static void ApplyDefaultInputMethod(Settings &settings, std::string identity);
+    /// Persist the "re-apply on every enable" switch and hand it to the IME thread.
+    static void ApplyDefaultInputMethodReapply(Settings &settings, bool reapply);
     void        DrawLogPathRow();
     void        DrawConfigStatusRow();
     void        DrawDiagnosticsRow(const Settings &settings);

@@ -1,4 +1,4 @@
-﻿//
+//
 // Created by jamie on 2025/5/6.
 //
 #include "ime/ImeController.h"
@@ -80,6 +80,61 @@ void ImeController::ActivateLangProfile(const GUID &guidProfile) const
             ErrorNotifier::GetInstance().Warning(std::format("Can't switch Input Method, profile index {}", strGuid));
         }
     });
+}
+
+void ImeController::ActivateLangProfileByIndex(std::uint32_t index) const
+{
+    if (!IsReady()) return;
+
+    // Same by-value capture as ActivateLangProfile: the task runs after the
+    // render thread has moved on.
+    PostToImeThread([this, index] -> void {
+        ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
+        if (IsModEnabled() && imeWnd != nullptr && FAILED(imeWnd->ActivateLanguageProfileByIndex(index)))
+        {
+            ErrorNotifier::GetInstance().Warning(std::format("Can't switch Input Method, profile index {}", index));
+        }
+    });
+}
+
+void ImeController::SetDefaultInputMethod(std::string defaultInputMethod, const bool reapplyOnEnable) const
+{
+    if (!IsReady()) return;
+
+    // Captured BY VALUE (same reasoning as ActivateLangProfile): the task runs
+    // later on the IME thread, by which time the caller's Settings string may be
+    // gone or rewritten on the render thread.
+    PostToImeThread([this, defaultInputMethod, reapplyOnEnable] -> void {
+        ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
+        imeWnd->SetConfiguredInputMethod(defaultInputMethod, reapplyOnEnable);
+    });
+}
+
+void ImeController::RequestInputMethodChoices() const
+{
+    if (!IsReady()) return;
+
+    // The TSF enumeration touches the registry for every installed profile, so
+    // it runs on the IME thread (the one that owns the profile manager) and the
+    // result is published through the mutex-guarded snapshot below.
+    PostToImeThread([this] -> void {
+        ImeWnd *imeWnd = m_imeWnd.load(std::memory_order_acquire);
+        if (imeWnd == nullptr) return;
+
+        auto choices = imeWnd->GetSelectableInputMethods(true);
+        const auto count = choices.size();
+        {
+            const std::lock_guard lock(m_choicesMutex);
+            m_choices = std::move(choices);
+        }
+        logger::info("Input method picker: enumerated {} selectable input method(s)", count);
+    });
+}
+
+auto ImeController::GetInputMethodChoices() const -> std::vector<InputMethodChoice>
+{
+    const std::lock_guard lock(m_choicesMutex);
+    return m_choices;
 }
 
 auto ImeController::CommitCandidate(DWORD index) const -> IImeModule::Result

@@ -56,6 +56,8 @@ inline auto GetRandomConfiguation(std::uint32_t *seedOut = nullptr) -> Ime::Conf
     configuration.fixInconsistentTextEntryCount = random.NextBool();
     configuration.autoToggleKeyboard            = random.NextBool();
     configuration.switchEnglishLayoutOnDisable  = random.NextBool();
+    configuration.defaultInputMethod            = random.NextString(60); // long enough to exercise quoting/parsing
+    configuration.reapplyDefaultInputMethodOnEnable = random.NextBool();
     configuration.forceDpiAwareness             = random.NextBool();
 
     configuration.logging.level      = random.NextString(10);

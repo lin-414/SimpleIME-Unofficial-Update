@@ -44,7 +44,13 @@ public:
 
     //! @param shortcutPressed the toggle chord's press edge, evaluated once per frame in ImeWnd::Draw
     //!                       (after the capture widget's one-frame swallow latch was applied there).
-    auto Draw(const LangProfile &activeLangProfile, const std::vector<LangProfile> &langProfiles, Settings &settings, bool shortcutPressed) -> void;
+    auto Draw(
+        const LangProfile &             activeLangProfile,
+        const std::vector<LangProfile> &langProfiles,
+        std::uint32_t                   activeProfileIndex,
+        Settings &                      settings,
+        bool                            shortcutPressed
+    ) -> void;
 };
 } // namespace UI
 

@@ -38,6 +38,8 @@ constexpr auto KEY_ENABLE_MOD                        = "enable_mod";
 constexpr auto KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT = "fix_inconsistent_text_entry_count";
 constexpr auto KEY_AUTO_TOGGLE_KEYBOARD              = "auto_toggle_keyboard";
 constexpr auto KEY_SWITCH_ENGLISH_LAYOUT_ON_DISABLE  = "switch_english_layout_on_disable";
+constexpr auto KEY_DEFAULT_INPUT_METHOD              = "default_input_method";
+constexpr auto KEY_REAPPLY_DEFAULT_INPUT_METHOD       = "reapply_default_input_method_on_enable";
 constexpr auto KEY_FORCE_DPI_AWARENESS               = "force_dpi_awareness";
 
 // Logging keys
@@ -109,6 +111,22 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
         " 开启它能确定地保证游戏拿到原始按键，但语言 profile 是会话级的：任务栏会切成 ENG，",
         " 而且退出游戏后系统不会还原它。关闭时保持你当前的输入法不变，只把它置为英文/关闭态",
         " (等价于自己按一下 Shift 切中英文)",
+    };
+    const Comments defaultInputMethodComment = {
+        " 默认输入法 (默认空 = 不干预，保持你系统当前的输入法)",
+        " 填写后，每次进游戏以及每次开启 IME 时都会自动切到这个输入法。",
+        " 写法一: 显示名(如 微信输入法 或 拼音)，按名称模糊匹配，重名时取第一个并 WARN 列出候选。",
+        " 写法二: tip:{CLSID}/{GUID}[/{langid}]  最精确，例如",
+        "   tip:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}/{FA550B04-5AD7-411F-A5AC-CA038EC515D7}",
+        " 不知道填什么: 运行仓库内的 tools/list_input_methods.ps1，它会列出本机所有输入法(中文名+身份串)，",
+        " 并可用 -Name / -Select 直接把结果写进本文件；也可从日志 \"Load installed ime\" 行末尾括号中复制。",
+        " 填错只会让本功能失效(日志中有 WARN 且会列出全部候选)，不影响正常打字。",
+    };
+    const Comments reapplyDefaultInputMethodComment = {
+        " 每次开启 IME 时是否都要重新切到上面的默认输入法 (默认开启)",
+        " 开启: 只要 IME 一启用就确保是默认输入法(包括你在语言栏里手选过别的之后)",
+        " 关闭: 只在进游戏(或重新加载配置)时切一次，之后你在语言栏里选的输入法不会被抢回去",
+        " 默认输入法留空时本项无意义",
     };
     const Comments forceDpiAwarenessComment = {
         " 进程级 DPI 感知 (默认开启)",
@@ -189,6 +207,8 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
          {KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT, {configuration.fixInconsistentTextEntryCount, fixInconsistentTextEntryCountComment}},
          {KEY_AUTO_TOGGLE_KEYBOARD, {configuration.autoToggleKeyboard, autoToggleKeyboardComment}},
          {KEY_SWITCH_ENGLISH_LAYOUT_ON_DISABLE, {configuration.switchEnglishLayoutOnDisable, switchEnglishLayoutOnDisableComment}},
+         {KEY_DEFAULT_INPUT_METHOD, {configuration.defaultInputMethod, defaultInputMethodComment}},
+         {KEY_REAPPLY_DEFAULT_INPUT_METHOD, {configuration.reapplyDefaultInputMethodOnEnable, reapplyDefaultInputMethodComment}},
          {KEY_FORCE_DPI_AWARENESS, {configuration.forceDpiAwareness, forceDpiAwarenessComment}},
          {KEY_SECTION_LOGGING, logging}}
     };
@@ -313,6 +333,8 @@ auto ParseConfigurationFromToml(toml::value &rawToml, std::vector<std::string> *
         apply(coreToml, KEY_FIX_INCONSISTENT_TEXT_ENTRY_COUNT, config.fixInconsistentTextEntryCount);
         apply(coreToml, KEY_AUTO_TOGGLE_KEYBOARD, config.autoToggleKeyboard);
         apply(coreToml, KEY_SWITCH_ENGLISH_LAYOUT_ON_DISABLE, config.switchEnglishLayoutOnDisable);
+        apply(coreToml, KEY_DEFAULT_INPUT_METHOD, config.defaultInputMethod);
+        apply(coreToml, KEY_REAPPLY_DEFAULT_INPUT_METHOD, config.reapplyDefaultInputMethodOnEnable);
         apply(coreToml, KEY_FORCE_DPI_AWARENESS, config.forceDpiAwareness);
         if (coreToml.contains(KEY_SECTION_LOGGING))
         {
