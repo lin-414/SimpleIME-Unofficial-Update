@@ -49,6 +49,13 @@ inline void HideMenu(const RE::BSFixedString &a_menuName)
 ///        队列时先退格抹掉它们（原生 ImGui 界面没有我们能拦截输入的层次）。
 void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters = 0);
 
+/// 当前文本目标是否为"直读引擎输入队列"的外部 ImGui 宿主（EngineEvents 通道）。判定
+/// 与 SendUiString 的 ImGui-family 投递分支一致，并额外排除桥接路由与设置窗——那些
+/// 时候 SendUiString 会走别的分支，ImeWnd 的直通 WM_CHAR 仍需转发。这类宿主会把引擎
+/// 为同一物理键自己生成的 CharEvent 原样收下（我们拦不到源头），转发直通字符给它们
+/// 就是重复投递，ImeWnd 依此跳过（见 CharDelivery::ShouldForwardPassthroughChar）。
+[[nodiscard]] auto ExternalImGuiHostReadsEngineQueue() -> bool;
+
 /// IME 线程调用：提交回调之后本线程上的第一个 WM_CHAR 就是那个提交按键自己的回显，
 /// 把它记下来（见 Utils.cpp 的实现注释）。提交键（空格、数字选词）同样会被引擎读成一个
 /// CharEvent 漏进宿主字面，而它不在组字串里——退格补偿不算上它，字段里就会剩一个字符

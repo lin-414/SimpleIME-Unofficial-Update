@@ -20,6 +20,7 @@
 #include "ui/ImeOverlay.h"
 #include "ui/LanguageBar.h"
 #include "ui/fonts/FontManager.h"
+#include "utils/CharDeliveryLogic.h"
 #include "utils/Utils.h"
 #include "WCharUtils.h"
 
@@ -1015,7 +1016,6 @@ auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
             );
             character = normalized;
         }
-        logger::debug("ImeWnd WM_CHAR {:#x} accepted, forwarding to Skyrim", static_cast<std::uint32_t>(character));
         // A character was confirmed in this mode: remember it for the next
         // text-entry session (the console reopens in the mode text was last
         // typed in). Stamped after the inference above so State carries the
@@ -1026,6 +1026,22 @@ auto ImeWnd::HandleCharMessage(WPARAM wParam, LPARAM /*lParam*/) -> LRESULT
         {
             service->StampRememberedConversionModeFromLive();
         }
+        // Passthrough delivery: a host that reads RE::InputEvents off the
+        // engine's input queue (an EngineEvents-channel external ImGui host,
+        // e.g. Tailor 3.x) already received the engine's own DirectInput echo
+        // of this physical key — forwarding this WM_CHAR as another CharEvent
+        // types the character twice (2026-10-24: every letter landed doubled
+        // in Tailor's rename field in native mode). Everywhere else the engine
+        // echo is swallowed (Scaleform: ImeMenu::OnCharEvent) or never seen
+        // (the bridges), so the forward stays the only source of letters.
+        if (!CharDelivery::ShouldForwardPassthroughChar(Skyrim::ExternalImGuiHostReadsEngineQueue()))
+        {
+            logger::info(
+                "ImeWnd WM_CHAR {:#x} not forwarded: the EngineEvents ImGui host already receives the engine's own echo of this key",
+                static_cast<std::uint32_t>(character));
+            return 0;
+        }
+        logger::debug("ImeWnd WM_CHAR {:#x} accepted, forwarding to Skyrim", static_cast<std::uint32_t>(character));
         const std::wstring wstring(1, character);
         Skyrim::SendUiString(wstring);
     }

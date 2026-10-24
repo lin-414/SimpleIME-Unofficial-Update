@@ -5,6 +5,7 @@
 #include "imgui_internal.h"
 #include "log.h"
 #include "tsf/TsfSupport.h"
+#include "utils/CharDeliveryLogic.h"
 #include "utils/CompositionScriptLogic.h"
 #include "utils/Utils.h"
 
@@ -730,39 +731,60 @@ void TextStore::DeliverDirectInsert(const WCHAR *text, ULONG count)
     }
     else
     {
-        // First delivery of the run at info (this path is the diagnosis for the
-        // "nothing appears" report), the rest at debug: direct input arrives one
-        // character at a time and would otherwise flood a default-level log.
-        // Atomic because a TSF backend can exist per thread.
-        static std::atomic<bool> firstDeliveryLogged{false};
-        if (!firstDeliveryLogged.exchange(true))
-        {
-            logger::info("Direct (composition-less) insert of {} unit(s): delivering to the game", inserted.size());
-        }
-        else
-        {
-            logger::debug("Direct (composition-less) insert of {} unit(s): delivering to the game", inserted.size());
-        }
         // Text was confirmed in this mode: remember it for the next session
         // (see ITextService::StampRememberedConversionModeFromLive). This is the
         // 半角英数 case the report is about — the mode must survive the console
-        // being closed and reopened.
+        // being closed and reopened. Stamped before the skip below: a delivered
+        // engine echo confirms the mode just as well as our own delivery would.
         m_pTextService->StampRememberedConversionModeFromLive();
-        // Same Caps Lock rule as the WM_CHAR forwarding path (see
-        // Skyrim::NormalizeCapsCaseIfBlockerLoaded): the IME decided this
-        // letter's case against the OS Caps Lock state, while a caps-blocking
-        // mod removes that toggle from the game's own character generation —
-        // and an IME that types through the document never goes through the
-        // WM_CHAR branch, so both paths need it. The composition-commit path
-        // above stays untouched: that text is the IME's explicit output.
-        std::wstring delivered(inserted);
-        for (auto &ch : delivered)
+        // Same passthrough skip rule as the WM_CHAR forwarding path (see
+        // CharDelivery::ShouldForwardPassthroughChar): an EngineEvents-channel
+        // external ImGui host already receives the engine's own DirectInput echo
+        // of the physical key. "The keys never produced engine characters" only
+        // holds for the Win32 message chain the IME sits on — the engine reads
+        // the keyboard below it — so delivering here too would type every
+        // character twice (the WM_CHAR half of this doubling was 2026-10-24's
+        // Tailor rename-field report).
+        if (!Ime::CharDelivery::ShouldForwardPassthroughChar(Ime::Skyrim::ExternalImGuiHostReadsEngineQueue()))
         {
-            ch = Ime::Skyrim::NormalizeCapsCaseIfBlockerLoaded(ch);
+            logger::debug(
+                "Direct (composition-less) insert of {} unit(s) not delivered: "
+                "the EngineEvents ImGui host already receives the engine's own echo of these keys",
+                inserted.size());
         }
-        // No erase compensation: the keys never produced engine characters —
-        // the IME consumed them (they are not in the composition either).
-        Ime::Skyrim::SendUiString(delivered);
+        else
+        {
+            // First delivery of the run at info (this path is the diagnosis for the
+            // "nothing appears" report), the rest at debug: direct input arrives one
+            // character at a time and would otherwise flood a default-level log.
+            // Atomic because a TSF backend can exist per thread.
+            static std::atomic<bool> firstDeliveryLogged{false};
+            if (!firstDeliveryLogged.exchange(true))
+            {
+                logger::info("Direct (composition-less) insert of {} unit(s): delivering to the game", inserted.size());
+            }
+            else
+            {
+                logger::debug("Direct (composition-less) insert of {} unit(s): delivering to the game", inserted.size());
+            }
+            // Same Caps Lock rule as the WM_CHAR forwarding path (see
+            // Skyrim::NormalizeCapsCaseIfBlockerLoaded): the IME decided this
+            // letter's case against the OS Caps Lock state, while a caps-blocking
+            // mod removes that toggle from the game's own character generation —
+            // and an IME that types through the document never goes through the
+            // WM_CHAR branch, so both paths need it. The composition-commit path
+            // above stays untouched: that text is the IME's explicit output.
+            std::wstring delivered(inserted);
+            for (auto &ch : delivered)
+            {
+                ch = Ime::Skyrim::NormalizeCapsCaseIfBlockerLoaded(ch);
+            }
+            // No erase compensation: where we do deliver, the keys never produced
+            // engine characters (the IME consumed them; they are not in the
+            // composition either) — and where we skip, the engine's echo is the
+            // field's only copy and is left as-is.
+            Ime::Skyrim::SendUiString(delivered);
+        }
     }
     auto &textEditor = m_pTextService->GetTextEditorWrite();
     textEditor.Select(0, 0);

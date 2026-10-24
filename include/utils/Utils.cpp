@@ -110,6 +110,19 @@ auto Send(RE::BSUIScaleformData *scaleformData, const uint32_t code, RE::UIMessa
 }
 } // namespace
 
+auto ExternalImGuiHostReadsEngineQueue() -> bool
+{
+    const auto &settings = ImeApp::GetInstance().GetSettings();
+    // 与下方 SendUiString 的路由同构：桥接路由（Meridian/Prisma/SKSEMF）各自认领文本
+    // 时 SendUiString 不会走到引擎输入队列分支，这里也必须让位，否则 ImeWnd 的直通
+    // WM_CHAR 会被错误跳过、桥接通道断粮。
+    return !settings.runtimeData.toolWindowShowing && settings.input.imguiSurfaceInput &&
+           !Hooks::MeridianBridge::ShouldRoute() && !Hooks::PrismaBridge::ShouldRoute() &&
+           !Hooks::SkseMenuFrameworkBridge::ShouldRoute() &&
+           g_externalImGuiSurface.load(std::memory_order_acquire) &&
+           CurrentImGuiHostChannel() == ImGuiHostChannel::EngineEvents;
+}
+
 void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters)
 {
     // 空提交也要走一遍：Esc 取消组字时提交串是空的，但拼音字母已经被引擎读进宿主的
@@ -166,9 +179,7 @@ void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters)
         // the commit as the engine's own CharEvents, with the pinyin letters
         // Skyrim already wrote into the field erased first (we cannot intercept
         // them at the source).
-        if (ImeApp::GetInstance().GetSettings().input.imguiSurfaceInput &&
-            g_externalImGuiSurface.load(std::memory_order_acquire) &&
-            CurrentImGuiHostChannel() == ImGuiHostChannel::EngineEvents)
+        if (ExternalImGuiHostReadsEngineQueue())
         {
             const std::wstring text(wstringView);
             // 界面自己丢弃了组字期的原始字母，就绝不能再去退格——那会删掉玩家

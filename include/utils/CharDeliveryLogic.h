@@ -78,4 +78,27 @@ namespace Ime::CharDelivery
     }
     return false;
 }
+
+/**
+ * Whether a passthrough WM_CHAR — a key the TIP released uncomposed, i.e. the
+ * IME is open in half-width alphanumeric mode — must still be forwarded to the
+ * game (see ImeWnd::HandleCharMessage).
+ *
+ * On a surface that reads RE::InputEvents off the engine's input queue (an
+ * EngineEvents-channel external ImGui host, e.g. Tailor 3.x) the engine's own
+ * DirectInput echo of the same physical key is already in that queue, so our
+ * forward would type the character a second time (2026-10-24: every letter
+ * landed doubled in Tailor's rename field in native mode). Everywhere else the
+ * forward is the only source of letters: Scaleform menus never see the engine's
+ * echo (ImeMenu::OnCharEvent swallows it) and the bridges (Meridian, Prisma,
+ * SKSEMF) own their delivery channels.
+ *
+ * WM_CHARs that do not originate from a physical keypress the engine also
+ * reads (Alt+numpad entry, dead-key accents) share this decision; commit
+ * strings never pass through here.
+ */
+[[nodiscard]] constexpr auto ShouldForwardPassthroughChar(const bool surfaceReadsEngineQueue) -> bool
+{
+    return !surfaceReadsEngineQueue;
+}
 } // namespace Ime::CharDelivery

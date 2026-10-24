@@ -1,7 +1,8 @@
 //
 // Headless tests for the character-delivery logic (CharDeliveryLogic.h): the
-// caps-lock normalization applied to forwarded WM_CHAR letters, and the module
-// name matcher that decides whether it applies at all.
+// caps-lock normalization applied to forwarded WM_CHAR letters, the module
+// name matcher that decides whether it applies at all, and whether a passthrough
+// WM_CHAR is forwarded to the game in the first place.
 //
 #include "utils/CharDeliveryLogic.h"
 
@@ -68,4 +69,16 @@ TEST(CharDeliveryCapsBlockingModule, ignores_unrelated_modules)
     EXPECT_FALSE(IsCapsBlockingModuleName(L""));
     EXPECT_FALSE(IsCapsBlockingModuleName(L"d3d11.dll"));
     EXPECT_FALSE(IsCapsBlockingModuleName(L"KeyboardShortcutsFixLoader.dll"));
+}
+
+TEST(CharDeliveryPassthroughForward, skips_only_engine_queue_hosts)
+{
+    // The engine's own DirectInput echo already delivers the key to an
+    // EngineEvents-channel external ImGui host (Tailor 3.x): forwarding our
+    // WM_CHAR copy would type the character twice.
+    EXPECT_FALSE(ShouldForwardPassthroughChar(true));
+    // Scaleform menus never see the engine's echo (ImeMenu::OnCharEvent
+    // swallows it) and the bridges own their delivery channels — the forward
+    // stays their only source of letters.
+    EXPECT_TRUE(ShouldForwardPassthroughChar(false));
 }
