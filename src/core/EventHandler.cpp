@@ -9,6 +9,7 @@
 #include "ime/ImeController.h"
 #include "log.h"
 #include "menu/MenuNames.h"
+#include "menu/ToolWindowMenu.h"
 #include "utils/InputFocusAnchor.h"
 #include "utils/Utils.h"
 
@@ -132,6 +133,35 @@ auto HasRealMenuOnStack() -> bool
     return false;
 }
 
+/// 引擎在“任意菜单弹栈”时都会关掉共享的 CursorMenu，且不复查栈上剩余的菜单：语言栏菜单
+/// （kUsesCursor，每次文本会话结束都随语言栏隐藏而弹栈）一弹，就把仍开着的宿主菜单的
+/// 游标一起拽掉——Tailor（kUsesCursor 的 ImGui 宿主菜单）的 io.MousePos 只由 RE::MenuCursor
+/// 喂，CursorMenu 一关它立刻冻结，点击命中测试全部落在旧坐标上（2026-10-24 实测：三次
+/// 会话结束 "ToolWindow open false" 与 "Cursor Menu open false" 同毫秒配对，Tailor 随后
+/// 13 秒才关）。只在 ToolWindowMenu 弹栈时间窗内、且栈上确实还有别的需要游标的菜单时
+/// 补开 CursorMenu；引擎自己的关闭（控制台、宿主菜单自身关闭等）不受影响。
+auto RestoreCursorYankedByToolWindowPop() -> void
+{
+    if (!ToolWindowMenu::HiddenRecently())
+    {
+        return;
+    }
+    if (auto *ui = RE::UI::GetSingleton(); ui != nullptr)
+    {
+        const auto toolWindowMenu = ui->GetMenu(ToolWindowMenuName).get();
+        for (const auto &menu : ui->menuStack)
+        {
+            if (menu && menu.get() != toolWindowMenu && !menu->AlwaysOpen() &&
+                (menu->UsesCursor() || menu->UpdateUsesCursor()))
+            {
+                logger::info("CursorMenu was closed by our ToolWindowMenu pop with a cursor-needing menu still open - re-opening");
+                Skyrim::ShowMenu(RE::CursorMenu::MENU_NAME);
+                return;
+            }
+        }
+    }
+}
+
 /// Decrement the text-entry counter to 0 and re-sync the Scaleform hook's cache.
 /// The counter leaks whenever a menu calls AllowTextInput(true) without the
 /// matching false (churn around ESC-closes); a leaked counter keeps the IME and
@@ -205,6 +235,11 @@ auto MenuOpenCloseEventSink::ProcessEvent(const Event *event, RE::BSTEventSource
 {
     logger::debug("Menu {} open {}", event->menuName.c_str(), event->opening);
     InputFocusAnchor::GetInstance().InvalidateCachedMenuIndex();
+
+    if (event->menuName == RE::CursorMenu::MENU_NAME && !event->opening)
+    {
+        RestoreCursorYankedByToolWindowPop();
+    }
 
     static bool firstOpenMainMenu = true;
     // before game load, all menus will be closed;

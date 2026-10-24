@@ -9,12 +9,22 @@
 #include "menu/MenuNames.h"
 #include "utils/Utils.h"
 
+#include <atomic>
+#include <cstdint>
+
 namespace Ime
 {
 namespace
 {
 /// True while this process holds the engine pause for the settings window.
 bool s_settingsWindowPauseHeld = false;
+
+/// kHide 时刻（GetTickCount64 毫秒）。弹栈会让引擎连带关闭共享的 CursorMenu；
+/// 这个时间窗用于把“我们造成的 CursorMenu 关闭”与引擎自己的关闭区分开。
+/// 窗口取得很宽裕（实测同毫秒配对）但不跨秒：用户不可能在退出输入状态的
+/// 200ms 内又关掉宿主菜单，避免把宿主菜单自己的正常关闭误判成拽掉的光标。
+std::atomic<std::uint64_t> s_lastHiddenMs{0};
+constexpr std::uint64_t kHiddenRecentlyWindowMs = 200;
 
 auto OnUserEvent(RE::BSUIMessageData *uiMessageData) -> RE::UI_MESSAGE_RESULTS
 {
@@ -59,6 +69,7 @@ auto ToolWindowMenu::ProcessMessage(RE::UIMessage &a_message) -> RE::UI_MESSAGE_
             {
                 logger::error("ToolWindowMenu: settings were not saved on hide");
             }
+            NoteHidden();
             results = RE::UI_MESSAGE_RESULTS::kHandled;
             break;
         }
@@ -139,6 +150,17 @@ void ToolWindowMenu::SyncSettingsWindowPause(const bool pauseWanted)
 void ToolWindowMenu::ReleaseSettingsWindowPause()
 {
     SyncSettingsWindowPause(false);
+}
+
+auto ToolWindowMenu::HiddenRecently() -> bool
+{
+    const auto last = s_lastHiddenMs.load(std::memory_order_relaxed);
+    return last != 0 && GetTickCount64() - last <= kHiddenRecentlyWindowMs;
+}
+
+void ToolWindowMenu::NoteHidden()
+{
+    s_lastHiddenMs.store(GetTickCount64(), std::memory_order_relaxed);
 }
 
 } // namespace Ime

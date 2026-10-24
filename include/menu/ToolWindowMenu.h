@@ -27,9 +27,18 @@ public:
     /// game paused with no window to explain it.
     static void ReleaseSettingsWindowPause();
 
+    /// True within a short window after our kHide was processed. The engine
+    /// closes the shared CursorMenu whenever a menu leaves the stack, so a
+    /// CursorMenu close inside this window is causally ours — see
+    /// EventHandler::RestoreCursorYankedByToolWindowPop.
+    [[nodiscard]] static auto HiddenRecently() -> bool;
+
     auto ProcessMessage(RE::UIMessage &a_message) -> RE::UI_MESSAGE_RESULTS override;
 
 private:
+    /// Stamp the kHide moment (called from ProcessMessage(kHide) only).
+    static void NoteHidden();
+
     static auto Creator() -> IMenu *;
 };
 } // namespace Ime
