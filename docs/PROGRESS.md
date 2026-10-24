@@ -2521,3 +2521,44 @@ remember the previous input mode」，并说明之前的 Alt + ` 其实是自定
   （DLL FileVersion 3.2.0-beta，1,431,343 字节）。
 - **发版**：main 提交 2798b0e/41c455b + 本次候选翻页改动；tag `v3.2.0-beta`；
   GitHub Release 手动 `gh release create`（tag push 不触发 CI 的老坑）。
+
+
+## 3.3.0-beta：Tailor（EngineEvents ImGui 宿主）双字母 + CursorMenu 被拽掉（2026-10-24）
+
+用户报两个问题（Tailor v3.0.1，原生 ImGui 1.92.6，EngineEvents 通道外部宿主）：
+
+### 问题一：英文状态按一次 s 出两个 s
+- 根因：英文直通 WM_CHAR 在 `ImeWnd::HandleCharMessage` 里经 SendUiString 的 ImGui-family
+  分支再投一份引擎 CharEvent，而引擎自己的 DirectInput 回显也在投（拦不到源头）。Scaleform
+  宿主无此问题（`ImeMenu::OnCharEvent` 吞掉引擎回显，转发是唯一字母来源）；EngineEvents
+  宿主两条通路都收 → 双字母。
+- 修复：新增 `CharDelivery::ShouldForwardPassthroughChar(surfaceReadsEngineQueue)`
+  （include/utils/CharDeliveryLogic.h）+ `Skyrim::ExternalImGuiHostReadsEngineQueue()`
+  （Utils，与 SendUiString 分支同构：排除桥接与设置窗，仅 EngineEvents 通道外部 ImGui
+  宿主为真）。ImeWnd 直通分支命中即跳过投递，日志 "not forwarded: ...engine's own echo"。
+  剪贴板粘贴 / TSF 提交 / 取消组字 erase-only 路径不受影响。
+- 审查补漏（同日）：`TextStore::DeliverDirectInsert`（Google 日本語入力半角英数等 TIP 的无组字
+  直写路径，src/tsf/TextStore.cpp）与 ImeWnd 转发是并列的按键直通路径（Utils.h 注释要求同一份
+  语义），此前只套用了 Caps 归一化、漏了跳过判定——EngineEvents 宿主上引擎回显已把字符写进
+  字段，此路径再投一份仍是双写。已加同一 `ShouldForwardPassthroughChar` 判定：模式戳记仍在
+  跳过前执行，"delivering to the game" 日志只在实际投递时打。
+- 实机验证：英文键击只出一个 s；日志 12 次 "not forwarded"、0 次 Queued/Delivered 成对。
+
+### 问题二：退出输入状态后 Tailor 界面点不动
+- 根因（debug 日志实锤，三次同毫秒配对："ToolWindow open false" 与 "Cursor Menu open
+  false"）：语言栏隐藏 → ToolWindowMenu（kUsesCursor，ImeOverlay 持有的 ToolWindow 析构 →
+  HideMenu）弹栈 → 引擎关 CursorMenu 时不复查栈上剩余菜单 → 仍开着的 TailorNativeMenu
+  （kUsesCursor）失去游标；Tailor 的 io.MousePos 只由 RE::MenuCursor 喂，CursorMenu 一关
+  即冻结，点击命中测试全落在旧坐标上（重开 Tailor 才恢复）。
+- 修复：`ToolWindowMenu::ProcessMessage(kHide)` 记时间戳（`HiddenRecently`，200ms 窗）；
+  EventHandler 的 MenuOpenCloseEventSink 看到 "Cursor Menu" 关闭、在我们弹栈时间窗内、且
+  栈上还有别的 UsesCursor/UpdateUsesCursor 非 AlwaysOpen 菜单时，`ShowMenu` 补开
+  CursorMenu。引擎自己的关闭（控制台、宿主菜单自身关闭）不受影响。
+- 日志观察点："CursorMenu was closed by our ToolWindowMenu pop ... re-opening"。
+
+### 构建与部署
+- 138/138 单测通过（新增 `CharDeliveryPassthroughForward.skips_only_engine_queue_hosts`）。
+- DLL（SHA-256 5e8898f4…ffb36，3.3.0-beta 版本资源）已同步 `dist/SimpleIME/SKSE/Plugins/` 与
+  `E:\Skyrim AE\mods\SimpleIME\SKSE\Plugins\`（用户 MO2 启用的文件夹；主构建自动部署 MO2）。
+- **发版**：tag `v3.3.0-beta`；GitHub Release 手动 `gh release create`，附件
+  `dist/SimpleIME-3.3.0-beta-Release.7z`，说明 `dist/release-notes-3.3.0-beta.md`。
