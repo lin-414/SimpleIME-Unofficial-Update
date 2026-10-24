@@ -370,6 +370,23 @@ constexpr DeclaredCountOwner kDeclaredCountOwners[] = {
     // 2026-10-12 实测：FUCK 的字段里打字时，栈上另一个模组（STB_Widgets）的菜单对探测回
     // kHandled，探测于是判成 GFx 投递，上屏文字进了我们自己的 ImeMenu，FUCK 永远收不到。
     { "fuck.dll", ImGuiHostChannel::EngineEvents },
+    // Quickslot.dll（v0.10.2，Skyrim 1.6.1170；github.com/opteron-x86/quickslot-hotkeys）：
+    // 装备编辑窗口自绘 Dear ImGui，虽然注册并压入自己的 IMenu（QuickslotEditor），但
+    // openEditor() 先调 AllowTextInput(true)、后入队 kShow（Game.cpp:1499-1500），压栈前的
+    // 若干帧里"计数为 1 且栈上无主菜单"与真正的泄漏无法区分；编辑器打开期间它也不会再认领
+    // （只在 closeEditor 里 AllowTextInput(false)），所以计数一旦被谁清零，整个窗口期间都
+    // 打不了字——2026-10-23 改动前实测：每次打开后 1 帧即被治愈器清零，enable / force-off
+    // 相隔 1 ms，语言栏连一帧都没渲染。
+    // 通道必须是引擎输入队列：它的字符输入来自引擎 InputEvent 钩子（Game.cpp:864 AsCharEvent
+    // -> Editor.cpp:136 AddInputCharacterUTF16），GFx 字符事件走不到它；而压栈前的探测会落到
+    // stb_widgets.dll 的菜单上（收下却不读的那种），正是必须绕开探测的情形。
+    // 2026-10-23 实机复验（6 次开合）：每次都是 Utils.cpp:654 'claimed by declared ImGui host
+    // quickslot.dll -> engine input queue delivery' 后接 532 'Declared ImGui host owns the
+    // text-entry count -> engine input queue delivery'，日志再无 'Text-entry count N survived
+    // with no menu to own it'，字段可正常输入中文——EngineEvents 即正确通道，不必改为 Scaleform。
+    // 已在 quickslot-hotkeys#3 建议作者在编辑器打开期间按 textEntryCount == 0 重新认领、并把
+    // kShow 排在认领之前；即便上游修好，这一行仍应保留——声明让治愈器不必再赌菜单何时压栈。
+    { "quickslot.dll", ImGuiHostChannel::EngineEvents },
 };
 
 //! 当前持有文本输入计数的声明宿主该走的通道；0 表示没有声明宿主认领（含计数为 0）。

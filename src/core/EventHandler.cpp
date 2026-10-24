@@ -291,9 +291,27 @@ void PollTextEntryCountConsistency()
     {
         return;
     }
+    // Stability grace: ShowMenu is queued — a menu that just called
+    // AllowTextInput(true) may not be pushed onto the stack for another frame
+    // or two. Only treat the state as leaked once the count has been stable
+    // (and no owner menu ever showed up) for a while.
+    //
+    // Declared BEFORE the counter guard below and reset while the counter is 0,
+    // because this poll stops sampling at that point: keeping the pair from the
+    // previous text session made the next one inherit its "already stable for
+    // minutes" verdict, so the grace below never armed and the healer fired in
+    // the very frame the field opened (Quickslot editor, in-game 2026-10-23: the
+    // enable and this force-off landed 1 ms apart and the language bar never
+    // rendered a single frame). A count is only a leak once it has survived THIS
+    // poll's own two-second window.
+    static std::uint8_t                          s_lastSeenCount = 0;
+    static std::chrono::steady_clock::time_point s_lastChange    = std::chrono::steady_clock::now();
+
     auto *controlMap = ControlMap::GetSingleton();
     if (controlMap == nullptr || !controlMap->HasTextEntry())
     {
+        s_lastSeenCount = 0;
+        s_lastChange    = std::chrono::steady_clock::now();
         return;
     }
     // The SKSE Menu Framework bridge holds a text-entry lease while its ImGui
@@ -310,13 +328,7 @@ void PollTextEntryCountConsistency()
     {
         return;
     }
-    // Stability grace: ShowMenu is queued — a menu that just called
-    // AllowTextInput(true) may not be pushed onto the stack for another frame
-    // or two. Only treat the state as leaked once the count has been stable
-    // (and no owner menu ever showed up) for a while.
-    static std::uint8_t                          s_lastSeenCount = 0;
-    static std::chrono::steady_clock::time_point s_lastChange    = std::chrono::steady_clock::now();
-    const auto                                   count           = controlMap->GetTextEntryCount();
+    const auto count = controlMap->GetTextEntryCount();
     if (count != s_lastSeenCount)
     {
         s_lastSeenCount = count;
