@@ -82,7 +82,7 @@ auto FormatConfigurationToToml(const Configuration &configuration) -> std::strin
 
     const Comments shortcutComment = {
         " 快捷键配置，格式: <key> 或 <modifier(s)> + <key>，多个部分用 '+' 分隔，忽略空格",
-        " <key>      : F1-F12, NumPad0-9, A-Z, 0-9 等 ImGui 支持的按键名",
+        " <key>      : F1-F12, keypad0-9, A-Z, 0-9 等 ImGui 支持的按键名",
         " <modifier> : ctrl, shift, alt, super (可组合)",
         R"( 示例: "F2", "ctrl + A", "ctrl + shift + alt + A")",
         " 注意: 不支持多个普通键组合 (如 A + B)，末尾不能为 '+'；单独的修饰键 (如 \"ctrl\") 也是非法的，非法配置将使用默认值",
@@ -416,6 +416,10 @@ auto SaveConfiguration(const std::filesystem::path &filePath, const Configuratio
             file.exceptions(std::ios::failbit | std::ios::badbit);
             file.open(filePath, std::ios::out | std::ios::trunc);
             file << tomlString;
+            // The direct write superseded the temp file; drop it so a rename
+            // that keeps failing cannot litter a .tmp next to every save.
+            std::error_code removeError;
+            std::filesystem::remove(tempPath, removeError);
         }
         logger::info("Configuration saved successfully to {}", filePath.generic_string());
         success = true;

@@ -269,6 +269,10 @@ auto ConvertConfigurationToSettings(const Configuration &config) -> Settings
     {
         settings.shortcut = shortCut.value();
     }
+    else if (!config.shortcut.empty())
+    {
+        logger::warn("Invalid shortcut \"{}\" in the configuration; using the default (F2).", config.shortcut);
+    }
 
     if (const auto levelOpt = Converter<spdlog::level::level_enum>::fromString(config.logging.level); levelOpt.has_value())
     {

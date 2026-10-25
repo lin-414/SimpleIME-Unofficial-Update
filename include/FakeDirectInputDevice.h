@@ -1,4 +1,4 @@
-﻿//
+//
 // Created by jamie on 2025/2/6.
 //
 
@@ -212,6 +212,19 @@ public:
 private:
     IDirectInputDevice8A *m_realDevice;
 };
+
+/// Registered window message that marshals cooperative-level changes from the
+/// IME thread to the game thread. The device singleton is created, used and
+/// destroyed on the game thread only (IDirectInputDevice8 is single-threaded
+/// COM), so other threads must not touch it — senders use SendMessageTimeoutW
+/// with wParam != 0 = restore / 0 = unlock and read SUCCEEDED() from the
+/// LRESULT. RegisterWindowMessageW maps this string to one id per process, so
+/// sender and receiver always agree.
+inline UINT DirectInputCoopLevelMessage()
+{
+    static const UINT id = RegisterWindowMessageW(L"SimpleIME.DirectInputCoopLevel.v1");
+    return id;
+}
 
 class FakeDirectInput : public IDirectInput8A
 {

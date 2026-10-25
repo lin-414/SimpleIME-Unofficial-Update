@@ -140,6 +140,15 @@ public:
     /// holds input (ShouldRoute); everything else keeps the normal layering.
     static auto SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, std::uint32_t flags) -> long;
 
+    /// The real IDXGISwapChain::ResizeBuffers. A resize reuses the swapchain
+    /// object (the RTV cache's owner check never fires), so this drops the
+    /// cached backbuffer view before the original runs — both to keep DXGI
+    /// from rejecting the resize while our RTV pins the buffer and to have
+    /// the next present re-derive a view over the new buffers.
+    static auto SwapChainResizeBuffersHook(
+        void *swapChain, std::uint32_t bufferCount, std::uint32_t width, std::uint32_t height, std::uint32_t newFormat,
+        std::uint32_t swapChainFlags) -> long;
+
     constexpr auto GetGameHWND() const -> HWND { return m_hWnd; }
 
     constexpr auto GetImeWnd() -> ImeWnd & { return m_imeWnd; }

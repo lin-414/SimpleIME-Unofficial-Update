@@ -8,6 +8,7 @@
 #include "configs/settings_converter.h"
 #include "core/EventHandler.h"
 #include "core/State.h"
+#include "FakeDirectInputDevice.h"
 #include "hook.h"
 #include "hooks/HdrOverlay.h"
 #include "hooks/InputDispatchHook.h"
@@ -103,6 +104,8 @@ std::unique_ptr<Hooks::D3DPresentHookData> g_PresentHook = nullptr;
 // The real IDXGISwapChain::Present detour (see ImeApp::SwapChainPresentHook).
 // The FunctionHook aliases g_realSwapChainPresent, which must outlive it.
 Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t)> *g_swapChainPresentHook     = nullptr;
+Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t)>
+    *g_swapChainResizeBuffersHook = nullptr;
 void                   *g_realSwapChainPresent       = nullptr;
 ID3D11DeviceContext    *g_swapChainContext           = nullptr;
 ID3D11RenderTargetView *g_swapChainBackBufferRtv     = nullptr;
@@ -111,11 +114,12 @@ void                   *g_swapChainBackBufferOwner   = nullptr; ///< swapchain t
 
 /// The backbuffer view the present-hook overlay draws into. Re-derived from the
 /// live swapchain whenever the cached one is missing or belongs to a previous
-/// swapchain: the game rebuilds the swapchain on resolution/window changes
-/// (ResizeBuffers, borderless-upscale recreation), which leaves every view
-/// created earlier pointing at a dead buffer — draws into it succeed and are
-/// never seen. Called from D3DInit (forced; device resets re-run it) and the
-/// present hook (render thread).
+/// swapchain: the game rebuilds the swapchain on window changes, which leaves
+/// every view created earlier pointing at a dead buffer — draws into it succeed
+/// and are never seen. A same-object ResizeBuffers keeps the pointer and is
+/// instead handled by the ResizeBuffers hook dropping the cache. Called from
+/// D3DInit (forced; device resets re-run it) and the present hook (render
+/// thread).
 auto EnsureSwapChainBackBufferRtv(void *swapChain, bool force) -> ID3D11RenderTargetView *
 {
     if (force && g_swapChainBackBufferRtv != nullptr)
@@ -410,7 +414,7 @@ void ImeApp::Uninitialize()
         logger::warn("IME thread teardown not confirmed; skipping ImGui destruction to avoid racing it.");
     }
     Events::UnInstallEventSinks(); // should safety
-    Hooks::WinHooks::Uninstall();  // should move to dll_detach, but it's safe.
+    Hooks::WinHooks::Uninstall();  // disarms the wrapper; the trampoline stays for the process lifetime
     Hooks::MeridianBridge::Uninstall();
     Hooks::PrismaBridge::Uninstall();
     Hooks::SkseMenuFrameworkBridge::Uninstall();
@@ -537,6 +541,25 @@ void ImeApp::OnD3DInit()
                           reinterpret_cast<std::uintptr_t>(g_realSwapChainPresent));
         }
     }
+    // IDXGISwapChain::ResizeBuffers = vtable slot 13 (Present 8, GetBuffer 9,
+    // Set/GetFullscreenState 10-11, GetDesc 12). A resize reuses the swapchain
+    // object, so the RTV cache's owner-pointer check never sees it; the hook
+    // drops the cache so the next present re-derives it.
+    if (g_swapChainResizeBuffersHook == nullptr)
+    {
+        void *realResizeBuffers = reinterpret_cast<void **>(*reinterpret_cast<void **>(pSwapChain))[13];
+        g_swapChainResizeBuffersHook =
+            new Hooks::FunctionHook<long(void *, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t)>(
+                realResizeBuffers, &ImeApp::SwapChainResizeBuffersHook);
+        if (g_swapChainResizeBuffersHook->Detoured())
+        {
+            logger::info("Swapchain ResizeBuffers hook installed (refreshes the backbuffer view across resolution changes)");
+        }
+        else
+        {
+            logger::error("Swapchain ResizeBuffers hook attach failed at {:#x}", reinterpret_cast<std::uintptr_t>(realResizeBuffers));
+        }
+    }
 
     Start(renderData);
 
@@ -657,8 +680,13 @@ void ImeApp::Start(const RE::BSGraphics::RendererData &renderData)
     // D3DInit's catch flips to INITIALIZE_FAILED and runs Shutdown(). Swallowing
     // it here used to leave null m_textService/m_inputMethodManager behind with
     // the state still flipped to INITIALIZED — a guaranteed first-frame crash.
-    initialized.get();
+    // Detach BEFORE the get(): get() rethrows the worker's exception, and a
+    // joinable std::thread destroyed during that unwinding terminates the
+    // process — the exact crash this rethrow path was built to survive. After
+    // wait_for reported ready the worker has left its init phase, so the early
+    // detach changes nothing on the success path.
     childWndThread.detach();
+    initialized.get();
 }
 
 // FIXME: is safe?
@@ -861,6 +889,24 @@ void ImeApp::PresentHook(std::uint32_t a_unk)
     }
 }
 
+auto ImeApp::SwapChainResizeBuffersHook(
+    void *swapChain, std::uint32_t bufferCount, std::uint32_t width, std::uint32_t height, std::uint32_t newFormat,
+    std::uint32_t swapChainFlags) -> long
+{
+    // DXGI requires every backbuffer reference released before ResizeBuffers
+    // runs; our cached RTV pins the current one, so the game's own resize can
+    // fail with DXGI_ERROR_INVALID_CALL. The next present re-derives the view
+    // (EnsureSwapChainBackBufferRtv rebuilds on the null cache), which also
+    // covers the stale-view case after a successful resize.
+    if (g_swapChainBackBufferRtv != nullptr)
+    {
+        g_swapChainBackBufferRtv->Release();
+        g_swapChainBackBufferRtv   = nullptr;
+        g_swapChainBackBufferOwner = nullptr;
+    }
+    return (*g_swapChainResizeBuffersHook)(swapChain, bufferCount, width, height, newFormat, swapChainFlags);
+}
+
 auto ImeApp::SwapChainPresentHook(void *swapChain, std::uint32_t syncInterval, std::uint32_t flags) -> long
 {
     // Layering, not frame-driving: during a Prisma takeover (PMCM search box,
@@ -919,6 +965,19 @@ auto ImeApp::MainWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> 
         prismaAssociation != 0 && uMsg == prismaAssociation)
     {
         Hooks::PrismaBridge::OnAssociationMessage(wParam != 0);
+    }
+    // The IME thread marshals DirectInput cooperative-level changes here so
+    // the DI wrapper singleton is only ever touched from this (game) thread.
+    // wParam != 0 = restore, 0 = unlock; the return value is SUCCEEDED().
+    if (uMsg == Hooks::DirectInputCoopLevelMessage())
+    {
+        if (auto *keyboard = Hooks::FakeDirectInputDevice::GetInstance(); keyboard != nullptr)
+        {
+            const HRESULT hr = wParam != 0 ? keyboard->TryRestoreCooperativeLevel(hWnd) : keyboard->TryUnlockCooperativeLevel(hWnd);
+            return SUCCEEDED(hr);
+        }
+        logger::error("DirectInput device is not initialized; cooperative-level request dropped.");
+        return FALSE;
     }
     switch (uMsg)
     {

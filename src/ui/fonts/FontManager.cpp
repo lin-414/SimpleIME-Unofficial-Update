@@ -159,7 +159,11 @@ auto FindInstalledFonts() -> std::vector<FontInfo>
         BOOL                            exists = FALSE;
         ComPtr<IDWriteLocalizedStrings> localizedStrings;
 
-        if (SUCCEEDED(fontSet->GetPropertyValues(idx, DWRITE_FONT_PROPERTY_ID_FULL_NAME, &exists, &localizedStrings)))
+        // DWrite reports S_OK with exists == FALSE and a null strings object
+        // when this font carries no FULL_NAME property; GetLocalizedString
+        // would dereference the null pointer.
+        if (SUCCEEDED(fontSet->GetPropertyValues(idx, DWRITE_FONT_PROPERTY_ID_FULL_NAME, &exists, &localizedStrings)) &&
+            exists != FALSE && localizedStrings != nullptr)
         {
             std::string fontFullName;
             GetLocalizedString(localizedStrings.Get(), fontFullName);
@@ -236,7 +240,10 @@ auto GetFirstFontFilePathInFamily(std::wstring_view familyName) -> std::wstring
     {
         UINT32 index  = 0;
         BOOL   exists = FALSE;
-        if (SUCCEEDED(fontCollection->FindFamilyName(familyName.data(), &index, &exists)) && exists != FALSE)
+        // FindFamilyName needs a null-terminated name; familyName is a view
+        // whose terminator is not guaranteed.
+        const std::wstring family(familyName);
+        if (SUCCEEDED(fontCollection->FindFamilyName(family.c_str(), &index, &exists)) && exists != FALSE)
         {
             ComPtr<IDWriteFontFamily> fontFamily;
             if (SUCCEEDED(fontCollection->GetFontFamily(index, &fontFamily)))

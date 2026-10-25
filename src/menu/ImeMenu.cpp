@@ -175,6 +175,7 @@ auto Paste() -> bool
         return false;
     }
 
+    bool sent = false;
     if (HANDLE handle = GetClipboardData(CF_UNICODETEXT); handle != nullptr)
     {
         if (auto *const textData = static_cast<LPTSTR>(GlobalLock(handle)); textData != nullptr)
@@ -182,10 +183,14 @@ auto Paste() -> bool
             Skyrim::SendUiString(std::wstring(textData));
 
             GlobalUnlock(handle);
+            sent = true;
         }
     }
     CloseClipboard();
-    return true;
+    // Report what actually happened: claiming success after a failed read
+    // would swallow the paste key with nothing injected, while false lets the
+    // caller pass the key on to the game's native paste path.
+    return sent;
 }
 
 auto OnMouseEvent(RE::GFxEvent *event, const bool down) -> RE::UI_MESSAGE_RESULTS

@@ -222,13 +222,34 @@ void SendUiString(std::wstring_view wstringView, std::size_t eraseLetters)
         return;
     }
 
-    for (const wchar_t c : wstringView)
+    // 代理对在投递前重组：GFxCharEvent 的 wcharCode 是 32 位，直接送整个
+    // 码点——增补平面字符（emoji、扩展 B 汉字）由两个码元组成，拆开投递
+    // 会把孤立代理事件发给宿主。孤立代理（半个字符）是非法码点，丢弃。
+    for (std::size_t i = 0; i < wstringView.size(); ++i)
     {
-        if (ShouldStripCommittedChar(c))
+        const wchar_t first = wstringView[i];
+        if (ShouldStripCommittedChar(first))
         {
             continue;
         }
-        const auto wcharCode = static_cast<uint32_t>(c);
+        auto wcharCode = static_cast<uint32_t>(first);
+        if (first >= 0xD800 && first <= 0xDBFF)
+        {
+            if (i + 1 < wstringView.size() && wstringView[i + 1] >= 0xDC00 && wstringView[i + 1] <= 0xDFFF)
+            {
+                wcharCode = 0x10000U + ((static_cast<uint32_t>(first) - 0xD800U) << 10U) +
+                            (static_cast<uint32_t>(wstringView[i + 1]) - 0xDC00U);
+                ++i;
+            }
+            else
+            {
+                continue;
+            }
+        }
+        else if (first >= 0xDC00 && first <= 0xDFFF)
+        {
+            continue;
+        }
         auto *scaleformData = scaleformDataCreator->Create();
         if (scaleformData != nullptr)
         {
@@ -829,18 +850,36 @@ void DrainPendingCommittedText()
     std::size_t pushed   = 0;
     if (eraseFitsThisFrame)
     {
-        for (const wchar_t c : item.text)
+        // 代理对重组（同上）：成对字符算一个事件、两个码元，批界永远不落在
+        // 一对中间——一对从 consumed==4 起步会把 consumed 顶到 6，但投出的
+        // 事件最多仍是 5 条（上限保护的是事件环容量，成对字符不可分）。
+        // 孤立代理是非法码点，丢弃。consumed 保持"扫过的码元数"语义，尾部
+        // 的 erase(0, consumed) 靠它切片。
+        while (consumed < 5 && consumed < item.text.size())
         {
-            if (consumed >= 5)
-            {
-                break;
-            }
+            const wchar_t first = item.text[consumed];
             ++consumed;
-            if (ShouldStripCommittedChar(c))
+            if (ShouldStripCommittedChar(first))
             {
                 continue;
             }
-            queue->AddCharEvent(static_cast<std::uint32_t>(c));
+            if (first >= 0xD800 && first <= 0xDBFF)
+            {
+                if (consumed < item.text.size() && item.text[consumed] >= 0xDC00 && item.text[consumed] <= 0xDFFF)
+                {
+                    const auto codePoint = 0x10000U + ((static_cast<std::uint32_t>(first) - 0xD800U) << 10U) +
+                                           (static_cast<std::uint32_t>(item.text[consumed]) - 0xDC00U);
+                    ++consumed;
+                    queue->AddCharEvent(codePoint);
+                    ++pushed;
+                }
+                continue;
+            }
+            if (first >= 0xDC00 && first <= 0xDFFF)
+            {
+                continue;
+            }
+            queue->AddCharEvent(static_cast<std::uint32_t>(first));
             ++pushed;
         }
     }

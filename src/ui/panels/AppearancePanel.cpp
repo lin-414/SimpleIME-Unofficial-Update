@@ -27,6 +27,7 @@
 #include <array>
 #include <cstring>
 #include <cmath>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -567,7 +568,10 @@ void AppearancePanel::DrawThemeRow(Settings &settings)
         if (ImGui::ColorButton("##SourceColor", ImGuiEx::M3::ArgbToImVec4(schemeConfig.sourceColor), colorButtonFlags, {swatchSize, swatchSize}))
         {
             seedBuilderState();
-            ImGui::OpenPopup("ThemeBuilder");
+            // The dialog opens under a translated title; the ### suffix pins
+            // the popup id so a translation without the suffix can't split
+            // open-target and BeginPopupModal-target ids.
+            ImGui::OpenPopup((std::string{Translate("Settings.Appearance.ThemeBuilder")} + "###ThemeBuilder").c_str());
         }
 
         UI::Panels::RowTitle(row, Translate("Settings.Appearance.Theme"), swatchSize + m3Styles.GetPixels(M3Spec::dp<16>()));
@@ -576,7 +580,10 @@ void AppearancePanel::DrawThemeRow(Settings &settings)
         if (ImGuiEx::M3::XSmallButton(customizeLabel, ICON_PALETTE))
         {
             seedBuilderState();
-            ImGui::OpenPopup("ThemeBuilder");
+            // The dialog opens under a translated title; the ### suffix pins
+            // the popup id so a translation without the suffix can't split
+            // open-target and BeginPopupModal-target ids.
+            ImGui::OpenPopup((std::string{Translate("Settings.Appearance.ThemeBuilder")} + "###ThemeBuilder").c_str());
         }
 
         if (UI::Panels::RowTrailingTextLink(row, "##ResetTheme", resetLabel))

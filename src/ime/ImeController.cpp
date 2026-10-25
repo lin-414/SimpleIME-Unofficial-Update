@@ -367,20 +367,26 @@ auto ImeController::SetKeyboardCooperativeLevel(const bool restore) const -> boo
         logger::debug("{}: SetForegroundWindow returned FALSE; continuing anyway", what);
     }
     logger::debug(restore ? "Restore keyboard: EXCLUSIVE + FOREGROUND + NOWINKEY." : "Unlock keyboard: NONEXCLUSIVE + BACKGROUND.");
-    HRESULT hr = E_FAIL;
-    if (auto *keyboard = Hooks::FakeDirectInputDevice::GetInstance(); keyboard != nullptr)
+    // The DI device is created and destroyed on the game thread and COM
+    // device interfaces are single-threaded — calling it here (IME thread)
+    // races the wrapper's delete and the device's own internals. Marshal the
+    // hop through the game window's WndProc instead: MainWndProc runs the
+    // cooperative-level change on the owning thread and returns SUCCEEDED()
+    // as the LRESULT. Abort on a hung game thread instead of blocking the IME
+    // thread indefinitely.
+    DWORD_PTR callResult = 0;
+    if (SendMessageTimeoutW(
+            m_gameHwnd, Hooks::DirectInputCoopLevelMessage(), restore ? 1 : 0, 0, SMTO_ABORTIFHUNG, 2000, &callResult) == 0)
     {
-        hr = restore ? keyboard->TryRestoreCooperativeLevel(m_gameHwnd) : keyboard->TryUnlockCooperativeLevel(m_gameHwnd);
+        logger::error("{}: marshaling the cooperative-level change to the game thread failed (GetLastError {}).", what, GetLastError());
+        return false;
     }
-    else
-    {
-        logger::error("{}: FakeDirectInputDevice is not initialized.", what);
-    }
-    if (FAILED(hr))
+    const bool succeeded = callResult != 0;
+    if (!succeeded)
     {
         logger::error(restore ? "Failed lock keyboard." : "Failed unlock keyboard.");
     }
-    return SUCCEEDED(hr);
+    return succeeded;
 }
 
 void ImeController::AddTask(TaskQueue::Task &&task) const
