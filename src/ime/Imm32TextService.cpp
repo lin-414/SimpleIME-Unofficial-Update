@@ -547,9 +547,16 @@ void Imm32TextService::DoUpdateCandidateList(LPCANDIDATELIST lpCandList)
     // page-relative (dwPageStart..dwPageStart+dwPageSize). Subtract the page
     // start — clamped, mirroring the TSF path (TextStore::DoUpdateUIElement) —
     // or the highlight would be misplaced / out of range from page 2 on.
-    m_candidateUi.SetSelection(lpCandList->dwSelection > lpCandList->dwPageStart
-                                   ? static_cast<DWORD>(lpCandList->dwSelection - lpCandList->dwPageStart)
-                                   : 0);
+    DWORD dwRelativeSelection = lpCandList->dwSelection > lpCandList->dwPageStart
+                                    ? static_cast<DWORD>(lpCandList->dwSelection - lpCandList->dwPageStart)
+                                    : 0;
+    // Upper clamp mirrors the TSF path: a selection at/after the page end
+    // points outside the current (possibly short final) page.
+    if (lpCandList->dwPageSize > 0 && dwRelativeSelection >= lpCandList->dwPageSize)
+    {
+        dwRelativeSelection = lpCandList->dwPageSize - 1;
+    }
+    m_candidateUi.SetSelection(dwRelativeSelection);
     // Imm32 always returns the WHOLE candidate table (dwCount entries) plus a
     // window into the current page. Remember the page geometry: the UI renders
     // a "‹ 1/5 ›" control from it and the commit path maps a page-relative

@@ -560,6 +560,11 @@ void TextService::AbortIme()
     // code stops treating the game as "still inputting" (which would otherwise
     // swallow all keyboard input).
     State::GetInstance().ClearComposing();
+    // Same publish as OnEndComposition's: TerminateComposition only reaches
+    // OnEndComposition when a composition was active, and the candidateUi
+    // cleared above would otherwise stay unreported — the render thread keeps
+    // the stale list and the window survives the abort.
+    MarkDirty(DirtyFlag::Composition | DirtyFlag::CandidateList);
 }
 
 auto TextService::ToogleKeyboard(bool open) -> void
@@ -625,7 +630,7 @@ auto TextService::SetSessionImeEnabled(const bool enabled) -> bool
         // Session start: freeze the target and arm the one-shot re-assert for a
         // TIP that overwrites its own mode right after this write.
         m_restoreTargetMode  = conversionMode;
-        m_reassertDeadlineMs = static_cast<ULONG>(GetTickCount64()) + MODE_REASSERT_WINDOW_MS;
+        m_reassertDeadlineMs = GetTickCount64() + MODE_REASSERT_WINDOW_MS;
         m_reassertArmed      = true;
     }
     else if (!m_hasSavedSessionConversionMode)

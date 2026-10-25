@@ -506,7 +506,9 @@ private:
     /// compartment right after our restore, and that write must not decide the
     /// session (see MaybeReassertRememberedMode).
     ULONG                     m_restoreTargetMode                = 0;
-    ULONG                     m_reassertDeadlineMs               = 0;
+    // 64-bit: a 32-bit deadline wraps at ~49.7 days of uptime and silently
+    // disarms the one-shot mode re-assert.
+    ULONGLONG                m_reassertDeadlineMs               = 0;
     bool                      m_reassertArmed                    = false;
     /// Last value published to the context + global compartments by
     /// MirrorConversionMode (and by SetSessionImeEnabled): the sinks fire on our

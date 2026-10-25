@@ -432,9 +432,20 @@ auto TextStore::RequestLock(DWORD dwLockFlags, HRESULT *phrSession) -> HRESULT
     // Case 1 is handled by OnEndEdit. However, selection-only changes (TF_CLUIE_SELECTION)
     // do NOT trigger OnEndEdit because the composition text itself did not change.
     // This post-lock check is the only place that catches that case.
-    if (const auto flags = std::exchange(m_pendingChangeFlags, DirtyFlag{}); flags != DirtyFlag{} && m_currentUiElementId != TF_INVALID_UIELEMENTID)
+    if (const auto flags = std::exchange(m_pendingChangeFlags, DirtyFlag{}); flags != DirtyFlag{})
     {
-        m_pTextService->MarkDirty(flags);
+        // The element-id gate applies to the selection bit only: a pending
+        // selection is meaningless once EndUIElement reset the id. Everything
+        // else must still publish — notably the candidate-list close queued
+        // after the element ended, which the old blanket gate dropped; the
+        // render thread then kept its last non-empty copy and the candidate
+        // window outlived the composition.
+        const auto publishable =
+            m_currentUiElementId != TF_INVALID_UIELEMENTID ? flags : (flags & (DirtyFlag::CandidateList | DirtyFlag::Composition));
+        if (publishable != DirtyFlag{})
+        {
+            m_pTextService->MarkDirty(publishable);
+        }
     }
     return S_OK;
 }
@@ -1115,9 +1126,15 @@ auto TextStore::OnEndComposition(ITfCompositionView * /*pComposition*/) -> HRESU
         if (auto &candidateUi = m_pTextService->GetCandidateUiWrite(); !candidateUi.empty())
         {
             candidateUi.Close();
-            m_pendingChangeFlags |= DirtyFlag::CandidateList;
         }
     }
+    // Publish directly instead of queueing pending flags: EndUIElement has
+    // usually reset the element id before this runs (the pending path is
+    // gated on it), and without a publish the render thread keeps its last
+    // non-empty copy — the candidate window outlived the composition.
+    // MarkDirty is an atomic flag, safe inside the document lock this sink
+    // fires under.
+    m_pTextService->MarkDirty(DirtyFlag::Composition | DirtyFlag::CandidateList);
     return S_OK;
 }
 
@@ -1377,20 +1394,46 @@ auto TextStore::DoUpdateUIElement() -> HRESULT
         // only IME-thread state.
         //
         // NOTE: the candidateUi mutations are inside the lock, but every
-        // m_currentCandidateUi COM call (GetString below, and BOTH Abort() calls)
-        // must stay OUTSIDE it: Abort() makes the TIP dismiss the element, which
-        // can synchronously re-enter UpdateUIElement → GetSinkWriteLock on this
-        // same non-recursive mutex. Hence the abortAfter deferral below.
-        bool             abortCurrentUi = false;
-        HRESULT          hresult        = S_OK;
+        // m_currentCandidateUi COM call (the GetString sweep above, and BOTH
+        // Abort() calls) must stay OUTSIDE it: Abort() makes the TIP dismiss
+        // the element, which can synchronously re-enter UpdateUIElement →
+        // GetSinkWriteLock on this same non-recursive mutex. Hence the
+        // abortAfter deferral below.
+        bool    abortCurrentUi = false;
+        HRESULT hresult        = S_OK;
+        // Page-relative selection, clamped on BOTH ends: below the page start
+        // the unsigned subtraction would underflow into a huge value no
+        // candidate matches; at/after the page end points outside the current
+        // page (a short final page can be smaller than the page size).
+        const DWORD pageSize          = info.pageEnd > info.pageStart ? info.pageEnd - info.pageStart : 0;
+        DWORD       relativeSelection = selection > info.pageStart ? selection - info.pageStart : 0;
+        if (pageSize > 0 && relativeSelection >= pageSize)
+        {
+            relativeSelection = pageSize - 1;
+        }
+        // Read the page's strings BEFORE taking the sink lock — per the NOTE
+        // above, every m_currentCandidateUi COM call must stay outside it.
+        std::vector<std::string> pageCandidates;
+        pageCandidates.reserve(pageSize);
+        for (UINT index = info.pageStart, j = 0; index < info.pageEnd; ++j, ++index)
+        {
+            CComBSTR candidateStr;
+            if (FAILED(m_currentCandidateUi->GetString(index, &candidateStr)) || candidateStr == nullptr)
+            {
+                // Abort AFTER releasing the lock — see the NOTE above.
+                abortCurrentUi = true;
+                hresult        = E_FAIL;
+                break;
+            }
+
+            auto fmt = std::format(L"{}. ", j + 1);
+            fmt.append(candidateStr);
+            pageCandidates.push_back(WCharUtils::ToString(fmt));
+        }
         {
             auto lock         = m_pTextService->GetSinkWriteLock(m_fLocked != FALSE);
             auto &candidateUi = m_pTextService->GetCandidateUiWrite();
-            // Selection is a global candidate index; the UI list is page-relative.
-            // Clamp instead of subtracting: a TIP reporting a selection before the
-            // page start would otherwise underflow the unsigned subtraction into a
-            // huge value that no candidate can match.
-            candidateUi.SetSelection(selection > info.pageStart ? selection - info.pageStart : 0);
+            candidateUi.SetSelection(relativeSelection);
             // The empty() guard: a selection-only update must not keep a never-filled
             // list empty — fall through to the full refill instead.
             if (updateFlags == TF_CLUIE_SELECTION && candidateUi.FirstIndex() == info.pageStart && !candidateUi.empty())
@@ -1436,21 +1479,16 @@ auto TextStore::DoUpdateUIElement() -> HRESULT
             // the TIP's own page size (the last page may be shorter).
             candidateUi.SetPageInfo(info.pageEnd - info.pageStart, info.currentPage, info.pageCount, info.totalCount);
             candidateUi.Reserve(info.pageEnd - info.pageStart);
-            for (UINT index = info.pageStart, j = 0; index < info.pageEnd; ++j, ++index)
+            for (std::string &candidate : pageCandidates)
             {
-                CComBSTR candidateStr;
-                if (FAILED(m_currentCandidateUi->GetString(index, &candidateStr)) || candidateStr == nullptr)
-                {
-                    // Abort AFTER releasing the lock — see the NOTE above.
-                    abortCurrentUi = true;
-                    hresult        = E_FAIL;
-                    break;
-                }
-
-                auto fmt = std::format(L"{}. ", j + 1);
-                fmt.append(candidateStr);
-                candidateUi.PushBack(WCharUtils::ToString(fmt));
+                candidateUi.PushBack(std::move(candidate));
             }
+            // Close() above reset the selection and a refill must not leave it
+            // at 0: a full refresh (page turn, new composition page) would snap
+            // the highlight back to the first entry while the TIP's real
+            // selection moved on, committing the wrong candidate on Enter. The
+            // Imm32 path fills then selects for the same reason.
+            candidateUi.SetSelection(relativeSelection);
         }
         if (abortCurrentUi)
         {
