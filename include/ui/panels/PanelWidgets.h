@@ -15,6 +15,7 @@
 #include "imguiex/m3/spec/text_field.h"
 #include "imguiex/m3/spec/typography.h"
 #include "icons.h"
+#include "utils/AtomicBool.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -717,6 +718,23 @@ inline bool SettingsToggleRow(
         value = !value;
     }
     return row.pressed;
+}
+
+//! AtomicBool twin of the overload above: the row mutates a snapshot and the
+//! cell is written back in one store, so panels can bind a cross-thread
+//! Settings field directly.
+inline bool SettingsToggleRow(
+    const char            *strId,
+    const std::string_view title,
+    const std::string_view supporting,
+    AtomicBool            &value,
+    const float            textMeasureCap = 0.0F
+)
+{
+    bool snapshot = value;
+    const bool pressed = SettingsToggleRow(strId, title, supporting, snapshot, textMeasureCap);
+    value = snapshot;
+    return pressed;
 }
 
 //!==========================================================================

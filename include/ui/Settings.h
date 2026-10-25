@@ -5,6 +5,7 @@
 
 #include "imgui.h"
 #include "imguiex/m3/colors.h"
+#include "utils/AtomicBool.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -40,12 +41,12 @@ struct Settings
     //!
     //! Thread ownership: the request* flags below cross the IME thread → render
     //! thread boundary (ImeManager runs on the IME thread, ImeOverlay consumes
-    //! them during the ImGui frame), so they are atomics. Fields commented
-    //! "cross-thread read" below are written on the render thread (ImGui
-    //! checkboxes) and read on the IME thread: they stay plain bools ON PURPOSE
-    //! — on x86 an aligned bool cannot tear, and the readers tolerate a
-    //! one-frame-stale value the same way State::m_conversionMode does. Don't
-    //! add new cross-thread fields without at least this guarantee.
+    //! them during the ImGui frame), so they are atomics. Fields typed
+    //! AtomicBool below are additionally written at runtime on the render
+    //! thread (ImGui checkboxes) and read off it (IME/game thread) — the
+    //! wrapper keeps the reads/writes well-defined without giving up the
+    //! aggregate. A new runtime cross-thread bool must be an AtomicBool; a
+    //! plain bool must be owned by one thread.
     struct RuntimeData
     {
         bool requestCloseTopWindow = false; ///< Render thread only: request to close the current top-level UI window on the next frame.
@@ -106,7 +107,7 @@ struct Settings
     //! Shortcut: support combination of Ctrl, Shift, Alt and a normal key. e.g. "ctrl+shift+f1", "alt+f2", "f3"...
     //! The named key is can't combine by bitwise operation, g.g. "F2 | A" will become to "F3".
     ImGuiKeyChord shortcut;
-    bool          enableMod                     = true; ///< modify on UI thread every frame.
+    AtomicBool    enableMod                     = true; ///< written by the render thread (settings UI); read on the game thread (ApplySettings).
     bool          enableTsf                     = true;
     bool          fixInconsistentTextEntryCount = true; ///< modify in ToolWindow(ImeMenu). no need sync because ImeMenu is the topmost menu;
     /// Read once during plugin load (see plugin.cpp): declares per-monitor-v2
@@ -116,12 +117,12 @@ struct Settings
     /// Mirrors Configuration::autoToggleKeyboard and the shipped SimpleIME.toml.
     /// The TOML value wins on load, so this default only applies when the config
     /// is missing or unreadable — it must not disagree with them.
-    bool          autoToggleKeyboard            = false;
+    AtomicBool    autoToggleKeyboard            = false; ///< render-thread write; read on the IME thread (ImeManager).
     /// Mirrors Configuration::switchEnglishLayoutOnDisable. False keeps the
     /// user's input method selected when the IME is disabled (only its 中/英
     /// state moves), so the session input locale — and the taskbar's ENG
     /// indicator — is never touched.
-    bool          switchEnglishLayoutOnDisable  = false;
+    AtomicBool    switchEnglishLayoutOnDisable  = false; ///< written at config load; read on the IME and game threads.
     /// Mirrors Configuration::defaultInputMethod: the input method to select on
     /// every game start and every IME enable. Owned by the render thread only —
     /// the IME thread keeps its own copy (InputMethodManager::m_configuredProfile)
@@ -150,35 +151,35 @@ struct Settings
         std::string               language;
         float                     zoom; ///< modify in runtime by AppearancePanel; read once on Mod launch by ImeApp;
         int                       errorDisplayDuration;
-        bool                      verticalCandidateList; ///< modify/read in runtime by UI thread.
-        bool                      autoToggleLanguageBar; ///< cross-thread read: written on the render thread (panel), read on the IME thread (ImeManager) — see the ownership note above.
+        AtomicBool                verticalCandidateList; ///< render-thread write; read by ImeWindow (render) and the Meridian bridge (CEF thread).
+        AtomicBool                autoToggleLanguageBar; ///< render-thread write; read on the IME thread (ImeManager).
     } appearance;
 
     struct Input
     {
-        bool                  enableUnicodePaste;
-        bool                  keepImeOpen; ///< cross-thread read: written on the render thread (panel), read on the IME thread (ImeController) — see the ownership note above.
+        AtomicBool            enableUnicodePaste; ///< render-thread write; read on the game thread (ImeMenu paste).
+        AtomicBool            keepImeOpen; ///< render-thread write; read on the IME thread (ImeController/ImeManager).
         WindowPosUpdatePolicy posUpdatePolicy;
         /// Read once at bridge install time (game thread, SKSE messaging); the
         /// bridges re-publish the decision through their own atomics.
-        bool                  meridianSupport;
-        bool                  prismaAvoidance;
-        bool                  skseMenuFrameworkSupport;
+        AtomicBool            meridianSupport; ///< render-thread write; read on the IME thread (ShouldKeepImeOpen) and by the bridges.
+        AtomicBool            prismaAvoidance; ///< render-thread write; read on the IME thread (ImeManager) and PrismaBridge.
+        AtomicBool            skseMenuFrameworkSupport; ///< render-thread write; read by the SKSE Menu Framework bridge sync.
         /// Read by the commit routing on the IME thread; written only at config
         /// load. Gates the engine-input-queue delivery used for mod menus that
         /// draw with a private Dear ImGui context (no Scaleform field to feed).
-        bool                  imguiSurfaceInput;
+        AtomicBool            imguiSurfaceInput;
         /// Applied by ImeMenu::PostDisplay (game thread) every frame: the pause is
         /// held only while the settings window is on screen, so a flip in the panel
         /// is live. Yields while a mod surface owns the keyboard — see
         /// ToolWindowMenu::SyncSettingsWindowPause.
-        bool                  pauseGameWhileSettingsOpen;
+        AtomicBool            pauseGameWhileSettingsOpen;
         /// Mute the engine's input stream while a text entry owns the keyboard
         /// (BSInputDeviceManager::PollInputDevices skipped → no InputEvent, so
         /// other plugins' hotkeys cannot fire mid-typing). Read on the game
         /// thread by the input hook every frame; written only by the settings
         /// UI/config load. Aligned bool, same no-tear tolerance as keepImeOpen.
-        bool                  suppressInputWhileTyping;
+        AtomicBool            suppressInputWhileTyping;
         /// Runtime cache: the last in-game observed native (中) conversion
         /// state. Stamped from State on every config save (game/render thread,
         /// aligned bool — same no-tear tolerance doctrine as above) and seeded

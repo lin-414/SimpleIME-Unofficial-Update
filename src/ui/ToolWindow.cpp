@@ -550,7 +550,7 @@ auto BridgeStatusCaption(const bool configOn, const Hooks::SupportState state) -
 //! on hover (the Meridian row folds two backends into one state).
 void DrawCompatibilityRow(
     const char                *strId,
-    bool                      &value,
+    AtomicBool                &value,
     const std::string_view     title,
     const std::string_view     supporting,
     const Hooks::SupportState  state,
@@ -558,7 +558,9 @@ void DrawCompatibilityRow(
 )
 {
     auto &m3Styles = ImGuiEx::M3::Context::GetM3Styles();
-    const auto [caption, captionColor] = BridgeStatusCaption(value, state);
+    // Snapshot: the row mutates a local, the cell is written back in one store.
+    bool configOn = value;
+    const auto [caption, captionColor] = BridgeStatusCaption(configOn, state);
     const bool warned = !detailTooltip.empty();
     const auto captionTone = warned ? M3Spec::ColorRole::error : captionColor;
 
@@ -570,13 +572,14 @@ void DrawCompatibilityRow(
         Panels::RowTitle(row);
         Panels::RowSupporting(row, supporting);
         Panels::RowTrailingText(row, caption, captionTone, Panels::SwitchReserve());
-        Panels::RowTrailingSwitch(row, value);
+        Panels::RowTrailingSwitch(row, configOn);
         Panels::EndSettingsRow(row);
     }
     if (row.pressed)
     {
-        value = !value;
+        configOn = !configOn;
     }
+    value = configOn;
     if (warned)
     {
         ImGuiEx::M3::SetItemToolTip(detailTooltip);
@@ -827,7 +830,7 @@ void ToolWindow::DrawMenuInputStatus(Settings &settings)
                 if (const auto row = Panels::BeginPlainSettingsRow({}, {}, 0.0F, flow.height); row)
                 {
                     float x = 0.0F;
-                    const auto item = [&](const size_t index, const char *strId, const std::string_view label, bool &value, const std::string_view tooltip) {
+                    const auto item = [&](const size_t index, const char *strId, const std::string_view label, auto &value, const std::string_view tooltip) {
                         x = row.contentX + flow.positions[index].x;
                         const float y = row.contentY + flow.positions[index].y;
                         {
