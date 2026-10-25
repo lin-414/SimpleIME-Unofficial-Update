@@ -1021,6 +1021,18 @@ void BeginTextInput()
 void EndTextInput()
 {
     ReleaseTextEntryLease();
+    // Same contract as ForceEndSession: text queued for the field that just
+    // ended is stale and must not survive into the next session's field
+    // (FlushPending only checks s_sessionActive, which the next session
+    // re-arms).
+    {
+        const std::scoped_lock lock(s_pendingMutex);
+        if (!s_pending.empty())
+        {
+            logger::debug("Discarded {} queued committed unit(s) on session end", s_pending.size());
+            s_pending.clear();
+        }
+    }
     const auto fieldId = s_sessionFieldId.load(std::memory_order_relaxed);
     logger::info(
         "SKSE Menu Framework text session end (lease released, held {} ms, {} mouse press(es), {} return/{} escape during the session, "
@@ -1372,15 +1384,28 @@ void __stdcall OnFrameworkEvent(std::int32_t eventType)
         if (auto *io = s_api.getIo(); io != nullptr)
         {
             auto *ioBytes = reinterpret_cast<std::uint8_t *>(io);
-            ioBytes[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] = 1;
-            if (ioBytes[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] != 1)
+            // A fresh io has this flag off. A non-zero byte means the offset
+            // does not point where this build thinks (host ABI drift): write
+            // nothing — a blind write could corrupt a neighboring flag, and
+            // the read-back below could not tell ours from a pre-existing 1.
+            if (ioBytes[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] != 0)
             {
-                logger::error("SKSE Menu Framework io write did not stick (offset {:#x})",
-                              IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET);
+                logger::warn(
+                    "SKSE Menu Framework io byte at offset {:#x} is not 0 before our write (ABI drift?); not enabling ConfigDebugIgnoreFocusLoss",
+                    IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET);
             }
             else
             {
-                logger::info("SKSE Menu Framework io: ConfigDebugIgnoreFocusLoss enabled (our IME focus moves must not clear its input state)");
+                ioBytes[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] = 1;
+                if (ioBytes[IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET] != 1)
+                {
+                    logger::error("SKSE Menu Framework io write did not stick (offset {:#x})",
+                                  IMGUI_IO_CONFIG_IGNORE_FOCUS_LOSS_OFFSET);
+                }
+                else
+                {
+                    logger::info("SKSE Menu Framework io: ConfigDebugIgnoreFocusLoss enabled (our IME focus moves must not clear its input state)");
+                }
             }
         }
     }

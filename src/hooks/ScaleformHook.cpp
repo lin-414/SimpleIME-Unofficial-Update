@@ -150,14 +150,20 @@ struct Scaleform_SetScaleModeTypeHook
     // and the hook won't call `SKSE_AllowTextInputFnHandler::OnTextEntryCountChanged` anymore.
     static inline std::unique_ptr<Scaleform_SetScaleModeTypeHookData> hookData = nullptr;
 
+    /// Set by Uninstall(): a live call-site detour stays attached, and without
+    /// this latch every newly loaded movie would lazily re-create the handler
+    /// and re-wrap skse.AllowTextInput, breaking the Uninstall promise above.
+    static inline std::atomic<bool> s_uninstalled{false};
+
     static auto FnHandler() -> SKSE_AllowTextInputFnHandler *&
     {
         // Leaked on purpose — movie-created GFx functions may outlive us, so
         // the handler must never be deleted (see the hookData note above).
-        // Uninstall() nulls the pointer; the next call re-creates it so a
-        // re-install after a failed init gets a live handler back.
+        // Uninstall() nulls the pointer AND latches s_uninstalled so no later
+        // movie load re-creates it; only a re-install (D3DInit retry) clears
+        // the latch and gets a live handler back.
         static SKSE_AllowTextInputFnHandler *fnHandler = nullptr;
-        if (fnHandler == nullptr)
+        if (fnHandler == nullptr && !s_uninstalled.load(std::memory_order_relaxed))
         {
             fnHandler = new SKSE_AllowTextInputFnHandler();
         }
@@ -207,13 +213,21 @@ struct Scaleform_SetScaleModeTypeHook
     {
         // A live trampoline hook cannot be re-created; after an Uninstall only
         // the handler is missing, so a re-install (D3DInit retry) restores it.
+        s_uninstalled.store(false, std::memory_order_relaxed);
         if (hookData == nullptr)
         {
             hookData = std::make_unique<Scaleform_SetScaleModeTypeHookData>(SetScaleModeType);
         }
     }
 
-    static void Uninstall() { FnHandler() = nullptr; }
+    static void Uninstall()
+    {
+        // The latch must flip before nulling: with it set, FnHandler() no
+        // longer re-creates the handler, so no movie loaded after the
+        // teardown can revive the skse.AllowTextInput wrapper.
+        s_uninstalled.store(true, std::memory_order_relaxed);
+        FnHandler() = nullptr;
+    }
 };
 
 struct Scaleform_AllowTextInputHook

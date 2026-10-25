@@ -27,8 +27,12 @@ class WinHooks
     static constexpr auto MODULE_DINPUT8_STRING = "dinput8.dll";
 
 public:
+    /// Idempotent: the detour lives for the whole process, so a re-install
+    /// only re-arms the wrapper on the still-attached hook.
     static void Install();
 
+    /// Disarms the wrapper without detaching the trampoline — detaching while
+    /// another thread may be inside the hook would free code under its feet.
     static void Uninstall();
 
 private:

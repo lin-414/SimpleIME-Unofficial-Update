@@ -13,11 +13,13 @@
 //      everything else (1.x–3.x layouts are covered, see NirnLabApi.h).
 //   2. kInputLoaded — dispatch RequestAPI (2252); the synchronous response
 //      (2253) hands us the IUIPlatformAPI singleton pointer.
-//   3. Hook the public interface's vtable: AddOrGetBrowser (slot 1, plus the
-//      settings overload slot 3 on API 2.0+) tracks every browser any
-//      consumer mod creates; ReleaseBrowserHandle (slot 2) tracks the ref
-//      counts; the first tracked browser's IBrowser vtable gets its
-//      SetBrowserFocused slot (6) hooked for instant focus events.
+//   3. Hook the public interface's vtable (slot numbers per SlotsFor in
+//      NirnLabApi.h): AddOrGetBrowser (slot 2 on API 2.0+, slot 1 on 1.x,
+//      plus the settings overload slot 1 on 2.0+ / slot 0 on 1.x) tracks
+//      every browser any consumer mod creates; ReleaseBrowserHandle (slot 3
+//      on 2.0+, slot 2 on 1.x) tracks the ref counts; the first tracked
+//      browser's IBrowser vtable gets its SetBrowserFocused slot (6) hooked
+//      for instant focus events.
 //
 // A focused browser is pinned with our own AddOrGetBrowser reference: the
 // host destroys the browser object when the last reference goes away, and
@@ -232,9 +234,21 @@ void PinBrowser(Browser *browser)
             handle = s_api->AddOrGetBrowser(name.c_str(), nullptr, 0, nullptr, pinned);
         }
     }
-    if (handle == IUIPlatformAPI::InvalidBrowserRefHandle || pinned != browser)
+    if (handle == IUIPlatformAPI::InvalidBrowserRefHandle)
     {
         logger::warn("UIPlatform browser pin failed for {:x}", reinterpret_cast<std::uintptr_t>(browser));
+        return;
+    }
+    if (pinned != browser)
+    {
+        logger::warn("UIPlatform browser pin failed for {:x}", reinterpret_cast<std::uintptr_t>(browser));
+        // AddOrGetBrowser resolved to a different browser object: give the
+        // reference straight back instead of leaking it.
+        const ScopeFlag internalCall(s_internalCall);
+        if (s_api != nullptr)
+        {
+            s_api->ReleaseBrowserHandle(handle);
+        }
         return;
     }
     std::lock_guard lock(s_registryMutex);

@@ -39,6 +39,16 @@ constexpr int kFocusGrabReplayWindowMs = 300;
 /// thread inside the dispatch thunk.
 std::atomic<std::int64_t> s_focusGrabMs{-1};
 
+/// Buttons physically held at the moment of the last focus grab: bit 0 Enter,
+/// bits 1..5 mouse buttons 0..4 (left, right, middle, X1, X2). Only a button
+/// that was held at the grab can come back as a replayed press, so only those
+/// are scrubbed — a click or Enter that begins after the grab is the user's
+/// real input and flows through untouched.
+std::atomic<std::uint32_t> s_focusGrabHeldButtons{0};
+
+constexpr std::uint32_t kEnterBit = 1u << 0;
+constexpr std::uint32_t kMouseBit = 1u << 1; ///< mouse button i occupies bit (1 + i)
+
 auto NowMs() -> std::int64_t
 {
     using namespace std::chrono;
@@ -113,7 +123,9 @@ void NeutralizeCompositionCommitKey(RE::InputEvent *const *a_events)
 /// right now that is fatal in two ways:
 ///   * Enter -> validate (the field closes immediately);
 ///   * mouse press -> "clicked outside the field" (InputTextEx releases focus).
-/// Only presses are zeroed; releases still flow so the host can settle its state.
+/// Only presses of buttons that were physically held at the grab are zeroed —
+/// input that begins after the grab is the user's own; releases still flow so
+/// the host can settle its state.
 void SuppressFocusGrabReplays(RE::InputEvent *const *a_events)
 {
     if (a_events == nullptr || *a_events == nullptr)
@@ -130,6 +142,7 @@ void SuppressFocusGrabReplays(RE::InputEvent *const *a_events)
     {
         return;
     }
+    const auto heldButtons = s_focusGrabHeldButtons.load(std::memory_order_relaxed);
 
     std::uint32_t keys   = 0;
     std::uint32_t clicks = 0;
@@ -153,12 +166,21 @@ void SuppressFocusGrabReplays(RE::InputEvent *const *a_events)
             {
                 continue;
             }
+            if ((heldButtons & kEnterBit) == 0)
+            {
+                continue; // Enter went down after the grab: the user's real input
+            }
             runtime.value        = 0.0F;
             runtime.heldDownSecs = 0.0F;
             ++keys;
         }
         else if (device == RE::INPUT_DEVICE::kMouse)
         {
+            const auto idCode = button->GetIDCode();
+            if (idCode > 4 || (heldButtons & (kMouseBit << idCode)) == 0)
+            {
+                continue; // not held at the grab (or a wheel pseudo-button)
+            }
             runtime.value        = 0.0F;
             runtime.heldDownSecs = 0.0F;
             ++clicks;
@@ -211,6 +233,23 @@ auto InputDispatchHook::FocusGrabBlockerDown() -> bool
 void InputDispatchHook::NoteFocusMoved()
 {
     s_focusGrabMs.store(NowMs(), std::memory_order_relaxed);
+    // Snapshot the physically held buttons so the scrubber can tell a replay
+    // apart from a click that starts after the grab. GetAsyncKeyState reads
+    // the physical state regardless of which window holds the focus.
+    std::uint32_t held = 0;
+    if (IsPhysicallyDown(VK_RETURN))
+    {
+        held |= kEnterBit;
+    }
+    const int mouseButtons[] = {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
+    for (std::uint32_t i = 0; i < 5; ++i)
+    {
+        if (IsPhysicallyDown(mouseButtons[i]))
+        {
+            held |= kMouseBit << i;
+        }
+    }
+    s_focusGrabHeldButtons.store(held, std::memory_order_relaxed);
 }
 
 void InputDispatchHook::Install()

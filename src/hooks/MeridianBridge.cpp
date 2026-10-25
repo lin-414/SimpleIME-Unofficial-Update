@@ -319,19 +319,23 @@ void HandleFocusGained(const FocusBackend backend, const View view, ::NL::CEF::I
     }
     if (backend == FocusBackend::View)
     {
+        // Set the new marker BEFORE dropping the other backend's: with both
+        // empty, Tick's ResolveTarget() sees no target and clears s_pending,
+        // dropping a commit that races the migration. The transient
+        // double-mark is safe — ResolveTarget() prefers the browser.
+        s_focusedView = view;
         if (s_focusedBrowser.exchange(nullptr) != nullptr)
         {
             logger::info("Meridian focus moved from a UIPlatform browser to view {:x}", view);
         }
-        s_focusedView = view;
     }
     else
     {
+        s_focusedBrowser = browser;
         if (s_focusedView.exchange(0) != 0)
         {
             logger::info("Meridian focus moved from a View/1 view to a UIPlatform browser");
         }
-        s_focusedBrowser = browser;
     }
     BeginSession();
     if (backend == FocusBackend::View)
@@ -647,17 +651,27 @@ void FlushPending(const Target &target, const std::uint64_t now)
     }
     const std::string script = "if(window.__simpleIME)window.__simpleIME.commit(" + std::to_string(s_sequence.load()) +
                                "," + MeridianBridgeLogic::JsString(chunk) + ");";
+    {
+        // Arm in-flight BEFORE the send: the CEF ack (OnListenerPayload) can
+        // land between ExecuteJavaScript returning and a later lock being
+        // taken. A commit armed only after the send looked unacknowledged, so
+        // the 2 s ack timeout re-sent it — a duplicate delivery.
+        std::lock_guard lock(s_pendingMutex);
+        s_inFlight   = chunk;
+        s_inFlightMs = now;
+    }
     if (!ExecuteJs(target, script.c_str()))
     {
         logger::warn("Meridian ExecuteJavaScript(commit) failed for view {:x}", target.view);
         std::lock_guard lock(s_pendingMutex);
         s_captureReady = false; // re-capture; the chunk goes back on failure report
+        // The script never ran, so no ack will come for it: un-arm the chunk
+        // queued above and put it back at the head.
+        s_inFlight.clear();
+        s_inFlightMs = 0;
         s_pending.insert(s_pending.begin(), chunk.begin(), chunk.end());
         return;
     }
-    std::lock_guard lock(s_pendingMutex);
-    s_inFlight   = std::move(chunk);
-    s_inFlightMs = now;
 }
 
 // ---- game-thread overlay push -----------------------------------------
@@ -807,6 +821,12 @@ void OnBrowserFocusGone(NL::CEF::IBrowser *browser)
 
 void OnBackendListenerPayload(const char *payload)
 {
+    // The UIPlatform JS binding outlives our teardown: a result callback that
+    // lands after Uninstall must not touch session state.
+    if (!s_enabled.load(std::memory_order_acquire))
+    {
+        return;
+    }
     OnListenerPayload(payload);
 }
 
@@ -914,6 +934,18 @@ SupportState ViewBackendState()
 
 void Uninstall()
 {
+    // A live focus target must go through the full focus-lost spine (session
+    // clear, DOM panel clear, IME sync, NirnLab unpin) instead of being
+    // nulled directly: that leaked the browser pin and left the injected DOM
+    // panel and the SimpleIME.result binding active after teardown.
+    if (const auto browser = s_focusedBrowser.load(); browser != nullptr)
+    {
+        OnBrowserFocusGone(browser);
+    }
+    if (const auto view = s_focusedView.load(); view != 0)
+    {
+        HandleFocusLost(FocusBackend::View, view, nullptr);
+    }
     s_enabled         = false;
     s_focusedView     = 0;
     s_focusedBrowser  = nullptr;

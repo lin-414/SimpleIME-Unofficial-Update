@@ -20,7 +20,9 @@ public:
     /// (IsSuppressing() then reports false).
     static void Install();
 
-    /// Restores the original vtable slot.
+    /// Restores the original vtable slot. Must run on the thread that polls
+    /// the keyboard (the game thread): HookedPoll reads the stored original
+    /// pointer, and Uninstall nulls it right after restoring the slot.
     static void Uninstall();
 
     /// True while the keyboard poll is being collapsed.

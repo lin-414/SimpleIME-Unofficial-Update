@@ -64,6 +64,13 @@ public:
         }
     }
 
+    /// Attaches a hook to an already-resolved function address.
+    ///
+    /// NOTE: unlike raw DetourAttach(&ptr, ...), this ctor does NOT write the
+    /// trampoline back through realFuncPtr — the reference is read-only
+    /// input. Call the original function through this object's Original()
+    /// (or operator()); calling through the variable passed here reaches the
+    /// raw target and bypasses the hook.
     explicit FunctionHook(void *&realFuncPtr, Return (*funcPtr)(Args...))
     {
         m_address         = reinterpret_cast<std::uintptr_t>(realFuncPtr);

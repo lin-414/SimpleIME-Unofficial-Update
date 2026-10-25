@@ -72,7 +72,8 @@ namespace Hooks::InputDispatchLogic
 ///   * a replayed mouse press -> "clicked outside the field" (InputTextEx
 ///     deactivates on io.MouseClicked when it did not itself just activate).
 /// Both are pure side effects of our own focus grab, so the batch right after it
-/// is scrubbed; the user's real inputs are unaffected because they arrive later.
+/// is scrubbed — but only for buttons that were physically held at the grab
+/// (the caller snapshots them); input that begins after the grab flows through.
 ///
 /// param msSinceFocusGrab elapsed time since our last focus grab, < 0 if none.
 /// param windowMs         how long the scrubbing lasts after that grab.
