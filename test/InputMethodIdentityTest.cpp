@@ -110,6 +110,40 @@ TEST(InputMethodIdentityTest, langid_constrains_only_when_set)
     EXPECT_TRUE(IM::Matches(constrainedEn, candidate));
 }
 
+/// The "already active" shortcut rule (InputMethodManager::ActivateProfile): a
+/// multi-language TIP enumerates once per language with the SAME (clsid,
+/// guidProfile), so the langid alone tells the variants apart — a GUID-only
+/// compare would skip switching to the other variant and typing would silently
+/// keep the wrong IME.
+TEST(InputMethodIdentityTest, same_tip_variant_requires_the_same_language)
+{
+    const auto zh      = IM::Parse(std::string{"tip:"} + kClsid + "/" + kProfile + "/0804");
+    const auto ja      = IM::Parse(std::string{"tip:"} + kClsid + "/" + kProfile + "/0411");
+    const auto anyLang = IM::Parse(std::string{"tip:"} + kClsid + "/" + kProfile);
+
+    EXPECT_TRUE(IM::SameTipVariant(zh, zh));
+    EXPECT_TRUE(IM::SameTipVariant(anyLang, zh)); // unconstrained candidate matches any variant
+    EXPECT_FALSE(IM::SameTipVariant(zh, ja));     // same GUID, other language variant live
+    EXPECT_FALSE(IM::SameTipVariant(ja, zh));
+
+    EXPECT_FALSE(IM::SameTipVariant(zh, IM::Parse(std::string{"tip:"} + kClsid + "/" + kOther + "/0804")));
+    EXPECT_FALSE(IM::SameTipVariant(zh, IM::Parse(std::string{"tip:"} + kOther + "/" + kProfile + "/0804")));
+
+    // GUID text is case-insensitive, mirroring Matches.
+    IM::Identity lower = zh;
+    for (auto &c : lower.clsid)
+    {
+        c = IM::Detail::AsciiLower(c);
+    }
+    EXPECT_TRUE(IM::SameTipVariant(lower, zh));
+
+    // A non-TIP is never "the same TIP": the stale-cache stub resolves to a
+    // keyboard layout, which must force a real activation instead of a skip.
+    EXPECT_FALSE(IM::SameTipVariant(zh, IM::Parse("keyboard:00000409")));
+    EXPECT_FALSE(IM::SameTipVariant(IM::Parse("keyboard:00000409"), zh));
+    EXPECT_FALSE(IM::SameTipVariant(zh, IM::Parse("微软拼音")));
+}
+
 TEST(InputMethodIdentityTest, keyboard_layouts_match_by_klid)
 {
     const auto configured = IM::Parse("keyboard:00000804");

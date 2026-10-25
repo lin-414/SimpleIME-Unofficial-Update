@@ -317,10 +317,22 @@ void ImeManager::ApplyConfiguredInputMethod()
         return;
     }
 
-    // Unusable value (not installed / not enabled for this process). Keep the old
-    // heuristic so the session never ends up on a bare English keyboard: the
-    // manager logs the raw value, this is only the recovery.
-    logger::warn("Configured default input method is unavailable, falling back to the user's preferred IME");
+    // Unusable value (not installed / not enabled for this process). Match the
+    // startup policy (ImeWnd::OnCreated): keep whatever input method the steps
+    // above already arranged — the restored remembered profile, a kept TIP —
+    // instead of overriding it with the first enumerated non-English TIP, which
+    // once replaced a successfully restored IME with one the user never picked
+    // (ActivatePreferredImeProfile is enumeration order, not a user choice).
+    // The recovery still runs when no TIP is active at all: a failed restore
+    // then left the bare English keyboard, and typing would produce English only.
+    // The unavailable value itself is surfaced in-game by the manager (one
+    // toast per configured value), so only the log speaks here.
+    if (m_imeWnd->GetActiveLangProfile().dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    {
+        logger::warn("Configured default input method is unavailable; keeping the current input method");
+        return;
+    }
+    logger::warn("Configured default input method is unavailable and no input processor is active, falling back to the user's preferred IME");
     (void)m_imeWnd->ActivatePreferredImeProfile();
 }
 

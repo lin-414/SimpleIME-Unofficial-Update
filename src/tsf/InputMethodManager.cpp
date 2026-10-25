@@ -16,19 +16,32 @@
 
 namespace
 {
-auto GetProfileCachedIndex(const std::vector<Ime::LangProfile> &langProfiles, const GUID &guidProfile, HKL hkl = nullptr) -> std::uint32_t
+auto GetProfileCachedIndex(const std::vector<Ime::LangProfile> &langProfiles, const GUID &guidProfile, LANGID langid = 0, HKL hkl = nullptr) -> std::uint32_t
 {
     if (guidProfile != GUID_NULL)
     {
-        // Real TIPs (input processors) carry unique profile GUIDs.
-        const auto it = std::ranges::find_if(langProfiles, [&](const auto &p) -> bool {
-            return p.guidProfile == guidProfile;
-        });
-        if (it != langProfiles.end())
+        // Real TIPs (input processors) carry unique profile GUIDs — except that
+        // a multi-language TIP registers the SAME guidProfile once per language
+        // (see GetSelectableChoices), so a GUID-only lookup lands on the first
+        // variant no matter which one is live. Resolve the exact (guidProfile,
+        // langid) registration when the live langid is known (0 = unconstrained,
+        // the legacy by-GUID semantics); with no exact hit, a sole same-GUID
+        // entry is still unambiguous, several are not — "unknown" beats
+        // guessing the wrong variant.
+        std::uint32_t byGuidOnly = UINT32_MAX;
+        bool          ambiguous  = false;
+        for (std::size_t i = 0; i < langProfiles.size(); ++i)
         {
-            return static_cast<std::uint32_t>(std::ranges::distance(langProfiles.begin(), it));
+            const auto &profile = langProfiles[i];
+            if (profile.guidProfile != guidProfile) continue;
+            if (langid != 0 && profile.langid == langid) return static_cast<std::uint32_t>(i);
+            if (byGuidOnly == UINT32_MAX)
+                byGuidOnly = static_cast<std::uint32_t>(i);
+            else
+                ambiguous = true;
         }
-        return UINT32_MAX;
+        if (langid == 0) return byGuidOnly;
+        return (!ambiguous && byGuidOnly != UINT32_MAX) ? byGuidOnly : UINT32_MAX;
     }
     // Keyboard-layout profiles all share guidProfile == GUID_NULL; matching by
     // GUID alone would always hit the first layout in the list regardless of
@@ -173,8 +186,8 @@ auto Ime::InputMethodManager::Initialize(ITfThreadMgr *threadMgr, TfClientId cli
         {
             if (SUCCEEDED(m_tfProfileMgr.CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER)))
             {
+                // RefreshProfiles re-anchors the active-profile cache itself.
                 RefreshProfiles();
-                UpdateActiveProfile();
                 return S_OK;
             }
         }
@@ -289,6 +302,15 @@ auto Ime::InputMethodManager::RefreshProfiles() -> bool
         logger::error("LoadIme failed: unknown exception.");
         hresult = E_FAIL;
     }
+    if (SUCCEEDED(hresult))
+    {
+        // The rebuilt list invalidates every cached index (installs/uninstalls
+        // reorder or drop entries), so re-anchor the active profile before
+        // IsConfiguredProfileActive or GetActiveLangProfile reads a stale one.
+        // GetSelectableInputMethods(true) refreshes from the settings window,
+        // so this path runs mid-session, not only at startup.
+        UpdateActiveProfile();
+    }
     return SUCCEEDED(hresult);
 }
 
@@ -298,7 +320,7 @@ auto Ime::InputMethodManager::UpdateActiveProfile() noexcept -> bool
     TF_INPUTPROCESSORPROFILE profile;
     if (SUCCEEDED(m_tfProfileMgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &profile)))
     {
-        m_activatedProfile = GetProfileCachedIndex(m_langProfiles, profile.guidProfile, profile.hkl);
+        m_activatedProfile = GetProfileCachedIndex(m_langProfiles, profile.guidProfile, profile.langid, profile.hkl);
         // Semantics: "any profile known to us is active". This flag gates text
         // forwarding (ImeWnd WM_CHAR) and char-event swallowing (ImeMenu) — do
         // NOT narrow it to INPUTPROCESSOR-only, users whose active input method
@@ -351,11 +373,19 @@ auto Ime::InputMethodManager::ActivateProfile(const LangProfile &langProfile) ->
     // (also GUID_NULL) when the cached activated index is stale or out of range —
     // so ActivateProfile() would ALWAYS return S_OK here without ever calling the
     // TSF API, leaving the Chinese TIP active and eating keystrokes. Only real TIPs
-    // (INPUTPROCESSOR) carry distinguishable GUIDs; apply the shortcut to them alone.
+    // (INPUTPROCESSOR) are eligible for the shortcut; keyboard layouts always go
+    // through the TSF call.
     if (langProfile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
     {
-        const auto &activeLangProfile = GetActiveLangProfile();
-        if (IsEqualGUID(langProfile.guidProfile, activeLangProfile.guidProfile) == TRUE)
+        // SameTipVariant, not a bare GUID compare: a multi-language TIP is
+        // enumerated once per language with an IDENTICAL guidProfile, so the
+        // GUID-only check used to report the zh variant "already active" while
+        // the caller had asked for the ja one — the TSF call was skipped and
+        // typing silently kept the wrong IME (the settings pick never landed).
+        // ToIdentity maps the stale-index stub (a KEYBOARDLAYOUT) to
+        // Kind::Keyboard, so a stale cache degrades to a redundant, harmless
+        // re-activation instead of a wrong skip.
+        if (InputMethodIdentity::SameTipVariant(ToIdentity(langProfile), ToIdentity(GetActiveLangProfile())))
         {
             logger::debug("Profile '{}' already active, skip activation", langProfile.desc);
             return S_OK;
@@ -499,7 +529,11 @@ auto Ime::InputMethodManager::SetConfiguredProfile(std::string configuredProfile
 {
     // A changed pick owes one apply even when the policy is "game start only":
     // the user just chose it and expects it to stick right away.
-    m_pendingApply       = m_pendingApply || configuredProfile != m_configuredProfile;
+    const bool changed  = configuredProfile != m_configuredProfile;
+    m_pendingApply       = m_pendingApply || changed;
+    // A new value deserves a fresh "not available" toast (see
+    // ActivateConfiguredProfile): the enable path retries on every forced sync.
+    if (changed) m_unavailableNotified = false;
     m_configuredProfile  = std::move(configuredProfile);
     m_reapplyOnEnable    = reapplyOnEnable;
     m_configuredIdentity = InputMethodIdentity::Parse(m_configuredProfile);
@@ -645,6 +679,14 @@ auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
         m_configuredProfile,
         candidates.empty() ? std::string{"<none>"} : candidates
     );
+    // Surface it in the UI once per configured value: with the reapply policy
+    // on, the enable path retries this on every forced sync (window focus
+    // churn), and a toast each time would spam the player mid-game.
+    if (!m_unavailableNotified)
+    {
+        m_unavailableNotified = true;
+        ErrorNotifier::GetInstance().Warning("The configured default input method is not available; keeping the current one.");
+    }
     return E_INVALIDARG;
 }
 
@@ -742,7 +784,7 @@ auto Ime::InputMethodManager::OnActivated(
             logger::info("No conversion-mode observation yet; seeding 中 for the Chinese TIP");
         }
 
-        m_activatedProfile = GetProfileCachedIndex(m_langProfiles, guidProfile, hkl);
+        m_activatedProfile = GetProfileCachedIndex(m_langProfiles, guidProfile, langid, hkl);
         // Same semantics as UpdateActiveProfile: any known profile counts.
         // See the comment there — do not narrow to INPUTPROCESSOR-only.
         Core::State::GetInstance().Set(State::INPUT_PROCESSOR_ACTIVATED, m_activatedProfile < m_langProfiles.size());

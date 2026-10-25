@@ -70,8 +70,9 @@ public:
     /// configured one — callers use it to skip a redundant activation.
     [[nodiscard]] auto IsConfiguredProfileActive() const -> bool;
     /// Activate the configured input method. Returns E_INVALIDARG (and logs the
-    /// raw value) when it is not installed/enabled; the caller owns the fallback
-    /// decision — this never falls back on its own.
+    /// raw value, plus one in-game toast per configured value) when it is not
+    /// installed/enabled; the caller owns the fallback decision — this never
+    /// falls back on its own.
     auto ActivateConfiguredProfile() -> HRESULT;
 
     /// Every selectable input method (TSF input processor) of this process,
@@ -121,13 +122,20 @@ private:
     CComPtr<ITfInputProcessorProfileMgr> m_tfProfileMgr = nullptr;
     CComPtr<ITfThreadMgr>                m_threadMgr    = nullptr;
     TfClientId                           m_clientId;
-    DWORD                                m_refCount{};
+    // Starts at 1: the constructing ImeWnd owns the initial reference. The
+    // TSF AdviseSink reference is the only other one, so UnadviseSink can
+    // never drop the count to 0 mid-UnInitialize (the self-delete used to run
+    // the dtor — re-entering UnInitialize — while the outer frame kept using
+    // the freed members); the owner's final Release is what deletes the
+    // object.
+    DWORD                                m_refCount{1};
     DWORD                                m_dwCookie{};
     uint32_t                             m_activatedProfile = 0;
     GUID                                 m_lastTipProfileGuid{GUID_NULL};
     std::string                          m_configuredProfile;  ///< [core] default_input_method, IME thread only.
     bool                                 m_reapplyOnEnable = true; ///< [core] reapply_default_input_method_on_enable
     bool                                 m_pendingApply   = false; ///< the pick changed: one apply is owed even with reapply off
+    bool                                 m_unavailableNotified = false; ///< one "not available" toast per configured value
     InputMethodIdentity::Identity        m_configuredIdentity; ///< parsed m_configuredProfile.
     std::function<void()>                m_conversionModeRefresher = nullptr;
 };

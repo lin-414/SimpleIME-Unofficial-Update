@@ -218,9 +218,14 @@ void ImeWnd::Initialize(const bool enableTsf) noexcept(false)
     InitializeTextService();
     m_imeWindow = std::make_unique<ImeWindow>();
 
+    // The manager self-deletes when its reference count reaches 0; the owner
+    // reference taken by the constructor keeps it alive across UnadviseSink.
     m_inputMethodManager = new InputMethodManager();
     if (FAILED(m_inputMethodManager->Initialize(tsfSupport.GetThreadMgr(), tsfSupport.GetTfClientId())))
     {
+        m_inputMethodManager->UnInitialize();
+        m_inputMethodManager->Release();
+        m_inputMethodManager = nullptr;
         throw SimpleIMEException("Can't initialize LangProfileUtil");
     }
     // The activation sink delegates conversion-mode re-reads to the text
@@ -253,6 +258,10 @@ void ImeWnd::UnInitialize() noexcept
     if (m_inputMethodManager != nullptr)
     {
         m_inputMethodManager->UnInitialize();
+        // Drop the owner reference taken at construction; this Release (not
+        // the UnadviseSink inside UnInitialize) is what deletes the object.
+        m_inputMethodManager->Release();
+        m_inputMethodManager = nullptr;
     }
     Tsf::TsfSupport::GetSingleton().UnInitializeTsf();
 }

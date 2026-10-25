@@ -253,4 +253,20 @@ namespace Detail
     }
     return false;
 }
+
+/// True when `candidate` names the same TSF registration that is live
+/// (`active`): same clsid and profile GUID text AND the same language variant.
+/// A multi-language TIP enumerates once per language with an IDENTICAL
+/// (clsid, guidProfile) — the GUID alone cannot tell its zh variant from its
+/// ja one, so an "already active" check that ignores the langid would skip the
+/// TSF activation and silently keep the wrong variant composing text (see
+/// InputMethodManager::ActivateProfile). A `candidate` langid of 0 is
+/// unconstrained (the by-GUID lookup semantics) and matches any variant; the
+/// `active` side is always concrete, so it constrains the comparison.
+[[nodiscard]] inline auto SameTipVariant(const Identity &candidate, const Identity &active) -> bool
+{
+    return candidate.kind == Identity::Kind::Tip && active.kind == Identity::Kind::Tip &&
+           Detail::SameText(candidate.clsid, active.clsid) && Detail::SameText(candidate.profile, active.profile) &&
+           (candidate.langid == 0 || candidate.langid == active.langid);
+}
 } // namespace Ime::InputMethodIdentity

@@ -1446,8 +1446,9 @@ void ToolWindow::ApplyDefaultInputMethod(Settings &settings, std::string identit
     // Two hops on purpose: the IME thread keeps its own copy (a std::string must
     // never be shared across threads here), and MarkDirty re-runs the enable
     // decision so the change takes effect without waiting for the next game
-    // start. No immediate profile switch: that would yank the input method out
-    // from under whatever the user was typing.
+    // start. The switch itself is deferred to that forced sync at the end of
+    // this window's Draw — never inside the click handler, which would yank the
+    // input method out from under whatever the user was typing mid-frame.
     ImeController::GetInstance()->SetDefaultInputMethod(settings.defaultInputMethod, settings.reapplyDefaultInputMethodOnEnable);
     ImeController::GetInstance()->MarkDirty();
 }
