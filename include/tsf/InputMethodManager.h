@@ -9,6 +9,7 @@
 #include "ime/InputMethodChoice.h"
 #include "utils/InputMethodIdentity.h"
 
+#include <atomic>
 #include <functional>
 #include <msctf.h>
 #include <windows.h>
@@ -43,11 +44,20 @@ public:
     /// the second English layout, or the second CJK IME of the same GUID family.
     auto ActivateProfileByIndex(std::uint32_t index) -> HRESULT;
     auto ActivateKeyboardEng() -> HRESULT;
+    /// Activate an installed keyboard layout by KLID ("00000409", 8 hex digits —
+    /// the form InputMethodIdentity stores as keyboard:{KLID}). Loads the layout
+    /// through LoadKeyboardLayout first, so a layout that is installed but not
+    /// enumerated for this process still activates. Also forces the layout at the
+    /// Win32 level (ActivateKeyboardLayout/KLF_SETFORPROCESS), which is what
+    /// actually switches the process input method for KEYBOARDLAYOUT profiles.
+    /// The activation is treated as self-initiated (see m_lastUserProfile): it
+    /// never overwrites the input method the user picked.
+    auto ActivateKeyboardProfile(const std::string &klid) -> HRESULT;
     /// Activate the user's first non-English TIP (input processor) from the
     /// enumerated profile list. Fallback for re-enabling the IME when nothing
-    /// was remembered (m_lastActiveProfile == GUID_NULL): at that point the
-    /// current TIP is usually the English keyboard left over from an earlier
-    /// disable, and silently keeping it means typing produces English only.
+    /// was remembered (see HasRememberedUserProfile): at that point the current
+    /// TIP is usually the English keyboard left over from an earlier disable,
+    /// and silently keeping it means typing produces English only.
     auto ActivatePreferredImeProfile() -> HRESULT;
 
     /// The user's configured default input method ([core] default_input_method,
@@ -63,8 +73,8 @@ public:
     /// after the user changed the pick in the settings window, where one apply is
     /// still owed so the change takes effect without a restart.
     [[nodiscard]] auto ShouldApplyConfiguredProfile() const -> bool;
-    /// True when a usable identity is configured (parsable, and not the
-    /// not-yet-supported keyboard-layout form).
+    /// True when a usable identity is configured: a TIP (tip: identity or a
+    /// display name) or a keyboard layout (keyboard:{KLID}).
     [[nodiscard]] auto HasConfiguredProfile() const -> bool;
     /// True when the profile reported active for this thread already is the
     /// configured one — callers use it to skip a redundant activation.
@@ -75,15 +85,21 @@ public:
     /// falls back on its own.
     auto ActivateConfiguredProfile() -> HRESULT;
 
-    /// Every selectable input method (TSF input processor) of this process,
-    /// sorted by display name — the source of the settings-window picker. Plain
-    /// keyboard layouts are left out: their KLID cannot be derived from an HKL
-    /// yet, so they are not selectable (P2). Reads the cached enumeration; call
-    /// @c RefreshProfiles first when the caller wants a fresh list.
+    /// Every selectable input method of this process — TSF input processors and
+    /// plain keyboard layouts (the latter as keyboard:{KLID}, so "stay on the
+    /// English layout in this session" is a real choice) — sorted by display
+    /// name; the source of the settings-window picker. A layout whose KLID could
+    /// not be resolved is skipped: it has no identity to store. Reads the cached
+    /// enumeration; call @c RefreshProfiles first when the caller wants a fresh
+    /// list.
     [[nodiscard]] auto GetSelectableChoices() const -> std::vector<InputMethodChoice>;
 
 private:
     auto ActivateProfile(const LangProfile &langProfile) -> HRESULT;
+    /// Activate the profile named by an identity: a TIP matched against the
+    /// enumeration, a keyboard layout by KLID. E_INVALIDARG when nothing matches
+    /// (never falls back on its own).
+    auto ActivateIdentity(const InputMethodIdentity::Identity &identity) -> HRESULT;
 
 public:
     auto GetActiveLangProfile() -> const LangProfile &;
@@ -95,11 +111,19 @@ public:
         return m_activatedProfile < m_langProfiles.size() ? m_activatedProfile : UINT32_MAX;
     }
 
-    /// GUID of the last real TIP (input processor, e.g. WeChat/Microsoft Pinyin)
-    /// that activated in this process. Unlike the active-profile cache it is NOT
-    /// overwritten when a plain keyboard layout activates, so it always answers
-    /// "which IME did the user last use" — used to restore the TIP on re-enable.
-    [[nodiscard]] auto GetLastTipProfileGuid() const -> const GUID & { return m_lastTipProfileGuid; }
+    /// The last input method the USER picked in this process — from the
+    /// language bar, Win+Space, or the settings window: a TIP (WeChat/Microsoft
+    /// Pinyin) or a keyboard layout (美式键盘). Activations this manager performs
+    /// itself (the disable path's English keyboard, the configured default, the
+    /// "no TIP active" fallback) are NOT recorded, so the memory always answers
+    /// "what was the user typing with". Unlike the active-profile cache it is not
+    /// clobbered by the English layout the disable path switches to — that used
+    /// to lose the restore — and unlike a TIP-only memory it lets a manual
+    /// 美式键盘 pick survive an IME enable.
+    [[nodiscard]] auto HasRememberedUserProfile() const -> bool;
+    /// Re-activate the profile from HasRememberedUserProfile(). E_INVALIDARG
+    /// (and the memory is dropped) when it is no longer installed.
+    auto RestoreRememberedUserProfile() -> HRESULT;
 
     [[nodiscard]] auto GetLangProfiles() const -> const std::vector<LangProfile> & { return m_langProfiles; }
 
@@ -118,6 +142,28 @@ public:
 private:
     auto UpdateConversionAndKeyboard(State &state, DWORD dwProfileType) -> void;
 
+    /// Marks a stretch of work as "this manager switches the profile on its own":
+    /// the activation sink is SYNCHRONOUS (the log proves it — the sink line lands
+    /// before ActivateProfile logs its return), so an activation recorded while a
+    /// pause is held is this mod's own switch, not a user pick.
+    auto BeginSelfActivation() -> void;
+    auto EndSelfActivation() -> void;
+    /// RAII form of the pair above; nest-safe through the counter.
+    class ScopedSelfActivation
+    {
+    public:
+        explicit ScopedSelfActivation(InputMethodManager &manager) : m_manager(manager) { m_manager.BeginSelfActivation(); }
+        ~ScopedSelfActivation() { m_manager.EndSelfActivation(); }
+        ScopedSelfActivation(const ScopedSelfActivation &)            = delete;
+        ScopedSelfActivation &operator=(const ScopedSelfActivation &) = delete;
+
+    private:
+        InputMethodManager &m_manager;
+    };
+
+    /// Whether the profile named by @p identity already is the cached active one.
+    [[nodiscard]] auto IsIdentityActive(const InputMethodIdentity::Identity &identity) const -> bool;
+
     std::vector<LangProfile>             m_langProfiles;
     CComPtr<ITfInputProcessorProfileMgr> m_tfProfileMgr = nullptr;
     CComPtr<ITfThreadMgr>                m_threadMgr    = nullptr;
@@ -131,7 +177,16 @@ private:
     DWORD                                m_refCount{1};
     DWORD                                m_dwCookie{};
     uint32_t                             m_activatedProfile = 0;
-    GUID                                 m_lastTipProfileGuid{GUID_NULL};
+    /// Last input method the user picked; see HasRememberedUserProfile().
+    InputMethodIdentity::Identity        m_lastUserProfile;
+    /// Non-zero while this manager activates a profile on its own: the
+    /// activation sink is SYNCHRONOUS (observed in the log: the sink line lands
+    /// before ActivateProfile returns), so a plain flag around the TSF call
+    /// suffices. A counter, not a bool, so nested self-initiated switches stay
+    /// correct.
+    /// Atomic: the game-thread English switch (ImeManager::DoDisable) pauses it
+    /// too, while the sink reads it on the IME thread.
+    std::atomic<int>                     m_suppressUserTracking{0};
     std::string                          m_configuredProfile;  ///< [core] default_input_method, IME thread only.
     bool                                 m_reapplyOnEnable = true; ///< [core] reapply_default_input_method_on_enable
     bool                                 m_pendingApply   = false; ///< the pick changed: one apply is owed even with reapply off

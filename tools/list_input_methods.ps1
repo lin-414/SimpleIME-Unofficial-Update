@@ -1,13 +1,16 @@
-﻿<#
+<#
 .SYNOPSIS
   列出本机已安装的 TSF 输入法（TIP），输出可直接粘贴到 SimpleIME.toml 的 default_input_method 身份串。
 
 .DESCRIPTION
   身份串格式（与 SimpleIME 插件 InputMethodIdentity 一致）：
-      tip:{CLSID}/{GUID}/{langid}
+      tip:{CLSID}/{GUID}/{langid}      输入法 (TSF 文本服务)
+      keyboard:{KLID}                  键盘布局(非输入法)，8 位十六进制
   langid 为 4 位十六进制（可省略，省略则不校验语言）。
 
-  数据来源：HKLM / HKCU 的 SOFTWARE\Microsoft\CTF\TIP 注册表，也就是插件的 EnumProfiles 看到的同一批 TSF 语言配置。
+  数据来源：
+      tip:      HKLM / HKCU 的 SOFTWARE\Microsoft\CTF\TIP，也就是插件的 EnumProfiles 看到的同一批 TSF 语言配置；
+      keyboard: HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layouts（美式键盘等纯键盘布局）。
   显示名通过 SHLoadIndirectString 解析 MUI 资源，因此得到的是「微软拼音」这类本地化名称；
   同一个输入法可能同时登记在 HKLM 与 HKCU 下（其中一份只有 Enable 标记、没有名称），脚本会按身份串合并。
 
@@ -109,14 +112,48 @@ foreach ($root in $roots) {
     }
 }
 
-if ($map.Count -eq 0) {
-    Write-Host '没有枚举到任何 TSF 文本服务（CTF TIP 注册表为空）。' -ForegroundColor Yellow
+# 键盘布局不是 TSF 文本服务，插件把它们当作 keyboard:{KLID} 暴露（"这一局就保持英文"）。
+# 只列这台机器上真正装了的布局：GetKeyboardLayoutList 返回的是已预装/已加载的那几个，
+# 而 HKLM\...\Keyboard Layouts 下列着几百个随系统附带的布局文件，全列出来没有意义。
+# KLID 由 HIWORD(HKL) 得到 —— 与插件 InputMethodManager::ResolveKlid 同一规则。
+Add-Type -Namespace Win32 -Name KeyboardList -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern int GetKeyboardLayoutList(int nBuff, System.IntPtr[] lpList);
+'@ -ErrorAction SilentlyContinue
+
+$keyboards = @()
+$hklList   = New-Object System.IntPtr[] 64
+$hklCount  = [Win32.KeyboardList]::GetKeyboardLayoutList($hklList.Length, $hklList)
+$keyboardRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\Keyboard Layouts'
+for ($i = 0; $i -lt [Math]::Max($hklCount, 0); $i++) {
+    $raw  = [uint32]([int64]$hklList[$i].ToInt64() -band 0xFFFFFFFFL)
+    $klid = '{0:X8}' -f [uint32]($raw -shr 16)
+    $props = Get-ItemProperty ($keyboardRoot + '\' + $klid) -ErrorAction SilentlyContinue
+    if ($null -eq $props) { continue } # 替代布局(HIWORD 不是 KLID)在注册表里查不到，略过
+    $display = Resolve-MuiText ([string]$props.'Layout Display Name')
+    if ([string]::IsNullOrWhiteSpace($display)) { $display = [string]$props.'Layout Text' }
+    if ([string]::IsNullOrWhiteSpace($display)) { $display = $klid }
+    if ($keyboards.Identity -contains ('keyboard:{0}' -f $klid)) { continue }
+    $keyboards += [pscustomobject] @{
+        Name     = $display
+        English  = [string]$props.'Layout File'
+        LangId   = $klid.Substring(4)
+        Enabled  = $true
+        Identity = 'keyboard:{0}' -f $klid
+    }
+}
+
+if ($map.Count -eq 0 -and $keyboards.Count -eq 0) {
+    Write-Host '没有枚举到任何 TSF 文本服务，也没有键盘布局。' -ForegroundColor Yellow
     exit 1
 }
 
-$visible = @($map.Values |
-    Where-Object { $IncludeNonIme -or ($_.English -notmatch '^(Tablet PC|Speech Recognition)') } |
-    Where-Object { -not $EnabledOnly -or $_.Enabled } |
+$visible = @(
+    @(
+        @($map.Values |
+            Where-Object { $IncludeNonIme -or ($_.English -notmatch '^(Tablet PC|Speech Recognition)') } |
+            Where-Object { -not $EnabledOnly -or $_.Enabled }) + $keyboards
+    ) |
     Sort-Object @{ Expression = { if ($_.Enabled) { 0 } else { 1 } } }, @{ Expression = { if ([string]::IsNullOrWhiteSpace($_.Name)) { 1 } else { 0 } } }, Name, Identity)
 
 Write-Host ''

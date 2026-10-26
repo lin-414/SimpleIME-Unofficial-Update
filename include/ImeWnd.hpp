@@ -149,8 +149,19 @@ public:
     //! Must call from IME thread.
     auto GetActiveLangProfile() const -> const LangProfile & { return m_inputMethodManager->GetActiveLangProfile(); }
 
-    //! GUID of the last real input processor (TIP) that activated — see InputMethodManager.
-    [[nodiscard]] auto GetLastTipProfileGuid() const -> const GUID & { return m_inputMethodManager->GetLastTipProfileGuid(); }
+    //! Whether the user's last pick (a TIP or a keyboard layout) is remembered.
+    [[nodiscard]] auto HasRememberedInputMethod() const -> bool
+    {
+        return m_inputMethodManager != nullptr && m_inputMethodManager->HasRememberedUserProfile();
+    }
+
+    //! Must call from IME thread. Re-activate the input method the user last
+    //! picked; S_FALSE when nothing was remembered, a failure clears the memory
+    //! so the caller's fallback decides.
+    auto RestoreRememberedInputMethod() const -> HRESULT
+    {
+        return m_inputMethodManager != nullptr ? m_inputMethodManager->RestoreRememberedUserProfile() : S_FALSE;
+    }
 
     //! Must call from IME thread. Switch to the English keyboard (langid 0x409).
     auto ActivateEnglishProfile() const -> HRESULT { return m_inputMethodManager->ActivateKeyboardEng(); }

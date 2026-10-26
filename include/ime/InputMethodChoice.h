@@ -19,7 +19,7 @@ namespace Ime
 struct InputMethodChoice
 {
     /// Value stored in [core] default_input_method when this entry is picked.
-    std::string identity; // tip:{CLSID}/{GUID}/{langid}
+    std::string identity; // tip:{CLSID}/{GUID}/{langid} or keyboard:{KLID}
     /// Display name shown in the combo (e.g. the TIP's localized description).
     std::string name;
 };
@@ -55,14 +55,17 @@ namespace InputMethodChoiceDetail
 /// nothing (unset, or not installed in this process).
 ///
 /// Mirrors the two-pass match in InputMethodManager::ActivateConfiguredProfile:
-/// an exact tip: identity first, then a case-insensitive display-name substring
-/// so a hand-written name in the TOML still highlights its entry.
+/// an exact tip:/keyboard: identity first, then a case-insensitive display-name
+/// substring so a hand-written name in the TOML still highlights its entry.
+/// A keyboard: value is selected by its own identity, exactly like a tip: one.
 [[nodiscard]] inline auto FindChoiceIndex(const std::vector<InputMethodChoice> &choices, const std::string &configured) -> std::size_t
 {
     namespace Detail  = InputMethodChoiceDetail;
     const auto target = InputMethodIdentity::Parse(configured);
     using Kind        = InputMethodIdentity::Identity::Kind;
-    if (target.kind == Kind::Unset || target.kind == Kind::Unknown || target.kind == Kind::Keyboard) return std::string::npos;
+    // Kind::Keyboard is no longer treated as "missing": a keyboard: value selects
+    // its own row through the same klid-exact Matches() rule as a tip: value.
+    if (target.kind == Kind::Unset || target.kind == Kind::Unknown) return std::string::npos;
 
     for (std::size_t i = 0; i < choices.size(); ++i)
     {

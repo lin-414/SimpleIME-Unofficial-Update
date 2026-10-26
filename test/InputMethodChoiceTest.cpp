@@ -62,12 +62,27 @@ TEST(InputMethodChoiceTest, unknown_identity_selects_nothing)
     EXPECT_EQ(Ime::FindChoiceIndex({}, IM::FormatFromTip(kClsid, kProfile, 0x0804)), std::string::npos);
 }
 
-/// Keyboard layouts are not selectable yet, so a stored keyboard: value shows as
-/// "missing" instead of silently highlighting an unrelated TIP.
-TEST(InputMethodChoiceTest, keyboard_identity_selects_nothing)
+/// A stored keyboard: value selects the keyboard entry, not a TIP that happens to
+/// sort next to it. The list now carries keyboard layouts too, so this is the
+/// "the picker came back with my US layout selected" case.
+TEST(InputMethodChoiceTest, keyboard_identity_selects_the_keyboard_entry)
 {
-    const auto choices = MakeChoices();
-    EXPECT_EQ(Ime::FindChoiceIndex(choices, IM::FormatFromKeyboard("00000804")), std::string::npos);
+    auto choices = MakeChoices();
+    choices.push_back({IM::FormatFromKeyboard("00000409"), "US keyboard"});
+    EXPECT_EQ(Ime::FindChoiceIndex(choices, IM::FormatFromKeyboard("00000409")), 2U);
+    // Case-insensitive: a hand-edited TOML keeps working.
+    EXPECT_EQ(Ime::FindChoiceIndex(choices, IM::FormatFromKeyboard("0000040A")), std::string::npos);
+}
+
+/// Two keyboard layouts must not answer for each other.
+TEST(InputMethodChoiceTest, keyboard_identity_does_not_select_a_different_klid)
+{
+    const std::vector<Ime::InputMethodChoice> choices{
+        {IM::FormatFromKeyboard("00000409"), "US keyboard"   },
+        {IM::FormatFromKeyboard("00000804"), "Chinese (PRC)" },
+    };
+    EXPECT_EQ(Ime::FindChoiceIndex(choices, IM::FormatFromKeyboard("00000804")), 1U);
+    EXPECT_EQ(Ime::FindChoiceIndex(choices, IM::FormatFromKeyboard("0000040C")), std::string::npos);
 }
 
 TEST(InputMethodChoiceTest, label_is_the_plain_name_when_unique)

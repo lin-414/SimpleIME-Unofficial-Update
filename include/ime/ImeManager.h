@@ -18,7 +18,6 @@ class ImeManager final : public IImeModule
     ImeWnd         *m_imeWnd;
     bool            m_isForceUpdate;
     Settings       &m_settings; ///< non-const: EnableIme writes runtimeData overlay requests (IME thread only, by design).
-    GUID            m_lastActiveProfile{GUID_NULL}; ///< the IME profile active before disable, restored on re-enable
 
 public:
     ImeManager(HWND hwnd, ImeWnd *imeWnd, Settings &settings) : m_gameHwnd(hwnd), m_imeWnd(imeWnd), m_isForceUpdate(false), m_settings(settings) {}
@@ -44,6 +43,10 @@ private:
     /// The two arms of EnableIme, split by their seam comments.
     auto DoEnable() -> bool;
     auto DoDisable() -> bool;
+    /// Shared tail of both enable arms: restore the input method the user last
+    /// picked (TIP or keyboard layout, remembered by the TSF activation sink),
+    /// fall back to the user's own IME, then let [core] default_input_method win.
+    auto RestoreInputMethodOnEnable() -> void;
     /// Apply [core] default_input_method; called from both DoEnable arms. Skips
     /// the TSF call when the configured input method is already active, because
     /// DoEnable runs on every forced sync and frequent activate/deactivate makes

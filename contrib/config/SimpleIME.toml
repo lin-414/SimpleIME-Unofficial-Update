@@ -23,11 +23,14 @@ auto_toggle_keyboard = false
 switch_english_layout_on_disable = false
 # 默认输入法 (默认空 = 不干预，保持你系统当前的输入法不变)
 # 填写后，每次进游戏、以及每次开启 IME 时，都会自动切到这个输入法。
-# 三种写法:
+# 四种写法:
 #   1) 显示名，如 "微信输入法" 或 "拼音"：按名称模糊匹配(重名时取第一个并 WARN 列出候选)
 #   2) tip:{CLSID}/{GUID}[/{langid}]：最精确，例如
 #      tip:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}/{FA550B04-5AD7-411F-A5AC-CA038EC515D7}
-#   3) 留空：不干预
+#   3) keyboard:{KLID}：键盘布局(非输入法)，KLID 是 8 位十六进制，例如
+#      keyboard:00000409 = 英语(美国) 美式键盘，keyboard:00000804 = 中文(简体) 美式键盘
+#      想让游戏一直保持英文输入时用这个；设置界面的下拉框里也能直接选键盘布局
+#   4) 留空：不干预
 # 不知道填什么? 运行 tools/list_input_methods.ps1：列出本机所有输入法(中文名 + 身份串)，
 # 还能用 -Name 或 -Select 直接写进本文件。填错只会让这个功能失效(WARN)，不影响正常打字。
 default_input_method = ""

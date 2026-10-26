@@ -237,16 +237,7 @@ auto ImeManager::DoEnable() -> bool
         // sometimes flipped to 中全角 after reopening the console).
         (void)m_imeWnd->SetSessionImeEnabled(true);
         state.Clear(State::IME_DISABLED);
-        // Unless what is active is a plain keyboard layout: an English-only
-        // session, or a TIP the user never had. Enabling the IME means they want
-        // to compose, so pick their own IME from the enumeration.
-        if (m_imeWnd->GetActiveLangProfile().dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR &&
-            FAILED(m_imeWnd->ActivatePreferredImeProfile()))
-        {
-            logger::debug("No input method to re-open and no non-English TIP available, keeping the current one");
-        }
-        // The user's configured default input method wins over the heuristic above.
-        ApplyConfiguredInputMethod();
+        RestoreInputMethodOnEnable();
         return success;
     }
     // Same ordering as the branch above: arm the restore while the conversion
@@ -257,45 +248,60 @@ auto ImeManager::DoEnable() -> bool
     // follow-up, 2026-10-17).
     (void)m_imeWnd->SetSessionImeEnabled(true);
     state.Clear(State::IME_DISABLED);
-    // Restore the input method that was active before IME was disabled.
-    // Without this, the system TIP stays on the English keyboard after
-    // EnableIme(false) switched it away, and typing in a text field
-    // would be stuck in English mode.
-    if (m_lastActiveProfile != GUID_NULL)
+    RestoreInputMethodOnEnable();
+    return success;
+}
+
+/// Both enable arms end up here: put the user back on what they were typing
+/// with, then let the configured default win over it.
+///
+/// The memory is kept by the TSF activation sink (InputMethodManager), not
+/// sampled at disable time, so it survives every path — including the default
+/// switch_english_layout_on_disable = false arm, which returns from DoDisable
+/// before any profile switch and therefore had nothing to sample.
+void ImeManager::RestoreInputMethodOnEnable()
+{
+    bool restored = false;
+    // Covers keyboard layouts too: "I switched to 美式键盘 and closed the
+    // console" must come back as 美式键盘, not as some IME picked by
+    // enumeration order. That was the whole point of tracking the pick.
+    if (m_imeWnd->HasRememberedInputMethod())
     {
-        if (FAILED(m_imeWnd->ActivateLanguageProfile(m_lastActiveProfile)))
+        if (SUCCEEDED(m_imeWnd->RestoreRememberedInputMethod()))
         {
-            logger::warn("Failed to restore input method profile after enabling IME");
+            restored = true;
         }
-        m_lastActiveProfile = GUID_NULL;
+        else
+        {
+            // The remembered method is gone (uninstalled). The manager has
+            // already forgotten it; fall through to the heuristic below.
+            logger::warn("Failed to restore the input method the user last picked; falling back");
+        }
     }
-    else if (m_imeWnd->GetActiveLangProfile().dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    if (restored)
     {
-        // A real TIP is already active on the IME thread (e.g. the
-        // user's IME, activated by an earlier fallback this session):
-        // keep it instead of re-activating the same profile on every
-        // forced sync (WM_NCACTIVATE etc.).
-        logger::debug("No input method remembered, but a TIP is already active; keeping it");
+        // The configured default still wins over the remembered pick when the
+        // re-apply policy is on — that is the user's explicit choice.
+        ApplyConfiguredInputMethod();
+        return;
     }
-    else
+
+    if (m_imeWnd->GetActiveLangProfile().dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR)
     {
-        // Nothing was remembered (fresh session: the boot-time
-        // WM_NCACTIVATE churn disables the IME before the user ever
-        // typed with a Chinese TIP, so the sink never captured one).
-        // The current TIP is then usually the English keyboard left by
-        // the earlier disable — silently keeping it made the first
-        // enable of a session type English only (no composition, no
-        // candidate window), e.g. right after a Meridian view gained
-        // focus. Fall back to the user's own IME from the enumeration.
+        // Nothing remembered and no TIP active: either a fresh session (the
+        // boot-time WM_NCACTIVATE churn disables the IME before the user ever
+        // typed with a Chinese TIP, so the sink never captured one) or an
+        // English-only session. Keeping the keyboard layout silently made the
+        // first enable of a session type English only (no composition, no
+        // candidate window), so fall back to the user's own IME.
         if (FAILED(m_imeWnd->ActivatePreferredImeProfile()))
         {
             logger::debug("No input method remembered and no non-English TIP available, keeping the current one");
         }
     }
-    // The user's configured default input method wins over the heuristic above
-    // (and over the remembered profile restored above).
+    // The user's configured default input method wins over both the restored
+    // pick and the heuristic above.
     ApplyConfiguredInputMethod();
-    return success;
 }
 
 void ImeManager::ApplyConfiguredInputMethod()
@@ -392,18 +398,11 @@ auto ImeManager::DoDisable() -> bool
     // real English keyboard profile from the TSF enumeration (with actual
     // CLSID/GUID), not the stub DEFAULT_LANG_PROFILE which may fail to activate.
     //
-    // Remember the IME the user was using, so EnableIme(true) can restore it.
-    // Use the last real TIP seen by the activation sink instead of the
-    // active-profile cache: after a previous disable the cache points at
-    // the English keyboard (GUID_NULL), and a second disable in the same
-    // close (count churn / WM_NCACTIVATE sync) would then save nothing,
-    // silently losing the restore (observed in the game log as an
-    // "IME enabled" with no profile restore following it).
-    const GUID lastTipGuid = m_imeWnd->GetLastTipProfileGuid();
-    if (lastTipGuid != GUID_NULL)
-    {
-        m_lastActiveProfile = lastTipGuid;
-    }
+    // Nothing is remembered here on purpose: InputMethodManager's activation
+    // sink records every pick the user makes (TIP or keyboard layout) and never
+    // records this function's own English switch. Sampling the active profile at
+    // this point would only ever read the English keyboard the previous disable
+    // left behind, and the default policy returns long before this line anyway.
     if (FAILED(m_imeWnd->ActivateEnglishProfile()))
     {
         logger::warn("Failed to switch back to the English keyboard after disabling IME");

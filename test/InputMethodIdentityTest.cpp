@@ -158,6 +158,13 @@ TEST(InputMethodIdentityTest, keyboard_layouts_match_by_klid)
     IM::Identity tip = IM::Parse(std::string{"tip:"} + kClsid + "/" + kProfile);
     EXPECT_FALSE(IM::Matches(configured, tip));
     EXPECT_FALSE(IM::Matches(tip, IM::Parse("keyboard:00000804")));
+
+    // An unresolved candidate (KLID empty) matches nothing, not even another
+    // unresolved one: SameText("", "") would otherwise be a false positive.
+    IM::Identity unresolvable;
+    unresolvable.kind = Kind::Keyboard;
+    EXPECT_FALSE(IM::Matches(configured, unresolvable));
+    EXPECT_FALSE(IM::Matches(unresolvable, unresolvable));
 }
 
 TEST(InputMethodIdentityTest, unset_and_unknown_match_nothing)

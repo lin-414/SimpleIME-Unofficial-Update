@@ -56,11 +56,90 @@ auto GetProfileCachedIndex(const std::vector<Ime::LangProfile> &langProfiles, co
     return UINT32_MAX;
 }
 
+/// "00000409" for 0x409 — the KLID text form InputMethodIdentity stores.
+auto FormatKlid(const std::uint32_t id) -> std::string
+{
+    return std::format("{:08X}", id);
+}
+
+auto ToWideKlid(const std::string_view klid) -> std::wstring
+{
+    std::wstring wide{klid.begin(), klid.end()};
+    for (auto &c : wide)
+    {
+        if (c >= L'a' && c <= L'f') c = static_cast<wchar_t>(c - L'a' + L'A');
+    }
+    return wide;
+}
+
+/// A KLID is only usable when the layout is registered on this machine.
+auto IsRegisteredKeyboardLayout(const std::string &klid) -> bool
+{
+    const auto path = std::format(L"SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts\\{}", ToWideKlid(klid));
+
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.c_str(), 0, KEY_READ, &hKey) != ERROR_SUCCESS) return false;
+    RegCloseKey(hKey);
+    return true;
+}
+
+/// Slow path for layouts whose HIWORD(HKL) is not their KLID (see ResolveKlid):
+/// walk the registered KLIDs, load each and keep the one whose freshly loaded
+/// HKL matches. Only substitute layouts (e.g. 00010409 -> 0xF0020409) get here.
+auto FindKlidByLoading(const HKL target) -> std::string
+{
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts", 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+    {
+        return {};
+    }
+
+    std::string found;
+    for (DWORD index = 0;; ++index)
+    {
+        wchar_t name[64]  = {};
+        DWORD   nameChars = static_cast<DWORD>(sizeof(name) / sizeof(name[0]));
+        if (RegEnumKeyExW(hKey, index, name, &nameChars, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+        const std::string klid = WCharUtils::ToString(std::wstring_view{name, nameChars});
+        if (!Ime::InputMethodIdentity::Detail::IsKlidText(klid)) continue;
+
+        const auto wideKlid = ToWideKlid(klid);
+        if (LoadKeyboardLayoutW(wideKlid.c_str(), 0) == target)
+        {
+            found = klid;
+            break;
+        }
+    }
+    RegCloseKey(hKey);
+    return found;
+}
+
+/// The KLID of an HKL. HIWORD(hkl) IS the KLID for an ordinary layout
+/// (measured: 00000409 -> 0x04090409), but a SUBSTITUTE layout puts a
+/// USER-subsystem code there instead (measured: 00010409 -> 0xF0020409, and no
+/// such registry key exists), so that case is resolved by loading the registered
+/// layouts and comparing handles.
+auto ResolveKlid(const HKL hkl) -> std::string
+{
+    if (hkl == nullptr) return {};
+
+    const auto fromHighWord = FormatKlid(static_cast<std::uint32_t>(HandleToUlong(hkl)) >> 16);
+    if (IsRegisteredKeyboardLayout(fromHighWord)) return fromHighWord;
+
+    auto resolved = FindKlidByLoading(hkl);
+    if (!resolved.empty()) return resolved;
+    // Unresolvable: keep the raw value for the log, but it names no installed
+    // layout — Matches() requires a non-empty klid, and this one matches nothing
+    // the user can store unless the layout really is registered under it.
+    return fromHighWord;
+}
+
 /// Stable identity of an enumerated profile, for matching against the user's
 /// configured default input method (utils/InputMethodIdentity.h). A TIP is
 /// identified by (clsid, guidProfile, langid) — the triple TSF itself registers
-/// under; keyboard layouts all share GUID_NULL and their KLID is not derivable
-/// from an HKL, so they cannot be persisted yet (P2).
+/// under. A keyboard layout is identified by its KLID: all layouts share
+/// GUID_NULL, and the KLID (not the HKL, a per-session handle) is what survives
+/// a restart.
 auto ToIdentity(const Ime::LangProfile &langProfile) -> Ime::InputMethodIdentity::Identity
 {
     using Kind = Ime::InputMethodIdentity::Identity::Kind;
@@ -76,8 +155,10 @@ auto ToIdentity(const Ime::LangProfile &langProfile) -> Ime::InputMethodIdentity
         return identity;
     }
     identity.kind = Kind::Keyboard;
+    identity.klid = ResolveKlid(langProfile.hkl);
     return identity;
 }
+
 
 /// Case-insensitive helpers for the lenient display-name match below. Only
 /// ASCII is folded, so UTF-8 sequences (中文名) pass through untouched.
@@ -268,15 +349,22 @@ auto Ime::InputMethodManager::RefreshProfiles() -> bool
                 localeDisplayNameStr = WCharUtils::ToString(localeName);
             }
             // The trailing identity string is what [core] default_input_method
-            // expects — users copy it straight out of the log.
-            const std::string identityText =
-                profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR
-                    ? InputMethodIdentity::FormatFromTip(
-                          WCharUtils::ToString(ToStringFromGUID2(profile.clsid)),
-                          WCharUtils::ToString(ToStringFromGUID2(profile.guidProfile)),
-                          profile.langid
-                      )
-                    : std::string{"<keyboard layout, not selectable yet>"};
+            // accepts — users copy it straight out of the log. Keyboard layouts
+            // get keyboard:{KLID}; an unresolvable HKL has no persistable form.
+            std::string identityText;
+            if (profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+            {
+                identityText = InputMethodIdentity::FormatFromTip(
+                    WCharUtils::ToString(ToStringFromGUID2(profile.clsid)),
+                    WCharUtils::ToString(ToStringFromGUID2(profile.guidProfile)),
+                    profile.langid
+                );
+            }
+            else
+            {
+                const auto klid = ResolveKlid(profile.hkl);
+                identityText    = klid.empty() ? std::string{"<keyboard layout, KLID not resolvable>"} : InputMethodIdentity::FormatFromKeyboard(klid);
+            }
             logger::info("Load installed ime: {} {} ({})", localeDisplayNameStr, desc, identityText);
             m_langProfiles.emplace_back(
                 std::move(localeDisplayNameStr),
@@ -391,14 +479,22 @@ auto Ime::InputMethodManager::ActivateProfile(const LangProfile &langProfile) ->
             return S_OK;
         }
     }
-    const HRESULT hresult = m_tfProfileMgr->ActivateProfile(
-        langProfile.dwProfileType,
-        langProfile.langid,
-        langProfile.clsid,
-        langProfile.guidProfile,
-        langProfile.hkl,
-        TF_IPPMF_FORPROCESS | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE
-    );
+    // The sink fires synchronously inside this call. Without the pause every
+    // switch this manager makes (the disable path's English keyboard, the
+    // configured default, the fallback) would be recorded as a user pick and the
+    // restore would then replay the mod's own choice instead of the user's.
+    HRESULT hresult = E_FAIL;
+    {
+        ScopedSelfActivation const pause{*this};
+        hresult = m_tfProfileMgr->ActivateProfile(
+            langProfile.dwProfileType,
+            langProfile.langid,
+            langProfile.clsid,
+            langProfile.guidProfile,
+            langProfile.hkl,
+            TF_IPPMF_FORPROCESS | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE
+        );
+    }
     if (FAILED(hresult))
     {
         logger::error("Active profile {} failed: {}", langProfile.desc, Tsf::ToErrorMessage(hresult));
@@ -410,70 +506,109 @@ auto Ime::InputMethodManager::ActivateProfile(const LangProfile &langProfile) ->
     return hresult;
 }
 
-auto Ime::InputMethodManager::ActivateKeyboardEng() -> HRESULT
+auto Ime::InputMethodManager::ActivateKeyboardProfile(const std::string &klid) -> HRESULT
 {
-    // Find an English keyboard profile in the loaded profiles list and activate it.
-    // DEFAULT_LANG_PROFILE has CLSID_NULL/GUID_NULL — stub values that don't match
-    // any actual TSF profile, so it is never a valid activation target; use the
-    // real profile from the enumeration instead.
-    // PRIMARYLANGID matching covers all English variants (en-US 0x409, en-GB 0x809, ...).
-    static constexpr auto LANGID_ENGLISH_PRIMARY = PRIMARYLANGID(LANGID_ENG);
-
-    // Load the English keyboard layout to get a validated HKL handle.
-    // The HKL from the TSF enumeration (TF_INPUTPROCESSORPROFILE::hkl) may be stale
-    // or invalid by the time ActivateProfile is called. LoadKeyboardLayout returns
-    // a fresh, valid HKL.
-    const HKL hklEnglish = LoadKeyboardLayout(L"00000409", KLF_ACTIVATE);
-    if (hklEnglish == nullptr)
+    if (!InputMethodIdentity::Detail::IsKlidText(klid))
     {
-        logger::warn("LoadKeyboardLayout failed for English keyboard, falling back to enumeration HKL");
-        for (const auto &langProfile : m_langProfiles)
-        {
-            if (PRIMARYLANGID(langProfile.langid) == LANGID_ENGLISH_PRIMARY)
-            {
-                return ActivateProfile(langProfile);
-            }
-        }
-        logger::error("No English keyboard profile found in langProfiles and LoadKeyboardLayout failed; cannot switch to English");
+        logger::warn("ActivateKeyboardProfile('{}') is not a KLID (8 hex digits)", klid);
+        return E_INVALIDARG;
+    }
+
+    // Deliberately NO "already active, skip" short-circuit here (unlike the TIP
+    // path): the TSF call can report S_OK without switching, so the Imm32
+    // ActivateKeyboardLayout(KLF_SETFORPROCESS) below must run every time this is
+    // called. A redundant switch is harmless; a skipped one leaves the user on
+    // the wrong layout.
+    //
+    // LoadKeyboardLayout both validates the KLID and yields a handle that is
+    // guaranteed live, unlike TF_INPUTPROCESSORPROFILE::hkl, which may be stale
+    // by the time we get here.
+    const HKL hkl = LoadKeyboardLayoutW(ToWideKlid(klid).c_str(), KLF_ACTIVATE);
+    if (hkl == nullptr)
+    {
+        logger::warn("LoadKeyboardLayout('{}') failed: {}", klid, GetLastError());
         return E_FAIL;
     }
 
+    // Prefer the enumerated entry (it carries the localized display name and the
+    // real langid); fall back to a synthetic profile so a layout that is
+    // installed but not enumerated for this process still activates.
+    const LangProfile *enumerated = nullptr;
+    for (const auto &langProfile : m_langProfiles)
+    {
+        if (langProfile.dwProfileType != TF_PROFILETYPE_KEYBOARDLAYOUT) continue;
+        if (!InputMethodIdentity::Detail::SameText(ToIdentity(langProfile).klid, klid)) continue;
+        enumerated = &langProfile;
+        break;
+    }
+    LangProfile  synthetic;
+    LangProfile *target = nullptr;
+    if (enumerated != nullptr)
+    {
+        synthetic             = *enumerated;
+        synthetic.hkl         = hkl;
+        target                = &synthetic;
+    }
+    else
+    {
+        synthetic = LangProfile{"", klid, "", CLSID_NULL, GUID_NULL, static_cast<LANGID>(std::stoul(klid.substr(4), nullptr, 16)), TF_PROFILETYPE_KEYBOARDLAYOUT, hkl};
+        target    = &synthetic;
+    }
+
+    // One pause around BOTH steps: ActivateProfile's TSF call and the Imm32
+    // ActivateKeyboardLayout below each fire the activation sink on this thread,
+    // and both are this manager's own doing — the user did not pick this layout
+    // just now (it is either the disable path's English switch or a configured
+    // default). ActivateProfile nests its own pause; the counter makes that safe.
+    ScopedSelfActivation const pause{*this};
+    const HRESULT              hresult = ActivateProfile(*target);
+    // ActivateProfile returning S_OK does NOT mean the system input method
+    // actually switched: for KEYBOARDLAYOUT profiles TSF often reports success
+    // while leaving the process input method untouched (observed with WeChat IME
+    // / Microsoft Pinyin). Force the PROCESS keyboard layout at the Imm32/Win32
+    // level — TSF TIPs follow the active keyboard layout and deactivate with it,
+    // so this is the authoritative switch. Always do it, and verify.
+    if (ActivateKeyboardLayout(hkl, KLF_SETFORPROCESS) == nullptr)
+    {
+        logger::warn("ActivateKeyboardLayout(KLF_SETFORPROCESS) failed: {}", GetLastError());
+    }
+    else
+    {
+        const auto currentLayout = GetKeyboardLayout(0); // current thread layout
+        logger::info(
+            "ActivateKeyboardLayout(KLF_SETFORPROCESS) OK, current={:p}, wanted={:p}{}",
+            static_cast<void *>(currentLayout),
+            static_cast<void *>(hkl),
+            currentLayout != hkl ? " (MISMATCH!)" : ""
+        );
+    }
+    return hresult;
+}
+
+auto Ime::InputMethodManager::ActivateKeyboardEng() -> HRESULT
+{
+    // "Switch back to English" means the en-US layout throughout this mod, and
+    // ActivateKeyboardProfile already does load + TSF activation + Imm32
+    // KLF_SETFORPROCESS + verification in one place. Reuse it instead of keeping
+    // a second copy of that sequence (the two used to drift apart).
+    const HRESULT hresult = ActivateKeyboardProfile("00000409");
+    if (SUCCEEDED(hresult)) return hresult;
+
+    // LoadKeyboardLayout("00000409") failed — the layout is not installed here.
+    // Fall back to an English entry from the enumeration instead of giving up:
+    // the language bar's English TIP/keyboard is still better than leaving a
+    // Chinese IME eating the game's WASD.
+    static constexpr auto LANGID_ENGLISH_PRIMARY = PRIMARYLANGID(LANGID_ENG);
+    logger::warn("Cannot load the en-US layout; falling back to an enumerated English profile");
     for (const auto &langProfile : m_langProfiles)
     {
         if (PRIMARYLANGID(langProfile.langid) == LANGID_ENGLISH_PRIMARY)
         {
-            // Use the fresh LoadKeyboardLayout HKL, which should be a valid handle
-            LangProfile englishProfile = langProfile;
-            englishProfile.hkl         = hklEnglish;
-            const HRESULT hresult      = ActivateProfile(englishProfile);
-            // ActivateProfile returning S_OK does NOT mean the system input method
-            // actually switched: for KEYBOARDLAYOUT profiles TSF often reports
-            // success while leaving the current process input method untouched
-            // (observed with WeChat IME / Microsoft Pinyin). Force the PROCESS
-            // keyboard layout at the Imm32/Win32 level — TSF TIPs follow the active
-            // keyboard layout and deactivate with it, so this is the authoritative
-            // switch. Always do it (not just on FAILED) and verify the result.
-            if (ActivateKeyboardLayout(hklEnglish, KLF_SETFORPROCESS) == nullptr)
-            {
-                logger::warn("ActivateKeyboardLayout(KLF_SETFORPROCESS) failed: {}", GetLastError());
-            }
-            else
-            {
-                const auto currentLayout = GetKeyboardLayout(0); // current thread layout
-                logger::info(
-                    "ActivateKeyboardLayout(KLF_SETFORPROCESS) OK, current={:p}, english={:p}{}",
-                    static_cast<void *>(currentLayout),
-                    static_cast<void *>(hklEnglish),
-                    currentLayout != hklEnglish ? " (MISMATCH!)" : ""
-                );
-            }
-            return hresult;
+            return ActivateProfile(langProfile);
         }
     }
-
-    // Fallback: use LoadKeyboardLayout HKL with a synthetic profile.
-    logger::warn("No English keyboard profile found in langProfiles, activating via LoadKeyboardLayout HKL");
-    return ActivateProfile(LangProfile{"English", "ENG", "English", CLSID_NULL, GUID_NULL, LANGID_ENG, TF_PROFILETYPE_KEYBOARDLAYOUT, hklEnglish});
+    logger::error("No English keyboard profile found in langProfiles and LoadKeyboardLayout failed; cannot switch to English");
+    return E_FAIL;
 }
 
 auto Ime::InputMethodManager::ActivatePreferredImeProfile() -> HRESULT
@@ -493,18 +628,112 @@ auto Ime::InputMethodManager::ActivatePreferredImeProfile() -> HRESULT
     return E_FAIL;
 }
 
+auto Ime::InputMethodManager::ActivateIdentity(const InputMethodIdentity::Identity &identity) -> HRESULT
+{
+    using Kind = InputMethodIdentity::Identity::Kind;
+    switch (identity.kind)
+    {
+        case Kind::Keyboard:
+            return ActivateKeyboardProfile(identity.klid);
+        case Kind::Tip:
+        {
+            for (const auto &langProfile : m_langProfiles)
+            {
+                if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue;
+                if (!InputMethodIdentity::Matches(identity, ToIdentity(langProfile))) continue;
+                return ActivateProfile(langProfile);
+            }
+            return E_INVALIDARG;
+        }
+        case Kind::Desc:
+        case Kind::Unset:
+        case Kind::Unknown:
+            break;
+    }
+    return E_INVALIDARG;
+}
+
+auto Ime::InputMethodManager::IsIdentityActive(const InputMethodIdentity::Identity &identity) const -> bool
+{
+    if (m_activatedProfile >= m_langProfiles.size()) return false;
+    return InputMethodIdentity::Matches(identity, ToIdentity(m_langProfiles[m_activatedProfile]));
+}
+
+auto Ime::InputMethodManager::HasRememberedUserProfile() const -> bool
+{
+    using Kind = InputMethodIdentity::Identity::Kind;
+    switch (m_lastUserProfile.kind)
+    {
+        case Kind::Tip:
+            return true;
+        case Kind::Keyboard:
+            return !m_lastUserProfile.klid.empty();
+        default:
+            return false;
+    }
+}
+
+auto Ime::InputMethodManager::RestoreRememberedUserProfile() -> HRESULT
+{
+    if (!HasRememberedUserProfile()) return S_FALSE;
+    // Copy: a failed restore clears the memory below.
+    const auto identity = m_lastUserProfile;
+    const auto hr       = ActivateIdentity(identity);
+    if (SUCCEEDED(hr))
+    {
+        logger::info("Restored the input method the user last picked: '{}'", identity.desc);
+        return hr;
+    }
+    // Uninstalled since it was picked (or a stale langid variant): drop the
+    // memory so the caller's fallback decides instead of retrying forever.
+    m_lastUserProfile = {};
+    logger::warn(
+        "The input method the user last picked ('{}', {}) is not available any more; forgetting it",
+        identity.desc.empty() ? std::string{"?"} : identity.desc,
+        identity.kind == InputMethodIdentity::Identity::Kind::Keyboard ? InputMethodIdentity::FormatFromKeyboard(identity.klid)
+                                                                       : InputMethodIdentity::FormatFromTip(identity.clsid, identity.profile, identity.langid)
+    );
+    return hr;
+}
+
+auto Ime::InputMethodManager::BeginSelfActivation() -> void
+{
+    ++m_suppressUserTracking;
+}
+
+auto Ime::InputMethodManager::EndSelfActivation() -> void
+{
+    // Guard the decrement: a stray pair would otherwise leave the counter
+    // negative and silence user tracking for the rest of the session.
+    if (m_suppressUserTracking > 0) --m_suppressUserTracking;
+}
+
 auto Ime::InputMethodManager::GetSelectableChoices() const -> std::vector<InputMethodChoice>
 {
+    using Kind = InputMethodIdentity::Identity::Kind;
+
     std::vector<InputMethodChoice> choices;
     for (const auto &langProfile : m_langProfiles)
     {
-        // Only a TIP composes text, so only a TIP is worth offering here.
-        if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue;
-
+        // Both kinds are offered: a TIP composes text, and a keyboard layout is a
+        // legitimate "stay in English this session" pick. A layout whose KLID did
+        // not resolve has no storable identity, so it cannot be chosen (its row
+        // would store keyboard: and never match again).
         const auto      identity = ToIdentity(langProfile);
         InputMethodChoice choice;
-        choice.identity = InputMethodIdentity::FormatFromTip(identity.clsid, identity.profile, identity.langid);
-        choice.name     = langProfile.desc;
+        switch (identity.kind)
+        {
+            case Kind::Tip:
+                choice.identity = InputMethodIdentity::FormatFromTip(identity.clsid, identity.profile, identity.langid);
+                break;
+            case Kind::Keyboard:
+                if (identity.klid.empty()) continue;
+                choice.identity = InputMethodIdentity::FormatFromKeyboard(identity.klid);
+                break;
+            default:
+                continue;
+        }
+        choice.name = langProfile.desc;
 
         // The same profile can be reported twice (one entry per registered
         // language for a multi-language TIP once the langid suffix differs is
@@ -551,9 +780,13 @@ auto Ime::InputMethodManager::SetConfiguredProfile(std::string configuredProfile
             );
             break;
         case Kind::Keyboard:
-            // Parsed, but a KLID cannot be derived from an HKL yet (P2); warn so a
-            // hand-written value does not silently do nothing.
-            logger::warn("Default input method '{}': keyboard layouts are not supported yet; ignoring it", m_configuredProfile);
+            // A layout is not a text service — it is a plain "stay in English"
+            // pick — but it is selected and remembered exactly like a TIP.
+            logger::info(
+                "Default input method set to '{}' ({})",
+                m_configuredProfile,
+                m_reapplyOnEnable ? "applied on every IME enable" : "applied on game start only"
+            );
             break;
         case Kind::Tip:
         case Kind::Desc:
@@ -574,6 +807,10 @@ auto Ime::InputMethodManager::HasConfiguredProfile() const -> bool
         case Kind::Tip:
         case Kind::Desc:
             return true;
+        case Kind::Keyboard:
+            // Without a KLID the identity cannot be matched again (see
+            // InputMethodIdentity::Matches), so treat it as not configured.
+            return !m_configuredIdentity.klid.empty();
         default:
             return false;
     }
@@ -583,11 +820,7 @@ auto Ime::InputMethodManager::IsConfiguredProfileActive() const -> bool
 {
     using Kind = InputMethodIdentity::Identity::Kind;
     if (m_configuredIdentity.kind == Kind::Unset || m_configuredIdentity.kind == Kind::Unknown) return false;
-    // Read the cache directly: GetActiveLangProfile() returns the display-only
-    // DEFAULT_LANG_PROFILE stub when the index is stale, which would compare as
-    // a real (never matching) profile.
-    if (m_activatedProfile >= m_langProfiles.size()) return false;
-    return InputMethodIdentity::Matches(m_configuredIdentity, ToIdentity(m_langProfiles[m_activatedProfile]));
+    return IsIdentityActive(m_configuredIdentity);
 }
 
 auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
@@ -600,10 +833,12 @@ auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
         return E_INVALIDARG;
     }
 
+    // Both kinds are matchable: a keyboard layout is a legitimate default (e.g.
+    // "always come up in English"). Matches() only hits a candidate of the same
+    // kind, so a tip: identity can never select a layout or vice versa.
     const LangProfile *target = nullptr;
     for (const auto &langProfile : m_langProfiles)
     {
-        if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue; // only a TIP composes text
         if (!InputMethodIdentity::Matches(m_configuredIdentity, ToIdentity(langProfile))) continue;
         target = &langProfile;
         break;
@@ -619,7 +854,6 @@ auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
         std::string matchedNames;
         for (const auto &langProfile : m_langProfiles)
         {
-            if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue;
             if (!ContainsNoCase(langProfile.desc, wanted)) continue;
             if (target == nullptr) target = &langProfile;
             ++matches;
@@ -634,7 +868,7 @@ auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
             if (matches > 1)
             {
                 logger::warn(
-                    "Default input method '{}' matches {} input methods ({}); using the first one — an exact 'tip:...' identity is unambiguous",
+                    "Default input method '{}' matches {} input methods ({}); using the first one — an exact 'tip:...' or 'keyboard:...' identity is unambiguous",
                     m_configuredProfile,
                     matches,
                     matchedNames
@@ -650,14 +884,33 @@ auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
     if (target != nullptr)
     {
         logger::info("Activating the configured default input method '{}'", target->desc);
-        // ActivateProfile() itself skips the TSF call when this TIP is already
-        // active, so callers may call this unconditionally.
-        const auto hr = ActivateProfile(*target);
+        // Route through ActivateIdentity so a keyboard layout also gets the
+        // Imm32 KLF_SETFORPROCESS switch (ActivateProfile alone can report S_OK
+        // while the process layout stays put). ActivateProfile()/the identity
+        // path both skip the TSF call when the profile is already active, so
+        // callers may call this unconditionally.
+        const auto hr = ActivateIdentity(ToIdentity(*target));
         if (SUCCEEDED(hr))
         {
             m_pendingApply = false; // the change this flag covered just landed
         }
         return hr;
+    }
+
+    // A keyboard layout that is installed but not enumerated for this process
+    // still has a perfectly good KLID: LoadKeyboardLayout validates it and
+    // BuildKeyboardProfile synthesizes the profile, so a hand-written
+    // 'keyboard:00000409' works even when the enumeration skipped it.
+    if (m_configuredIdentity.kind == Kind::Keyboard && !m_configuredIdentity.klid.empty())
+    {
+        logger::info("Activating the configured default keyboard layout '{}' (not enumerated for this process)", m_configuredIdentity.klid);
+        const auto hr = ActivateKeyboardProfile(m_configuredIdentity.klid);
+        if (SUCCEEDED(hr))
+        {
+            m_pendingApply = false;
+            return hr;
+        }
+        // Fall through: the warning below lists what IS available.
     }
 
     // Never fall back here: the caller decides (startup keeps the current
@@ -666,12 +919,24 @@ auto Ime::InputMethodManager::ActivateConfiguredProfile() -> HRESULT
     std::string candidates;
     for (const auto &langProfile : m_langProfiles)
     {
-        if (langProfile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR) continue;
         const auto identity = ToIdentity(langProfile);
+        std::string identityText;
+        if (identity.kind == Kind::Tip)
+        {
+            identityText = InputMethodIdentity::FormatFromTip(identity.clsid, identity.profile, identity.langid);
+        }
+        else if (identity.kind == Kind::Keyboard && !identity.klid.empty())
+        {
+            identityText = InputMethodIdentity::FormatFromKeyboard(identity.klid);
+        }
+        else
+        {
+            continue; // unusable identity: nothing the user could have typed
+        }
         if (!candidates.empty()) candidates += " | ";
         candidates += langProfile.desc;
         candidates += " (";
-        candidates += InputMethodIdentity::FormatFromTip(identity.clsid, identity.profile, identity.langid);
+        candidates += identityText;
         candidates += ")";
     }
     logger::warn(
@@ -788,13 +1053,27 @@ auto Ime::InputMethodManager::OnActivated(
         // Same semantics as UpdateActiveProfile: any known profile counts.
         // See the comment there — do not narrow to INPUTPROCESSOR-only.
         Core::State::GetInstance().Set(State::INPUT_PROCESSOR_ACTIVATED, m_activatedProfile < m_langProfiles.size());
-        // Track the last REAL input processor (WeChat/Microsoft Pinyin etc.) that
-        // activated. Keyboard-layout activations must not overwrite this — the
-        // disable path switches to the English keyboard, which would otherwise
-        // erase the memory of which IME the user was typing with.
-        if (dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR && m_activatedProfile < m_langProfiles.size())
+        // Remember whatever the user actually landed on — TIP or plain keyboard
+        // layout. This is the memory the next IME enable restores, so it must
+        // cover both kinds: "I switched to 美式键盘 and closed the console" has
+        // to survive the round trip exactly like a TIP pick does.
+        //
+        // Activations triggered by this class itself (the disable path's
+        // forced English layout, our own configured-profile apply) are
+        // suppressed: those are not user choices, and recording them would
+        // erase the very pick being restored. See ScopedSelfActivation.
+        if (m_suppressUserTracking == 0 && m_activatedProfile < m_langProfiles.size() &&
+            (dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR || dwProfileType == TF_PROFILETYPE_KEYBOARDLAYOUT))
         {
-            m_lastTipProfileGuid = guidProfile;
+            m_lastUserProfile = ToIdentity(m_langProfiles[m_activatedProfile]);
+            if (HasRememberedUserProfile())
+            {
+                logger::info("Remembered the user's input method: '{}'", m_langProfiles[m_activatedProfile].desc);
+            }
+            else
+            {
+                m_lastUserProfile = {}; // e.g. an unresolvable KLID: nothing to restore
+            }
         }
         if (m_activatedProfile < m_langProfiles.size())
         {

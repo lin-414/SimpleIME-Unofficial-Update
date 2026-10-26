@@ -26,9 +26,10 @@ namespace Ime::InputMethodIdentity
 {
 /// Stored form of a TIP (input processor, e.g. Microsoft Pinyin / Sogou).
 inline constexpr std::string_view kTipPrefix      = "tip:";
-/// Stored form of a keyboard layout (P2 — the settings UI does not offer these
-/// yet; a KLID is only obtainable via GetKeyboardLayoutName on the thread that
-/// switched into it).
+/// Stored form of a keyboard layout. These ARE selectable in the settings
+/// window now; the KLID is resolved by InputMethodManager while enumerating the
+/// installed layouts (HIWORD(hkl) is the KLID; a substitute layout is looked up
+/// back through LoadKeyboardLayout).
 inline constexpr std::string_view kKeyboardPrefix = "keyboard:";
 
 struct Identity
@@ -244,7 +245,11 @@ namespace Detail
             return candidate.kind == Kind::Tip && Detail::SameText(configured.clsid, candidate.clsid) &&
                    Detail::SameText(configured.profile, candidate.profile) && (configured.langid == 0 || configured.langid == candidate.langid);
         case Kind::Keyboard:
-            return candidate.kind == Kind::Keyboard && Detail::SameText(configured.klid, candidate.klid);
+            // A keyboard-layout candidate whose KLID could not be resolved must
+            // never match: two unresolvable layouts both carry an empty klid, and
+            // SameText("", "") would then report a match for any of them.
+            return candidate.kind == Kind::Keyboard && !configured.klid.empty() && !candidate.klid.empty() &&
+                   Detail::SameText(configured.klid, candidate.klid);
         case Kind::Desc:
             return !candidate.desc.empty() && Detail::SameText(configured.desc, candidate.desc);
         case Kind::Unset:
